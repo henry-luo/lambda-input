@@ -764,6 +764,20 @@ typedef enum SysFunc {
     SYSPROC_IO_SQLITE_CLONE,    // lambda.io.sqlite clone(source, path) - snapshot target
     SYSPROC_IO_SQLITE_PREIMAGE, // lambda.io.sqlite preimage(tx, path) - pre-write backup
     SYSPROC_IO_CREATE_FILE,      // io.create_file(path, bytes) - publish a new file
+    SYSPROC_IO_RDB_DATABASE,     // scoped, read-only RDB target
+    SYSPROC_IO_RDB_SCHEMA,       // positional schema metadata
+    SYSPROC_IO_RDB_DETAILS,      // index and foreign-key metadata
+    SYSPROC_IO_RDB_EXECUTE,
+    SYSPROC_IO_RDB_FETCH,
+    SYSPROC_IO_RDB_FINISH,
+    SYSPROC_IO_RDB_SPOOL_BEGIN,
+    SYSPROC_IO_RDB_SPOOL_READ,
+    SYSPROC_IO_RDB_SPOOL_CLOSE,
+    SYSPROC_IO_RDB_SPOOL_SEAL,
+    SYSPROC_IO_RDB_EXPORT_BEGIN,
+    SYSPROC_IO_RDB_EXPORT_WRITE,
+    SYSPROC_IO_RDB_EXPORT_COMMIT,
+    SYSPROC_IO_RDB_EXPORT_ABORT,
     SYSPROC_IO_SQLITE_SNAPSHOT_DIGEST, // lambda.io.sqlite snapshot_digest(tx) - bounded read snapshot
 } SysFunc;
 
@@ -1618,6 +1632,7 @@ void array_push_spread(Array* arr, Item item);      // push item, spreading if s
 Item seq_spread_value(Item item);
 Item seq_spread_item(Item item);
 Item array_end(Array* arr);  // finalize and return array as Item
+Item array_end_flat(Array* arr);  // pack scalar lanes while retaining nested row owners
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -3061,6 +3076,9 @@ extern "C" {
     // legacy ABI remains a NULL-env wrapper for every existing boundary.
     Item lambda_type_check_env(Item value, Type* expected, Type** env,
         const char* boundary);
+    // status separates an admitted Error value from a failed dependent check.
+    Item lambda_type_check_env_status(Item value, Type* expected, Type** env,
+        const char* boundary, Bool* admitted);
     // A boundary label that is formatted only if the check fails. The T0
     // walker checks every declared binding, assignment and argument, and
     // formatting the label eagerly cost it 15-29% of its time. `text` is used
@@ -3661,6 +3679,21 @@ extern "C" {
     Item pn_io_sqlite_execute3(Item path, Item sql, Item params);
     Item pn_io_sqlite_query2(Item path, Item sql);
     Item pn_io_sqlite_query3(Item path, Item sql, Item params);
+    Item pn_io_rdb_database(Item uri, Item driver);
+    Item pn_io_rdb_schema(Item handle);
+    Item pn_io_rdb_details(Item handle);
+    Item pn_io_rdb_execute2(Item handle, Item sql);
+    Item pn_io_rdb_execute3(Item handle, Item sql, Item params);
+    Item pn_io_rdb_fetch(Item handle, Item count);
+    Item pn_io_rdb_finish(Item handle);
+    Item pn_io_rdb_spool_begin(Item handle, Item path);
+    Item pn_io_rdb_spool_read(Item handle, Item first, Item count);
+    Item pn_io_rdb_spool_close(Item handle);
+    Item pn_io_rdb_spool_seal(Item handle);
+    Item pn_io_rdb_export_begin(Item handle, Item path);
+    Item pn_io_rdb_export_write(Item handle, Item content);
+    Item pn_io_rdb_export_commit(Item handle);
+    Item pn_io_rdb_export_abort(Item handle);
     Item pn_io_loopback_listen(void);
     Item pn_io_loopback_accept(Item listener, Item seconds, Item page);
 
