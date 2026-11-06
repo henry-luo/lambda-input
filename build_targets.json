@@ -1,0 +1,246 @@
+{
+  "targets": [
+    {
+      "name": "lambda-lib",
+      "description": "Static general-purpose library layer",
+      "target_dir": "build/lib/%{cfg.platform}/%{cfg.buildcfg}",
+      "pic_linux": true,
+      "lang": "c++17",
+      "source_patterns": [
+        "lib/*.c",
+        "lib/*.cpp",
+        "lib/font/*.c",
+        "lib/font/*.cpp",
+        "lib/font/woff2/*.c",
+        "lib/font/woff2/*.cpp",
+        "lib/grep/*.cpp",
+        "lib/fts/*.cpp",
+        "lib/physics/*.c",
+        "lib/procgen/*.c",
+        "lib/image/*.cpp"
+      ],
+      "exclude_patterns": [
+        "lib/clock_compat.c",
+        "lib/test_*.c",
+        "lib/test_*.cpp"
+      ],
+      "source_files": [
+        "lib/sqlite/sqlite3.c"
+      ],
+      "file_rules": [
+        {
+          "files": [
+            "lib/procgen/*.c"
+          ],
+          "build_options": [
+            "-ffp-contract=off"
+          ]
+        }
+      ],
+      "libraries": [
+        "utf8proc",
+        "re2",
+        "curl",
+        "nghttp2",
+        "mbedtls",
+        "mbedx509",
+        "mbedcrypto",
+        "libuv",
+        "brotlidec",
+        "brotlicommon",
+        "ThorVG",
+        "pthread",
+        "image-codecs",
+        "zlib",
+        "archive-iconv",
+        "openssl-crypto"
+      ],
+      "linux": {
+        "additional_libraries": [
+          "gomp"
+        ]
+      },
+      "windows": {
+        "additional_libraries": [
+          "dwrite",
+          "ole32",
+          "dbghelp",
+          "iphlpapi",
+          "userenv",
+          "opengl32",
+          "imm32",
+          "ws2_32",
+          "gdi32",
+          "crypt32",
+          "bcrypt",
+          "advapi32",
+          "user32",
+          "shell32",
+          "winmm",
+          "rpcrt4",
+          "wsock32",
+          "secur32",
+          "wldap32"
+        ]
+      },
+      "defines": [
+        "UTF8PROC_STATIC",
+        "MEMPOOL_RUNTIME_VM_PROVIDER"
+      ]
+    },
+    {
+      "name": "lambda-data",
+      "description": "Static Lambda core/io data and document-processing layer",
+      "pic_linux": true,
+      "lang": "c++17",
+      "source_patterns": [
+        "lambda/input/input*.cpp",
+        "lambda/input/markup/*.cpp",
+        "lambda/input/markup/block/*.cpp",
+        "lambda/input/markup/inline/*.cpp",
+        "lambda/input/markup/format/*.cpp",
+        "lambda/format/format*.cpp",
+        "lambda/network/*.cpp"
+      ],
+      "exclude_patterns": [
+        "lambda/format/format_latex_html.cpp",
+        "lambda/format/format_latex_html_v2.cpp"
+      ],
+      "source_files": [
+        "lambda/core/print.cpp",
+        "lambda/core/binary.cpp",
+        "lambda/core/utf_string.cpp",
+        "lambda/core/name_pool.cpp",
+        "lambda/core/well_known_markup_names.c",
+        "lambda/core/well_known_lambda_names.c",
+        "lambda/core/js_well_known_names.c",
+        "lambda/core/shape_builder.cpp",
+        "lambda/core/lambda-data.cpp",
+        "lambda/io/collection_io.cpp",
+        "lambda/io/mcp.cpp",
+        "lambda/io/mcp_client.cpp",
+        "lambda/io/mcp_tools.cpp",
+        "lambda/io/archive.cpp",
+        "lambda/io/archive_native.cpp",
+        "lambda/io/zip_archive.cpp",
+        "lambda/io/target.cpp",
+        "lambda/io/security_policy.cpp",
+        "lambda/io/security_io.cpp",
+        "lambda/io/security_channel.cpp",
+        "lambda/core/lambda-decimal.cpp",
+        "lambda/io/mark_builder.cpp",
+        "lambda/core/mark_reader.cpp",
+        "lambda/io/mark_editor.cpp",
+        "lambda/core/mem_factory_core.cpp",
+        "lambda/core/collection_storage.cpp",
+        "lambda/core/target_identity.cpp",
+        "lambda/format/format.cpp",
+        "lambda/format/html-defs.cpp",
+        "lambda/core/path.c",
+        "lambda/input/parse_error.cpp",
+        "lambda/input/rdb_query.cpp",
+        "lambda/input/source_tracker.cpp",
+        "lambda/input/input-context.cpp",
+        "lambda/input/input-latex-scanner.c",
+        "lambda/input/pdf_decompress.cpp",
+        "lambda/input/css/css_tokenizer.cpp",
+        "lambda/input/css/css_properties.cpp",
+        "lambda/input/css/css_value_parser.cpp",
+        "lambda/input/css/css_value.cpp",
+        "lambda/input/css/css_value.cpp",
+        "lambda/input/css/css_parser.cpp",
+        "lambda/input/css/css_paged_media.cpp",
+        "lambda/input/css/css_engine.cpp",
+        "lambda/input/css/css_counter_hook.cpp",
+        "lambda/input/css/css_symbol_hook.cpp",
+        "lambda/input/css/css_formatter.cpp",
+        "lambda/input/css/css_style_node.cpp",
+        "lambda/input/css/css_font_face.cpp",
+        "lambda/input/css/dom_node.cpp",
+        "lambda/input/css/dom_element.cpp",
+        "lambda/input/css/dom_xml_serializer.cpp",
+        "lambda/input/css/dom_blob_url.cpp",
+        "lambda/input/css/dom_lifecycle.cpp",
+        "lambda/input/css/style_epoch.cpp",
+        "lambda/input/css/selector_matcher.cpp",
+        "lambda/input/html5/html5_tree_builder.cpp",
+        "lambda/input/html5/html5_tokenizer.cpp",
+        "lambda/input/html5/html5_parser.cpp",
+        "lambda/input/html5/html5_token.cpp",
+        "lambda/core/physics_scene.cpp",
+        "lambda/core/navigation_graph.cpp",
+        "lambda/io/image_io.cpp"
+      ],
+      "libraries": [
+        "lambda-lib",
+        "mpdec",
+        "utf8proc",
+        "nghttp2",
+        "curl",
+        "ngtcp2_crypto_ossl",
+        "ngtcp2",
+        "nghttp3",
+        "zstd",
+        "ssh2",
+        "idn2",
+        "ssl",
+        "crypto",
+        "unistring",
+        "iconv",
+        "brotlidec",
+        "brotlicommon",
+        "mbedtls",
+        "mbedx509",
+        "mbedcrypto",
+        "zlib",
+        "re2",
+        "libuv",
+        "pthread",
+        "psl",
+        "wldap32",
+        "secur32",
+        "iphlpapi",
+        "archive-readers",
+        "lzma",
+        "bzip2",
+        "archive-iconv",
+        "openjpeg"
+      ],
+      "macos": {
+        "exclude_libraries": [
+          "ngtcp2_crypto_ossl",
+          "ngtcp2",
+          "nghttp3",
+          "ssh2",
+          "idn2",
+          "ssl",
+          "crypto",
+          "unistring",
+          "iconv"
+        ]
+      },
+      "linux": {
+        "exclude_libraries": [
+          "ngtcp2_crypto_ossl",
+          "ngtcp2",
+          "nghttp3",
+          "ssh2",
+          "idn2",
+          "ssl",
+          "crypto",
+          "unistring",
+          "iconv"
+        ]
+      },
+      "defines": [
+        "SIMPLE_SCHEMA_PARSER",
+        "PATH_NO_ITERATION",
+        "LAMBDA_IO_STATIC_VALUES",
+        "UTF8PROC_STATIC",
+        "SQLITE_THREADSAFE=1",
+        "SQLITE_OMIT_LOAD_EXTENSION"
+      ],
+      "link": "static"
+    }
+  ]
+}
