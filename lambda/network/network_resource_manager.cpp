@@ -47,15 +47,18 @@ double get_time_seconds() {
     return time_now_seconds();
 }
 
-// create network resource
-NetworkResource* create_network_resource(const char* url,
-                                                ResourceType type,
-                                                ResourcePriority priority,
-                                                struct DomElement* owner) {
+}  // namespace
+
+// create a resource whose owned fields are released by resource_release
+NetworkResource* network_resource_create(const char* url,
+                                         ResourceType type,
+                                         ResourcePriority priority,
+                                         struct DomElement* owner) {
     NetworkResource* res = (NetworkResource*)mem_calloc(1, sizeof(NetworkResource), MEM_CAT_NETWORK);
     if (!res) return NULL;
 
     res->url = mem_strdup(url, MEM_CAT_NETWORK);
+    if (!res->url) { mem_free(res); return NULL; }
     res->type = type;
     res->priority = priority;
     res->owner_element = owner;
@@ -72,6 +75,8 @@ NetworkResource* create_network_resource(const char* url,
     
     return res;
 }
+
+namespace {
 
 // free network resource
 void free_network_resource(NetworkResource* res) {
@@ -612,7 +617,7 @@ NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
         char* cached_path = enhanced_cache_lookup(mgr->file_cache, url);
         if (cached_path) {
             // create resource from cache
-            NetworkResource* res = create_network_resource(url, type, priority, owner);
+            NetworkResource* res = network_resource_create(url, type, priority, owner);
             if (res) {
                 res->state = STATE_CACHED;
                 res->local_path = cached_path;
@@ -644,7 +649,7 @@ NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
     }
     
     // create new resource
-    NetworkResource* res = create_network_resource(url, type, priority, owner);
+    NetworkResource* res = network_resource_create(url, type, priority, owner);
     if (!res) {
         pthread_mutex_unlock(&mgr->mutex);
         return NULL;

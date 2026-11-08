@@ -218,6 +218,10 @@ void resource_manager_set_error_callback(NetworkResourceManager* mgr,
                                         void (*callback)(NetworkResource*, void*),
                                         void* user_data);
 
+// New resources own their URL and start with one reference.
+NetworkResource* network_resource_create(const char* url, ResourceType type,
+                                         ResourcePriority priority, struct DomElement* owner);
+
 // Resource reference counting
 void resource_retain(NetworkResource* res);
 void resource_release(NetworkResource* res);
