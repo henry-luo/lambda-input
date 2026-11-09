@@ -1531,7 +1531,6 @@ static inline int64_t* array_num_shape_strides(ArrayNumShape* s) { return s->dat
 Range* range();
 
 List* list();  // constructs an empty list
-Item list_fill(List *list, int cnt, ...);  // fill the list with the items
 void list_push(List *list, Item item);
 void list_push_spread(List *list, Item item);  // push item, spreading if spreadable array
 Item list_end(List *list);  // value finish: none is null, one is the item (S2.5.5v2)
@@ -1545,9 +1544,6 @@ bool item_is_list(Item value);  // the list kind bit, on a generic or packed arr
 // S2.5.6: a single-value slot stores a list as its array image (a one-level
 // copy with the kind bit clear); any other value is returned unchanged.
 Item slot_image(Item value);
-// The JIT's direct field writer on a list value: store the image at the slot,
-// re-deriving the slot from the rooted owner after the copy allocates.
-void lambda_direct_field_store_image(Item owner, int64_t byte_offset, Item list);
 // Finish an operator result in the kind its operands decide (S2.5.7v2): a list
 // collapses (none is null, one is its item, S2.5.5v2); an array keeps its length.
 Item seq_finish_kind(Item result, bool as_list);
@@ -1776,7 +1772,6 @@ Item fn_call_borrowed_into(Function* fn, List* args, uint64_t* result_home);  //
 // Named *_apply_args, not *_call: `fn_call` is already the dynamic dispatcher.
 Item fn_apply_args(Item callee, Item args);
 Item pn_apply_args(Item callee, Item args);
-Item fn_call0_into(Function* fn, uint64_t* result_home);
 Item fn_call1_into(Function* fn, Item a, uint64_t* result_home);
 Item fn_call2_into(Function* fn, Item a, Item b, uint64_t* result_home);
 Item fn_call3_into(Function* fn, Item a, Item b, Item c, uint64_t* result_home);
@@ -2766,9 +2761,6 @@ extern "C" {
     ArrayNum* array_int_new(int64_t length);
     ArrayNum* array_int64_new(int64_t length);
     ArrayNum* array_float_new(int64_t length);
-    // T27-7: republish a packed float literal whose `null_mask` members were
-    // null as generic storage, so the later checked boundary sees the nulls.
-    Item array_float_literal_with_nulls(ArrayNum* packed, uint64_t null_mask);
 
     void array_float_set(ArrayNum *arr, int64_t index, double value);
     void array_int_set(ArrayNum *arr, int64_t index, int64_t lane);
@@ -2830,19 +2822,16 @@ extern "C" {
     Object* object_with_data(int64_t type_index);
     Object* object_with_tl(int64_t type_index, void* type_list_ptr);
     Item object_from_fields(const struct TypeObject* type, Item fields);
-    Object* object_fill(Object* obj, ...);
     // S2.1.3 object content face (lazily allocated side list)
     struct List* object_content(Object* obj);
     Object* object_content_fill(Object* obj, int count, ...);
     Object* object_content_fill_items(Object* obj, const Item* values, int count);
     // Same fill from a caller-rooted Item span; the T0 walker has no varargs.
     Object* object_fill_items(Object* obj, const Item* values, int value_count);
-    // S11.4.10: admit a literal's deferred fields (the T0 walker, from its
-    // rooted span) or admit then fill (the JIT); each returns the failure's
-    // error, or ItemNull when every field is admitted.
+    // S11.4.10: admit a literal's deferred fields from a caller-rooted span;
+    // return the failure's error, or ItemNull when every field is admitted.
     Item object_literal_admit_fields(const struct TypeObject* type, Item* values, int count,
         uint64_t deferred);
-    Item object_fill_checked(Object* obj, uint64_t deferred, ...);
 
     // these getters use the runtime number side stack
     Item array_get(Array *array, int64_t index);
@@ -2861,9 +2850,6 @@ extern "C" {
     String* get_ascii_char_string(unsigned char ch);
     Item fn_string_ord_at(Item str, int64_t index);
     uint64_t fn_string_char_word(Item str, int64_t index);
-    uint8_t fn_string_char_eq_ascii(Item str, int64_t index, uint8_t expected);
-    uint8_t fn_string_char_eq(Item left, int64_t left_index,
-                              Item right, int64_t right_index);
     Item map_get(Map* map, Item key);
     Item elmt_get(Element *elmt, Item key);
     Item object_get(Object* obj, Item key);
@@ -2961,7 +2947,6 @@ extern "C" {
     // length function
     int64_t fn_len(Item item);
     Item fn_len_checked(Item item);
-    Item fn_virtual_content_check(Item item);
     int64_t fn_count(Item item);  // S8.3.3v3: the size of the run an item is
     Item fn_content(Item item);   // read-only array view over an element's content
     int64_t fn_seq_count(Item item);  // positions a positional traversal visits
@@ -3043,7 +3028,6 @@ extern "C" {
     Item fn_gt(Item a, Item b);
     Item fn_le(Item a, Item b);
     Item fn_ge(Item a, Item b);
-    Bool fn_not(Item a);
     Bool fn_is(Item a, Item b);
     Bool fn_subtype(Item a, Item b);
     // Type-boundary primitives used by the MIR emitter. `lambda_type_check`
@@ -3070,8 +3054,6 @@ extern "C" {
         uint32_t guard);
     Item lambda_fn_colour_arg_check(Item argument);
     Item lambda_fn_colour_guard_list(Item callee, List* args, uint32_t guard);
-    Item lambda_fn_colour_guard_args(Item callee, uint32_t guard, int argc,
-        Item a, Item b, Item c);
     // Env-aware form used only by binder-carrying function entries.  The
     // legacy ABI remains a NULL-env wrapper for every existing boundary.
     Item lambda_type_check_env(Item value, Type* expected, Type** env,
@@ -3101,9 +3083,6 @@ extern "C" {
         const LambdaBoundary* boundary);
     Item lambda_report_boundary_failure(Item failure, const char* binding,
         int64_t tail_count, int64_t store);
-    // Exact identity guard for a first-class type argument.  This is not
-    // subtyping: raw variants are selected only by their immutable key.
-    Bool lambda_type_value_is_exact(Item value, Type* expected);
     // Exact semantic-type guard for a value binder. Container shapes compare
     // their authoritative descriptor pointer; generic containers compare the
     // same normalized kind reported by type(value).
@@ -3119,9 +3098,6 @@ extern "C" {
     // Other carriers retain the complete checked-boundary path.
     Item lambda_fill_for_contract(Item count, Item value, Type* expected,
         const char* boundary);
-    // compile-proved plain primitive destination; preserve the count's native int lane
-    Item lambda_fill_for_contract_int_lane(int64_t count, Item value, Type* expected,
-        const char* boundary);
     // activation-local metadata resolution; certificates belong to the current heap
     ArrayRepCert* lambda_array_rep_cert_resolve(Type* contract);
     Item lambda_fill_for_contract_int_lane_resolved(int64_t count, Item value,
@@ -3134,9 +3110,6 @@ extern "C" {
     bool lambda_try_fill_for_contract(Item count, Item value, Type* expected, Item* result);
     Item lambda_array_admit_numeric_contract(Item value, Type* expected,
         const char* boundary);
-    // `[]` admitted under `expected`: a certified empty ArrayNum for a
-    // primitive T[] contract, otherwise the checked generic empty array.
-    Item lambda_array_empty_for_contract(Type* expected, const char* boundary);
     Item lambda_map_set_checked(Item owner, Item key, Item value, Type* expected,
         const char* boundary);
     Item lambda_map_set_checked_inplace(Item owner, Item key, Item value, Type* expected,
@@ -3154,8 +3127,6 @@ extern "C" {
         int64_t shape, Type* expected, Type* leaf_contract);
     // one link of a declared path's contract walk; *open_leaf below an open array
     Type* lambda_map_path_contract_step(Type* current, Item key, bool* open_leaf);
-    Item lambda_array_set_checked(Item owner, int64_t index, Item value, Type* expected,
-        const char* boundary);
     Item lambda_array_set_checked_item(Item owner, Item key, Item value, Type* expected,
         const char* boundary);
     // shared resolved store plan; primitive proofs still guard the live carrier.
@@ -3163,8 +3134,6 @@ extern "C" {
         Type* expected, Type* element, const LaneStorageDesc* lane,
         const char* boundary, bool inplace, bool uncounted_primitive);
     Item lambda_array_set_checked_inplace(Item owner, int64_t index, Item value, Type* expected,
-        const char* boundary);
-    Item lambda_array_set_checked_inplace_item(Item owner, Item key, Item value, Type* expected,
         const char* boundary);
     // Nested array writes validate from the declared root, then relink private
     // children so a wrong leaf cannot weaken an enclosing T[][] contract.
@@ -3184,12 +3153,6 @@ extern "C" {
         Type* expected);
     Item lambda_array_set_nd_checked_inplace(Item owner, int ndim, int64_t* indices,
         Item value, Type* expected);
-    Item lambda_array_set_checked_lane(Item owner, int64_t index, Item value, Type* expected,
-        const char* boundary, uint8_t lane_kind, uint8_t lane_nullable,
-        uint8_t lane_byte_size);
-    Item lambda_array_set_checked_inplace_lane(Item owner, int64_t index, Item value,
-        Type* expected, const char* boundary, uint8_t lane_kind, uint8_t lane_nullable,
-        uint8_t lane_byte_size);
     // Typed append admits the element before capacity growth, then preserves
     // the array's full representation proof on the published replacement.
     Item lambda_array_push_checked(Item owner, Item value, Type* expected,
@@ -3320,7 +3283,6 @@ extern "C" {
     // G0: these return a Lambda `int`, so they return int's one native
     // representation. Their receivers are raw pointers, so none can fail.
     int64_t fn_len_l(List* list);       // list length
-    int64_t fn_len_a(Array* arr);       // array length
     int64_t fn_len_s(String* str);      // string length (UTF-8 aware)
     int64_t fn_len_e(Element* elmt);    // element children count
 
@@ -3466,15 +3428,10 @@ extern "C" {
     Bool fn_contains(Item str, Item substr);
     Item fn_join(Item a, Item b);
     Item fn_join_consume_open_array(Item left, Item right);
-    Item fn_join_consume_cert_array(Item left, Item right);
-    Item fn_join_consume_cert_array_item(Item left, Item element);
-    Item fn_join_consume_cert_array_pair(Item left, Item first, Item second);
     Item fn_join_fresh_array_item(Item left, Item element);
     // string functions
     Bool fn_starts_with(Item str, Item prefix);
-    Bool fn_starts_with_str(String* str, String* prefix);   // native String* variant
     Bool fn_ends_with(Item str, Item suffix);
-    Bool fn_ends_with_str(String* str, String* suffix);     // native String* variant
     Item fn_index_of(Item str, Item sub);
     Item fn_last_index_of(Item str, Item sub);
     int64_t fn_index_of_raw(Item str, Item sub);       // C/JS -1 sentinel adapter
@@ -3538,7 +3495,6 @@ extern "C" {
 
     Type* base_type(TypeId type_id);
     Type* const_type(int64_t type_index);
-    Type* const_type_with_tl(int64_t type_index, void* type_list_ptr);
     TypePattern* const_pattern(int64_t pattern_index);  // retrieve compiled pattern by index
     TypePattern* const_pattern_with_tl(int64_t pattern_index, void* type_list_ptr);
 
@@ -3748,9 +3704,6 @@ extern "C" {
     Item cow_bind_var_profiled(Item value);
     Item cow_prepare_write(Item old);
     Item cow_prepare_write_profiled(Item old);
-    // Closed JIT builder path for an unannotated `[]` whose append proof
-    // establishes an int lane; it retains normal COW replacement semantics.
-    Item lambda_array_int_push_inferred_cow(Item owner, Item value);
 
     // LR07-7/LR08-3 root-honesty witness.  Emitted by MIR Direct only when
     // LAMBDA_ROOT_WITNESS is set, at every point the transpiler DECLINES to
@@ -3808,15 +3761,12 @@ extern "C" {
     Item cow_path_set_raw(Item owner, Item key, Item value);
     Item cow_path_index(Item owner, Item key);
     Item cow_path_set_keys(Item owner, Item value, const Item* keys, int count, bool inplace);
-    int64_t cow_path_set_packed_index(Item owner, int64_t count, Item key0, Item key1,
-        Item key2, Item value);
     Item cow_path_set(Item owner, Item path, Item value);
     // NM-O8: nested store that leaves the ROOT alone (var / plain-pn params).
     Item cow_path_set_inplace(Item owner, Item path, Item value);
     // CW25: detach root..leaf and return the leaf, for a `var` path borrow.
     Item cow_path_borrow(Item owner, Item path);
     Item cow_path_borrow_home(Item owner, Item path);
-    Item cow_path_borrow_home_keys(Item owner, const Item* keys, int64_t count);
     // CW25: bounded descriptor form for compiler-known member/int paths.
     Item cow_path_borrow_fixed(Item owner, int64_t count,
         Item key0, Item key1, Item key2);
@@ -3827,11 +3777,9 @@ extern "C" {
     // builtin mutator place (push/splice/set): spine detach; a non-container
     // link is returned as the value for the mutator to reject
     Item cow_place_leaf(Item owner, Item path);
-    Item cow_place_leaf_fixed(Item owner, int64_t count, Item key0, Item key1, Item key2);
-    // key-span forms of the two borrows: `count` (1..LAMBDA_PATH_KEYS_MAX)
-    // evaluated keys in caller memory, rooted by the walker
+    // key-span borrow: `count` (1..LAMBDA_PATH_KEYS_MAX) evaluated keys
+    // in caller memory, rooted by the walker
     Item cow_path_borrow_keys(Item owner, const Item* keys, int64_t count);
-    Item cow_place_leaf_keys(Item owner, const Item* keys, int64_t count);
 
     // runtime type coercion for typed array annotations (int[], float[], etc.)
     // converts generic Array/List to typed array, or validates existing typed array
