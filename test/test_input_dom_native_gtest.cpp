@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
-#include "../lambda/input/css/dom_element.hpp"
-#include "../lambda/input/css/dom_xml_serializer.h"
+#include "lambda/input/css/dom_element.hpp"
+#include "lambda/input/css/dom_xml_serializer.h"
 #include "lib/strbuf.h"
-#include "../lambda/input/css/dom_svg_context.h"
-#include "../lambda/input/input.hpp"
+#include "lambda/input/css/dom_svg_context.h"
+#include "lambda/input/input.hpp"
 #include "lib/mem.h"
 
 TEST(InputDomNativeTest, CreatesDetachedBackedElementsWithDocumentNamespaces) {

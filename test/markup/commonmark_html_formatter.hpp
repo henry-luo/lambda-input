@@ -12,8 +12,8 @@
 #define COMMONMARK_HTML_FORMATTER_HPP
 
 #include <string>
-#include "../../lambda/core/data.hpp"
-#include "../../lambda/core/mark_reader.hpp"
+#include "lambda/core/data.hpp"
+#include "lambda/core/mark_reader.hpp"
 #include "lib/stringbuf.h"
 
 // CommonMark HTML formatting context

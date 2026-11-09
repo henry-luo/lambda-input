@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../lambda/core/data.hpp"
+#include "lambda/core/data.hpp"
 
 struct MarkupTestInput {
     Input* input;

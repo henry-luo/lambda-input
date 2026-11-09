@@ -22,8 +22,8 @@
 #include <ctype.h>
 #include <signal.h>
 #include <setjmp.h>
-#include "../lambda/core/data.hpp"
-#include "../lambda/core/mark_reader.hpp"
+#include "lambda/core/data.hpp"
+#include "lambda/core/mark_reader.hpp"
 #include "lib/url.h"
 #include "lib/log.h"
 #include "lib/strbuf.h"

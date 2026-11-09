@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
-#include "../lambda/input/css/dom_blob_url.hpp"
-#include "../lambda/input/css/dom_element.hpp"
-#include "../lambda/input/input.hpp"
+#include "lambda/input/css/dom_blob_url.hpp"
+#include "lambda/input/css/dom_element.hpp"
+#include "lambda/input/input.hpp"
 #include "lib/mem.h"
 
 TEST(InputBlobUrlTest, DocumentOwnershipAndRevocation) {

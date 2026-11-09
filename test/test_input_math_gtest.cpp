@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "test_input_test_helpers.hpp"
-#include "../lambda/input/input.hpp"
-#include "../lambda/core/mark_reader.hpp"
+#include "lambda/input/input.hpp"
+#include "lambda/core/mark_reader.hpp"
 #include <stdlib.h>
 #include <string.h>
 

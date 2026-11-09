@@ -24,7 +24,8 @@ elif kind == 'native':
 else:
     raise SystemExit(f'input build: unknown signature kind {kind}')
 values = {name: os.environ.get(name, '') for name in names}
-path = Path('build/' + kind + '-build.json')
+profile = os.environ.get('NATIVE_PROFILE' if kind == 'native' else 'PROFILE', 'debug')
+path = Path('build/' + kind + '-' + profile + '-build.json')
 content = json.dumps(values, sort_keys=True, indent=2) + '\n'
 if not path.exists() or path.read_text() != content:
     # macOS Make 3.81 compares whole seconds; a same-second config switch

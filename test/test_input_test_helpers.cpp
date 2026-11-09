@@ -1,6 +1,6 @@
 #include "test_input_test_helpers.hpp"
-#include "../lambda/input/input.hpp"
-#include "../lambda/format/format.h"
+#include "lambda/input/input.hpp"
+#include "lambda/format/format.h"
 #include "lib/url.h"
 #include <stdlib.h>
 #include <string.h>

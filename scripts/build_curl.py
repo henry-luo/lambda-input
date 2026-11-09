@@ -37,8 +37,8 @@ def validate(prefix, config):
 
 
 def main():
-    if platform.system() != 'Darwin':
-        raise SystemExit('input curl: source build is currently supported on macOS only')
+    if platform.system() not in ('Darwin', 'Linux') and not os.environ.get('MSYSTEM'):
+        raise SystemExit('input curl: requires macOS, Linux or an MSYS2 toolchain')
     config = json.loads(CONFIG.read_text())['curl_dependency']
     pkg_config = shlex.split(os.environ.get('PKG_CONFIG', 'pkg-config'))
     packages = ('mbedtls', 'libnghttp2')

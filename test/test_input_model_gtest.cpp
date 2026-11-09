@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
-#include "../lambda/input/input.hpp"
-#include "../lambda/io/mark_builder.hpp"
-#include "../lambda/core/mark_reader.hpp"
+#include "lambda/input/input.hpp"
+#include "lambda/io/mark_builder.hpp"
+#include "lambda/core/mark_reader.hpp"
 #include "lib/log.h"
 #include "lib/mime-detect.h"
 #include "lib/url.h"
@@ -9,8 +9,8 @@
 #include "lib/base64.h"
 #include "lib/mem.h"
 #include "lib/image.h"
-#include "../lambda/input/input-scene3d.hpp"
-#include "../lambda/format/format.h"
+#include "lambda/input/input-scene3d.hpp"
+#include "lambda/format/format.h"
 #include <zlib.h>
 
 struct ModelMutation { const char *from,*to; };

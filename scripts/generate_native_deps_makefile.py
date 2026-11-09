@@ -23,8 +23,8 @@ def main():
     if len(sys.argv) != 2:
         raise SystemExit('usage: generate_native_deps_makefile.py PROFILE')
     profile = sys.argv[1]
-    if profile != 'debug':
-        raise SystemExit(f'native dependencies: unsupported profile {profile}; only debug is qualified')
+    if profile not in ('debug', 'release', 'release_profile', 'debug_asan', 'coverage'):
+        raise SystemExit(f'native dependencies: unsupported profile {profile}')
     system = {'Darwin': 'macos', 'Linux': 'linux', 'Windows': 'windows'}.get(platform.system())
     if not system:
         raise SystemExit(f'native dependencies: unsupported system {platform.system()}')
@@ -69,7 +69,7 @@ def main():
             standard = '-std=c++17' if cpp else '-std=c11'
             depfiles.append(obj + '.d')
             lines.extend([
-                f'{obj}: {source} build_native_deps_config.json build/native-deps.mk build/native-build.json',
+                f'{obj}: {source} build_native_deps_config.json build/native-deps.mk build/native-{profile}-build.json',
                 '\t@mkdir -p $(@D)',
                 f'\t{compiler} $(CPPFLAGS) $(PLATFORM_FLAGS) $(NATIVE_FLAGS) '
                 + ' '.join(quote(flag) for flag in flags)

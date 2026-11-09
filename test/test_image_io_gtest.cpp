@@ -5,7 +5,7 @@
 #include "lib/endian.h"
 #include "lib/file.h"
 #include "lib/memtrack.h"
-#include "../lambda/io/image_io.h"
+#include "lambda/io/image_io.h"
 #include <string.h>
 #include <stdio.h>
 #include <tiffio.h>

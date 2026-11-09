@@ -21,8 +21,8 @@
 #include <stdbool.h>
 #include <string>
 #include <chrono>
-#include "../lambda/lambda.h"
-#include "../lambda/core/data.hpp"
+#include "lambda/lambda.h"
+#include "lambda/core/data.hpp"
 #include "lib/log.h"
 #include "lib/strbuf.h"
 #include "lib/mempool.h"

@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "../lambda/core/data.hpp"
+#include "lambda/core/data.hpp"
 #include <pthread.h>
 
 static __thread int scalar_host_calls;

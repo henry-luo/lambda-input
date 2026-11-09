@@ -41,8 +41,8 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <ctype.h>
-#include "../lambda/core/data.hpp"
-#include "../lambda/core/mark_reader.hpp"
+#include "lambda/core/data.hpp"
+#include "lambda/core/mark_reader.hpp"
 #include "lib/arraylist.h"
 #include "lib/strbuf.h"
 #include "lib/mempool.h"
@@ -2311,7 +2311,7 @@ TEST_F(CsvTests, SimpleCsvRoundtrip) {
 // definitions with 1,024-byte URLs, 256 anchors) and checks the result is
 // still correct rather than silently truncated.
 // ============================================================================
-#include "../lambda/input/source_tracker.hpp"
+#include "lambda/input/source_tracker.hpp"
 
 static int count_occurrences(const char* hay, const char* needle) {
     int n = 0;
