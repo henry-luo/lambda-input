@@ -16,8 +16,8 @@
 #include "inline_common.hpp"
 #include "../markup_highlight.hpp"
 extern "C" {
-#include "../../../../lib/log.h"
-#include "../../../../lib/str.h"
+#include "lib/log.h"
+#include "lib/str.h"
 }
 #include <cstring>
 

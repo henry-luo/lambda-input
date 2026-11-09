@@ -4,9 +4,9 @@
 #include "html-defs.h"
 #include "../core/mark_reader.hpp"
 #include "../input/css/css_symbol_hook.h"
-#include "../../lib/stringbuf.h"
-#include "../../lib/str.h"
-#include "../../lib/mem_factory.h"
+#include "lib/stringbuf.h"
+#include "lib/str.h"
+#include "lib/mem_factory.h"
 
 void print_named_items(StringBuf *strbuf, TypeMap *map_type, void* map_data);
 

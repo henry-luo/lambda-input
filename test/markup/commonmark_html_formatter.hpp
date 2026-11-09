@@ -14,7 +14,7 @@
 #include <string>
 #include "../../lambda/core/data.hpp"
 #include "../../lambda/core/mark_reader.hpp"
-#include "../../lib/stringbuf.h"
+#include "lib/stringbuf.h"
 
 // CommonMark HTML formatting context
 class CommonMarkHtmlContext {

@@ -1,6 +1,7 @@
 """Load the shared JSON build descriptions without duplicating source lists."""
 
 import json
+import os
 from pathlib import Path
 
 
@@ -11,7 +12,14 @@ def load_build_config(path, ancestors=()):
     config = json.loads(path.read_text(encoding='utf-8'))
     merged = {}
     for imported in config.pop('config_imports', []):
-        _merge(merged, load_build_config(path.parent / imported, (*ancestors, path)))
+        if isinstance(imported, dict):
+            # A caller may select a sibling checkout without changing its manifest.
+            selected_root = os.environ.get(imported['root_env'])
+            imported_path = (path.parent / selected_root / imported['root_path']
+                             if selected_root else path.parent / imported['path'])
+        else:
+            imported_path = path.parent / imported
+        _merge(merged, load_build_config(imported_path, (*ancestors, path)))
     _merge(merged, config)
     for key in ('targets', 'libraries', 'dev_libraries'):
         names = [item['name'] for item in merged.get(key, []) if isinstance(item, dict)]

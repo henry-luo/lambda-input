@@ -1,5 +1,5 @@
 #include "html5_parser.h"
-#include "../../../lib/log.h"
+#include "lib/log.h"
 #include "../../io/mark_builder.hpp"
 #include "../../core/mark_reader.hpp"
 #include "../../io/mark_editor.hpp"

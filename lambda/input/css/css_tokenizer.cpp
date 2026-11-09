@@ -1,9 +1,9 @@
 #include "css_tokenizer.hpp"
 #include <stdlib.h>
 #include <string.h>
-#include "../../../lib/str.h"
-#include "../../../lib/escape.h"
-#include "../../../lib/mem_grow.hpp"
+#include "lib/str.h"
+#include "lib/escape.h"
+#include "lib/mem_grow.hpp"
 #include <assert.h>
 
 // Helper function to parse CSS unit from string

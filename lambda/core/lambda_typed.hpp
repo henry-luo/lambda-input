@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdint.h>
 
-#include "../../lib/ownership.hpp"
+#include "lib/ownership.hpp"
 #include "data.hpp"
 
 namespace lam {

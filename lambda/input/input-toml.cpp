@@ -1,5 +1,5 @@
 #include "input.hpp"
-#include "../../lib/str.h"
+#include "lib/str.h"
 #include "../io/mark_builder.hpp"
 #include "../core/mark_reader.hpp"
 #include "input-context.hpp"

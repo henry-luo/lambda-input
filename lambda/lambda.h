@@ -1,5 +1,5 @@
 #pragma once
-#include "../lib/lambda_api.h"
+#include "lib/lambda_api.h"
 // #include <math.h>  // MIR has problem parsing math.h
 
 // Include standard integer types from system
@@ -1000,7 +1000,7 @@ typedef struct ByteBufferHandle ByteBufferHandle;
 typedef uint64_t DateTime;
 typedef uint64_t Item;
 #else
-#include "../lib/datetime.h"
+#include "lib/datetime.h"
 typedef struct Item Item;
 #endif
 

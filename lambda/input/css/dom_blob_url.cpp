@@ -1,8 +1,8 @@
 #include "dom_blob_url.hpp"
 #include "dom_element.hpp"
-#include "../../../lib/mem.h"
-#include "../../../lib/strbuf.h"
-#include "../../../lib/url.h"
+#include "lib/mem.h"
+#include "lib/strbuf.h"
+#include "lib/url.h"
 #include <stdint.h>
 #include <string.h>
 

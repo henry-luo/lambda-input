@@ -14,7 +14,7 @@
 #include "markup_common.hpp"
 #include "format_adapter.hpp"
 #include "../input-context.hpp"
-#include "../../../lib/hashmap.h"
+#include "lib/hashmap.h"
 #include "../../io/mark_builder.hpp"
 
 // Forward declaration for HTML5 parser

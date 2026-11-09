@@ -3,7 +3,7 @@
 // A full PSL implementation would load from data/public_suffix_list.dat.
 
 #include "public_suffix.h"
-#include "../../lib/str.h"
+#include "lib/str.h"
 #include <string.h>
 
 // Common TLDs and well-known public suffixes

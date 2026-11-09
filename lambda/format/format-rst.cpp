@@ -3,7 +3,7 @@
 
 #include "format.h"
 #include "format-markup.h"
-#include "../../lib/stringbuf.h"
+#include "lib/stringbuf.h"
 
 void format_rst(StringBuf* sb, Item root_item) {
     format_markup(sb, root_item, &RST_RULES);

@@ -3,9 +3,9 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../../lib/mempool.h"
-#include "../../../lib/strbuf.h"
-#include "../../../lib/mem_node.hpp"
+#include "lib/mempool.h"
+#include "lib/strbuf.h"
+#include "lib/mem_node.hpp"
 #include "../../core/name_identity.h"
 
 // Color type for text color (same as in css_style.hpp)

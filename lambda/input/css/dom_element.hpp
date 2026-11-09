@@ -4,11 +4,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-#include "../../../lib/avl_tree.h"
-#include "../../../lib/arraylist.h"
-#include "../../../lib/arena.h"
-#include "../../../lib/ownership.hpp"
-#include "../../../lib/strbuf.h"
+#include "lib/avl_tree.h"
+#include "lib/arraylist.h"
+#include "lib/arena.h"
+#include "lib/ownership.hpp"
+#include "lib/strbuf.h"
 #include "css_style.hpp"
 #include "css_style_node.hpp"
 #include "dom_lifecycle.hpp"

@@ -1,5 +1,5 @@
 #include "input-context.hpp"
-#include "../../lib/log.h"
+#include "lib/log.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdint>

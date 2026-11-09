@@ -14,7 +14,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "../../lib/str.h"
+#include "lib/str.h"
 
 #ifdef __cplusplus
 extern "C" {

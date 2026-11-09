@@ -3,11 +3,11 @@
 #include "dom_element.hpp"
 #include "dom_node.hpp"
 #include "../../core/data.hpp"
-#include "../../../lib/arena.h"
-#include "../../../lib/log.h"
-#include "../../../lib/time_util.h"
-#include "../../../lib/mem_grow.hpp"
-#include "../../../lib/hashmap_helpers.h"
+#include "lib/arena.h"
+#include "lib/log.h"
+#include "lib/time_util.h"
+#include "lib/mem_grow.hpp"
+#include "lib/hashmap_helpers.h"
 
 #include <assert.h>
 #include <stdlib.h>

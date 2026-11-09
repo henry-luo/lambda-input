@@ -6,8 +6,8 @@
 #include "source_tracker.hpp"
 #include "../io/mark_builder.hpp"
 #include "../core/data.hpp"
-#include "../../lib/strbuf.h"
-#include "../../lib/memtrack.h"
+#include "lib/strbuf.h"
+#include "lib/memtrack.h"
 #include <cstdlib>
 #include <cstring>
 

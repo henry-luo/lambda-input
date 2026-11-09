@@ -6,12 +6,12 @@
 #endif
 #include "css_style_node.hpp"
 #include "css_symbol_hook.h"
-#include "../../../lib/log.h"
-#include "../../../lib/mem_factory.h"
-#include "../../../lib/strbuf.h"
-#include "../../../lib/stringbuf.h"
-#include "../../../lib/string.h"
-#include "../../../lib/str.h"
+#include "lib/log.h"
+#include "lib/mem_factory.h"
+#include "lib/strbuf.h"
+#include "lib/stringbuf.h"
+#include "lib/string.h"
+#include "lib/str.h"
 #include "../../core/well_known_markup_names.h"
 
 // boundary offsets count DOM children independently of layout or view publication.

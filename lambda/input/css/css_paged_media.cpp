@@ -1,7 +1,7 @@
 #include "css_paged_media.hpp"
 #include "css_formatter.hpp"
-#include "../../../lib/mem_grow.hpp"
-#include "../../../lib/str.h"
+#include "lib/mem_grow.hpp"
+#include "lib/str.h"
 #include <string.h>
 
 static const char* page_margin_names[CSS_PAGE_MARGIN_BOX_COUNT] = {

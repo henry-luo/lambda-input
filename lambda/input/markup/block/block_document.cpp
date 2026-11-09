@@ -7,7 +7,7 @@
 #include "block_common.hpp"
 #include "../wiki.hpp"
 #include "../markup_highlight.hpp"
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 #include "lib/hashmap_typed.hpp"
 #include "lib/arena.h"
 #include "lib/str.h"

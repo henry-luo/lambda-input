@@ -2,14 +2,14 @@
 // Shared-LRU implementation with HTTP cache policy
 
 #include "enhanced_file_cache.h"
-#include "../../lib/host_paths.h"
-#include "../../lib/file_utils.h"
-#include "../../lib/file.h"
-#include "../../lib/log.h"
-#include "../../lib/str.h"
-#include "../../lib/mem.h"
-#include "../../lib/hex.h"
-#include "../../lib/digest.h"
+#include "lib/host_paths.h"
+#include "lib/file_utils.h"
+#include "lib/file.h"
+#include "lib/log.h"
+#include "lib/str.h"
+#include "lib/mem.h"
+#include "lib/hex.h"
+#include "lib/digest.h"
 #include <string.h>
 #include <errno.h>
 

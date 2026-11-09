@@ -1,8 +1,8 @@
 #pragma once
 
 #include "security_policy.h"
-#include "../../lib/memtrack.h"
-#include "../../lib/file.h"
+#include "lib/memtrack.h"
+#include "lib/file.h"
 #include <stddef.h>
 
 #ifdef __cplusplus

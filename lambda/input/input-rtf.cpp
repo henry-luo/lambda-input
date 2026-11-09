@@ -4,7 +4,7 @@
 #include "lib/arraylist.h"
 #include "lib/log.h"
 #include "lib/stringbuf.h"
-#include "../../lib/str.h"
+#include "lib/str.h"
 #include <limits.h>
 
 using namespace lambda;

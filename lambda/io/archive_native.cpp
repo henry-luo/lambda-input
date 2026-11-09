@@ -1,10 +1,10 @@
 #include "archive.hpp"
-#include "../../lib/zip/archive.h"
-#include "../../lib/zip/archive_entry.h"
-#include "../../lib/archive_codec/codec.h"
-#include "../../lib/endian.h"
-#include "../../lib/utf.h"
-#include "../../lib/log.h"
+#include "lib/zip/archive.h"
+#include "lib/zip/archive_entry.h"
+#include "lib/archive_codec/codec.h"
+#include "lib/endian.h"
+#include "lib/utf.h"
+#include "lib/log.h"
 #include <limits.h>
 #include <string.h>
 

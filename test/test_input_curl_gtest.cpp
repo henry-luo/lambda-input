@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "../lib/curl_runtime.h"
-#include "../lib/curl_trust.h"
+#include "lib/curl_runtime.h"
+#include "lib/curl_trust.h"
 #include <stdlib.h>
 #include <string.h>
 

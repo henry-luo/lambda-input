@@ -12,7 +12,7 @@
 #include "lib/str.h"
 #include <stdlib.h>
 #include <math.h>
-#include "../../lib/string.h"
+#include "lib/string.h"
 
 using namespace lambda;
 

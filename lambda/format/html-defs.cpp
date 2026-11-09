@@ -5,8 +5,8 @@
  */
 #include "html-defs.h"
 #include "../core/markup_name_classes.hpp"
-#include "../../lib/str.h"
-#include "../../lib/binsearch.h"
+#include "lib/str.h"
+#include "lib/binsearch.h"
 #include <string.h>
 
 // ── sorted tag/attribute tables ────────────────────────────────────

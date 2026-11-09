@@ -2,21 +2,21 @@
 // Network download implementation using libcurl
 
 #include "network_downloader.h"
-#include "../../lib/host_paths.h"
+#include "lib/host_paths.h"
 #include "http_client.h"
 #include "network_resource_manager.h"
 #include "cookie_jar.h"
 #include "enhanced_file_cache.h"
 #include "curl_response.h"
-#include "../../lib/log.h"
-#include "../../lib/file_utils.h"
+#include "lib/log.h"
+#include "lib/file_utils.h"
 #include <curl/curl.h>
 #include "curl_trust.h"
 #include <string.h>
-#include "../../lib/mem.h"
-#include "../../lib/str.h"
-#include "../../lib/byte_builder.h"
-#include "../../lib/curl_runtime.h"
+#include "lib/mem.h"
+#include "lib/str.h"
+#include "lib/byte_builder.h"
+#include "lib/curl_runtime.h"
 #include <time.h>
 #include <pthread.h>
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../lib/str.h"
+#include "lib/str.h"
 
 // input keyword identity is independent of rendering and live control storage.
 enum FormInputKind {

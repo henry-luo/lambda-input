@@ -1,6 +1,6 @@
 #include "input.hpp"
-#include "../../lib/mem.h"
-#include "../../lib/str.h"
+#include "lib/mem.h"
+#include "lib/str.h"
 #include "../io/mark_builder.hpp"
 #include "input-context.hpp"
 #include "source_tracker.hpp"

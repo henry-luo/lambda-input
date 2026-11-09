@@ -23,10 +23,10 @@
 #include <chrono>
 #include "../lambda/lambda.h"
 #include "../lambda/core/data.hpp"
-#include "../lib/log.h"
-#include "../lib/strbuf.h"
-#include "../lib/mempool.h"
-#include "../lib/url.h"
+#include "lib/log.h"
+#include "lib/strbuf.h"
+#include "lib/mempool.h"
+#include "lib/url.h"
 
 // Forward declarations
 extern "C" {

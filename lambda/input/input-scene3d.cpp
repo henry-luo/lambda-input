@@ -1,8 +1,8 @@
 #include "input-scene3d.hpp"
 #include "input-parsers.h"
-#include "../../lib/base64.h"
-#include "../../lib/mime-detect.h"
-#include "../../lib/image.h"
+#include "lib/base64.h"
+#include "lib/mime-detect.h"
+#include "lib/image.h"
 
 namespace lambda {
 const char* SceneAsset::absolute(const char* source, Url* base) {

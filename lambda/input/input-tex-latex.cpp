@@ -8,11 +8,11 @@
 #include "input-tex-internal.hpp"
 #include "input-latex-tables.h"
 #include "input-latex-scanner.h"
-#include "../../lib/str.h"
-#include "../../lib/file.h"
-#include "../../lib/log.h"
-#include "../../lib/memtrack.h"
-#include "../../lib/path_str.h"
+#include "lib/str.h"
+#include "lib/file.h"
+#include "lib/log.h"
+#include "lib/memtrack.h"
+#include "lib/path_str.h"
 #include "../io/security_io.h"
 #include <stdio.h>
 #include <stdlib.h>

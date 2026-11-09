@@ -1,5 +1,5 @@
 #include "navigation_graph.hpp"
-#include "../../lib/hash.h"
+#include "lib/hash.h"
 #include <math.h>
 #include <float.h>
 #include <string.h>

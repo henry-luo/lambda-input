@@ -2,7 +2,7 @@
 #define LAMBDA_UTF_STRING_H
 
 #include "../lambda.h"
-#include "../../lib/strbuf.h"
+#include "lib/strbuf.h"
 
 #ifdef __cplusplus
 extern "C" {

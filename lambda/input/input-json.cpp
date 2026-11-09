@@ -3,7 +3,7 @@
 #include "input-context.hpp"
 #include "input-utils.hpp"
 #include "../io/mark_builder.hpp"
-#include "../../lib/utf.h"
+#include "lib/utf.h"
 #include <cstring>
 #include <cstdlib>
 

@@ -360,7 +360,7 @@ Item parse_citation(MarkupParser* parser, const char** text) {
 // Entity Reference Parsing
 // ============================================================================
 
-#include "../../../../lib/html_entities.h"
+#include "lib/html_entities.h"
 
 /**
  * parse_entity_reference - Parse HTML entity and numeric character references

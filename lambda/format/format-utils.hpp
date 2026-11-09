@@ -1,9 +1,9 @@
 #ifndef FORMAT_UTILS_HPP
 #define FORMAT_UTILS_HPP
 
-#include "../../lib/stringbuf.h"
-#include "../../lib/str.h"
-#include "../../lib/mem_factory.h"
+#include "lib/stringbuf.h"
+#include "lib/str.h"
+#include "lib/mem_factory.h"
 #include "../core/data.hpp"
 #include "../core/mark_reader.hpp"
 #include "format-utils.h"

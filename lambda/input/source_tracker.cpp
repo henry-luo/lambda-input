@@ -1,6 +1,6 @@
 #include "source_tracker.hpp"
-#include "../../lib/log.h"
-#include "../../lib/str.h"
+#include "lib/log.h"
+#include "lib/str.h"
 #include <cstring>
 
 namespace lambda {

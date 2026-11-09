@@ -1,14 +1,14 @@
 #include "input-script-cache.h"
 #include "input.hpp"
 
-#include "../../lib/file.h"
-#include "../../lib/hash.h"
-#include "../../lib/hashmap_helpers.h"
-#include "../../lib/log.h"
-#include "../../lib/mem.h"
-#include "../../lib/mem_factory.h"
-#include "../../lib/shell.h"
-#include "../../lib/arraylist.h"
+#include "lib/file.h"
+#include "lib/hash.h"
+#include "lib/hashmap_helpers.h"
+#include "lib/log.h"
+#include "lib/mem.h"
+#include "lib/mem_factory.h"
+#include "lib/shell.h"
+#include "lib/arraylist.h"
 
 #include <pthread.h>
 #include <stdlib.h>

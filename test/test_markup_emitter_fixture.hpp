@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 #include "../lambda/io/mark_builder.hpp"
-#include "../lib/test_utils.h"
+#include "lib/test_utils.h"
 
 class FormatMarkupTest : public ::testing::Test {
 protected:

@@ -1,11 +1,11 @@
 #include "selector_matcher.hpp"
 #include "css_language_data.h"
 #include "../../core/well_known_markup_names.h"
-#include "../../../lib/hashmap.h"
-#include "../../../lib/arraylist.h"
-#include "../../../lib/mem.h"
-#include "../../../lib/str.h"
-#include "../../../lib/url.h"
+#include "lib/hashmap.h"
+#include "lib/arraylist.h"
+#include "lib/mem.h"
+#include "lib/str.h"
+#include "lib/url.h"
 #include <limits.h>
 #include <string.h>
 #include <stdlib.h>

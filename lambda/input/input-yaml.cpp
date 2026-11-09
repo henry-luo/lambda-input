@@ -2,14 +2,14 @@
 #include "input-context.hpp"
 #include "input-utils.hpp"
 #include "../io/mark_builder.hpp"
-#include "../../lib/mem.h"
-#include "../../lib/strbuf.h"
-#include "../../lib/str.h"
-#include "../../lib/string.h"
-#include "../../lib/log.h"
-#include "../../lib/hashmap.h"
-#include "../../lib/hashmap_typed.hpp"
-#include "../../lib/arena.h"
+#include "lib/mem.h"
+#include "lib/strbuf.h"
+#include "lib/str.h"
+#include "lib/string.h"
+#include "lib/log.h"
+#include "lib/hashmap.h"
+#include "lib/hashmap_typed.hpp"
+#include "lib/arena.h"
 
 using namespace lambda;
 

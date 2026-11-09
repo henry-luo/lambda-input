@@ -3,7 +3,7 @@
 
 #include "css_parser.hpp"
 #include "css_style.hpp"
-#include "../../../lib/mempool.h"
+#include "lib/mempool.h"
 
 #ifdef __cplusplus
 extern "C" {

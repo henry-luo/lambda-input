@@ -1,5 +1,5 @@
 #pragma once
-#include "../../../lib/rdt_geometry_types.h"
+#include "lib/rdt_geometry_types.h"
 #include <stdbool.h>
 
 struct DomDocument;

@@ -5,12 +5,12 @@
 #include "curl_multi_backend.h"
 #include "network_downloader.h"
 #include "network_resource_manager.h"
-#include "../../lib/arraylist.h"
-#include "../../lib/hashmap.h"
-#include "../../lib/hashmap_typed.hpp"
-#include "../../lib/log.h"
-#include "../../lib/mem.h"
-#include "../../lib/url.h"
+#include "lib/arraylist.h"
+#include "lib/hashmap.h"
+#include "lib/hashmap_typed.hpp"
+#include "lib/log.h"
+#include "lib/mem.h"
+#include "lib/url.h"
 #include <pthread.h>
 #include <string.h>
 

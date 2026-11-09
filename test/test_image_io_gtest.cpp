@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
-#include "../lib/image.h"
-#include "../lib/image_psd.h"
+#include "lib/image.h"
+#include "lib/image_psd.h"
 #include <zlib.h>
-#include "../lib/endian.h"
-#include "../lib/file.h"
-#include "../lib/memtrack.h"
+#include "lib/endian.h"
+#include "lib/file.h"
+#include "lib/memtrack.h"
 #include "../lambda/io/image_io.h"
 #include <string.h>
 #include <stdio.h>

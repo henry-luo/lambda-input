@@ -15,7 +15,7 @@
 #include "block_common.hpp"
 #include "../markup_highlight.hpp"
 #include "lib/arraylist.h"
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 #include <cstring>
 #include "lib/str.h"
 

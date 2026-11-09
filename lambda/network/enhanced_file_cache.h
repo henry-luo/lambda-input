@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <time.h>
 #include <pthread.h>
-#include "../../lib/lru_cache.h"
+#include "lib/lru_cache.h"
 
 #ifdef __cplusplus
 extern "C" {

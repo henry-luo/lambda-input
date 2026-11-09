@@ -6,11 +6,11 @@
 
 #include "css_font_face.hpp"
 #include "css_parser.hpp"
-#include "../../../lib/log.h"
-#include "../../../lib/memtrack.h"
-#include "../../../lib/path_str.h"
-#include "../../../lib/str.h"
-#include "../../../lib/url.h"
+#include "lib/log.h"
+#include "lib/memtrack.h"
+#include "lib/path_str.h"
+#include "lib/str.h"
+#include "lib/url.h"
 #include <string.h>
 #include <stdlib.h>
 

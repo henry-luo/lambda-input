@@ -1,7 +1,7 @@
 #include "physics_scene.hpp"
-#include "../../lib/physics/physics_math.h"
-#include "../../lib/str.h"
-#include "../../lib/string.h"
+#include "lib/physics/physics_math.h"
+#include "lib/str.h"
+#include "lib/string.h"
 #include <string.h>
 
 static bool physics_scene_fail(PhysicsScene* scene,const char* message) {

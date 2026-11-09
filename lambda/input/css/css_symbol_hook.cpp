@@ -1,6 +1,6 @@
 #include "css_symbol_hook.h"
-#include "../../../lib/emoji_shortcodes.h"
-#include "../../../lib/html_entities.h"
+#include "lib/emoji_shortcodes.h"
+#include "lib/html_entities.h"
 
 CssSymbolResolution css_symbol_resolve(const char* name, size_t length) {
     // emoji take precedence over entities with the same name, such as heart.

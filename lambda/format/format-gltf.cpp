@@ -5,17 +5,17 @@
 // clips are refused rather than silently dropped.
 #include "format.h"
 #include "../core/mark_reader.hpp"
-#include "../../lib/strbuf.h"
-#include "../../lib/escape.h"
-#include "../../lib/base64.h"
-#include "../../lib/color.h"
-#include "../../lib/mesh_primitive.h"
-#include "../../lib/mesh_uv.h"
-#include "../../lib/scene3d_material.h"
-#include "../../lib/scene3d_drawable.h"
-#include "../../lib/arraylist.hpp"
-#include "../../lib/log.h"
-#include "../../lib/mem.h"
+#include "lib/strbuf.h"
+#include "lib/escape.h"
+#include "lib/base64.h"
+#include "lib/color.h"
+#include "lib/mesh_primitive.h"
+#include "lib/mesh_uv.h"
+#include "lib/scene3d_material.h"
+#include "lib/scene3d_drawable.h"
+#include "lib/arraylist.hpp"
+#include "lib/log.h"
+#include "lib/mem.h"
 #include <math.h>
 #include <string.h>
 

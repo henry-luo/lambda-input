@@ -2,7 +2,7 @@
 
 #include "../lambda.h"
 #include "../core/target_identity.h"
-#include "../../lib/strview.h"
+#include "lib/strview.h"
 
 // Target is the IO-owned normalization of a Lambda Path or URL. Runtime and
 // parser consumers may inspect it, but URL/path ownership remains in lambda-io.

@@ -2,7 +2,7 @@
 #include "../lambda/input/css/dom_blob_url.hpp"
 #include "../lambda/input/css/dom_element.hpp"
 #include "../lambda/input/input.hpp"
-#include "../lib/mem.h"
+#include "lib/mem.h"
 
 TEST(InputBlobUrlTest, DocumentOwnershipAndRevocation) {
     Pool* pool = pool_create();

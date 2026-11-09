@@ -2,7 +2,7 @@
 #include "../io/mark_builder.hpp"
 #include "input-context.hpp"
 #include "source_tracker.hpp"
-#include "../../lib/str.h"
+#include "lib/str.h"
 
 // line-oriented helpers from input-utils.h (included transitively via input-rfc-text.h)
 #include "input-rfc-text.h"

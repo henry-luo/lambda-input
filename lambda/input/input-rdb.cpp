@@ -15,14 +15,14 @@
 #include "input-parsers.h"
 #include "../io/mark_builder.hpp"
 #include "../core/lambda-decimal.hpp"
-#include "../../lib/rdb.h"
-#include "../../lib/log.h"
-#include "../../lib/strbuf.h"
-#include "../../lib/file.h"
-#include "../../lib/hashmap.h"
-#include "../../lib/hashmap_typed.hpp"
-#include "../../lib/mem.h"
-#include "../../lib/mem_grow.hpp"
+#include "lib/rdb.h"
+#include "lib/log.h"
+#include "lib/strbuf.h"
+#include "lib/file.h"
+#include "lib/hashmap.h"
+#include "lib/hashmap_typed.hpp"
+#include "lib/mem.h"
+#include "lib/mem_grow.hpp"
 #include <string.h>
 
 // helper: get a map attribute by key using the shared packed-slot reader.

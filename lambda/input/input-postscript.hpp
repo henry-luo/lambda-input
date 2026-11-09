@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../io/mark_builder.hpp"
-#include "../../lib/strbuf.h"
-#include "../../lib/byte_builder.h"
+#include "lib/strbuf.h"
+#include "lib/byte_builder.h"
 
 // shared PDF/PostScript byte syntax; callers choose their output representation.
 struct PsStringResult {

@@ -2,8 +2,8 @@
 #include "css_parser.hpp"
 #include "well_known_css_property_mapping.h"
 #include <string.h>
-#include "../../../lib/mem.h"
-#include "../../../lib/color.h"
+#include "lib/mem.h"
+#include "lib/color.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <assert.h>
@@ -12,8 +12,8 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <float.h>
-#include "../../../lib/math_utils.h"
-#include "../../../lib/str.h"
+#include "lib/math_utils.h"
+#include "lib/str.h"
 
 // Forward declarations for validator functions
 static bool validate_length(const char* value_str, void** parsed_value, Pool* pool);

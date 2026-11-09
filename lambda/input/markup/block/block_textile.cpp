@@ -7,8 +7,8 @@
  * - Block modifiers: (class#id), {style}, [lang], alignment
  */
 #include "block_common.hpp"
-#include "../../../../lib/mem.h"
-#include "../../../../lib/str.h"
+#include "lib/mem.h"
+#include "lib/str.h"
 #include <cstring>
 
 namespace lambda {

@@ -7,8 +7,8 @@
 // order or a public-header build macro.
 #include "../core/data.hpp"
 #include "../io/input-allocation-context.h"
-#include "../../lib/url.h"
-#include "../../lib/log.h"
+#include "lib/url.h"
+#include "lib/log.h"
 #include "markup-format.h"  // For MarkupFormat enum
 #include "input-script-cache.h"
 

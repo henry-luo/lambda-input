@@ -13,8 +13,8 @@
 #ifndef LAMBDA_INPUT_RDB_QUERY_H
 #define LAMBDA_INPUT_RDB_QUERY_H
 
-#include "../../lib/rdb.h"
-#include "../../lib/strbuf.h"
+#include "lib/rdb.h"
+#include "lib/strbuf.h"
 
 #ifdef __cplusplus
 extern "C" {

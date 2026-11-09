@@ -17,7 +17,7 @@
  */
 #include "../format_adapter.hpp"
 #include <cstring>
-#include "../../../../lib/str.h"
+#include "lib/str.h"
 
 namespace lambda {
 namespace markup {

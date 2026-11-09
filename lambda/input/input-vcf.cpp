@@ -4,7 +4,7 @@
 #include "source_tracker.hpp"
 
 extern "C" {
-#include "../../lib/str.h"
+#include "lib/str.h"
 }
 
 // line-oriented helpers from input-utils.h (included transitively via input-rfc-text.h)

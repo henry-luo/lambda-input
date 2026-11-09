@@ -1,6 +1,6 @@
 #include "format.h"
 #include "format-utils.h"
-#include "../../lib/stringbuf.h"
+#include "lib/stringbuf.h"
 #include "../core/mark_reader.hpp"
 #include <ctype.h>
 

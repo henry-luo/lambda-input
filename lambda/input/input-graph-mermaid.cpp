@@ -4,8 +4,8 @@
 #include "input-context.hpp"
 #include "input-utils.hpp"
 #include "source_tracker.hpp"
-#include "../../lib/arraylist.h"
-#include "../../lib/log.h"
+#include "lib/arraylist.h"
+#include "lib/log.h"
 #include <string.h>
 
 using namespace lambda;

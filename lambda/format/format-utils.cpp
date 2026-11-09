@@ -1,7 +1,7 @@
 #include "format-utils.h"
 #include "format-markup.h"
-#include "../../lib/str.h"
-#include "../../lib/log.h"
+#include "lib/str.h"
+#include "lib/log.h"
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>

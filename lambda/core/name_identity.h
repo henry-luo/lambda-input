@@ -4,9 +4,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "../../lib/string.h"
-#include "../../lib/str.h"
-#include "../../lib/hash.h"
+#include "lib/string.h"
+#include "lib/str.h"
+#include "lib/hash.h"
 
 // A NameId identifies a generated or identity-scope NamePool record. The
 // upper 16 bits select the owning segment and the lower 16 bits select its

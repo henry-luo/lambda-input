@@ -43,11 +43,11 @@
 #include <ctype.h>
 #include "../lambda/core/data.hpp"
 #include "../lambda/core/mark_reader.hpp"
-#include "../lib/arraylist.h"
-#include "../lib/strbuf.h"
-#include "../lib/mempool.h"
-#include "../lib/url.h"
-#include "../lib/log.h"
+#include "lib/arraylist.h"
+#include "lib/strbuf.h"
+#include "lib/mempool.h"
+#include "lib/url.h"
+#include "lib/log.h"
 
 extern "C" {
     Input* input_from_source(char* source, Url* abs_url, String* type, String* flavor);

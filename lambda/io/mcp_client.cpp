@@ -2,9 +2,9 @@
 #include "mark_builder.hpp"
 #include "../core/mark_reader.hpp"
 #include "../input/input.hpp"
-#include "../../lib/str.h"
-#include "../../lib/shell.h"
-#include "../../lib/base64.h"
+#include "lib/str.h"
+#include "lib/shell.h"
+#include "lib/base64.h"
 #include <string.h>
 #include <uv.h>
 

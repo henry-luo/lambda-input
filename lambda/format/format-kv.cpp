@@ -2,8 +2,8 @@
 // Parameterized by KeyValueFormatConfig for format-specific behavior
 #include "format.h"
 #include "format-utils.hpp"
-#include "../../lib/stringbuf.h"
-#include "../../lib/log.h"
+#include "lib/stringbuf.h"
+#include "lib/log.h"
 #include <string.h>
 
 // ==============================================================================

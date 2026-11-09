@@ -2,7 +2,7 @@
 #define LAMBDA_INPUT_JSX_COMMON_HPP
 
 #include "input-utils.h"
-#include "../../lib/str.h"
+#include "lib/str.h"
 #include <stddef.h>
 
 static inline bool jsx_is_identifier_start(char c) {

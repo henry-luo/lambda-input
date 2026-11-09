@@ -1,8 +1,8 @@
 #include "network_resource_manager.h"
 #include "font_resource_faces.h"
 #include "resource_processor_hook.h"
-#include "../../lib/mem.h"
-#include "../../lib/time_util.h"
+#include "lib/mem.h"
+#include "lib/time_util.h"
 
 // create a resource whose owned fields are released by resource_release
 NetworkResource* network_resource_create(const char* url,

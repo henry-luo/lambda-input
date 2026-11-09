@@ -4,9 +4,9 @@
 #include "lambda_typed.hpp"
 #include "mark_name.hpp"
 #include "../io/target.h"
-#include "../../lib/log.h"
-#include "../../lib/escape.h"
-#include "../../lib/str.h"
+#include "lib/log.h"
+#include "lib/escape.h"
+#include "lib/str.h"
 #include <math.h>
 #include <inttypes.h>  // for PRId64
 #include <string.h>

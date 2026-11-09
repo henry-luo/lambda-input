@@ -1,6 +1,6 @@
 #ifndef LAMBDA_IMAGE_IO_H
 #define LAMBDA_IMAGE_IO_H
-#include "../../lib/image.h"
+#include "lib/image.h"
 #ifdef __cplusplus
 extern "C" {
 #endif

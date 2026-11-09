@@ -4,7 +4,7 @@
 
 #include <gtest/gtest.h>
 #include "../lambda/input/input.hpp"
-#include "../lib/test_utils.h"
+#include "lib/test_utils.h"
 #include "test_input_test_helpers.hpp"
 #include <stdio.h>
 #include <stdlib.h>

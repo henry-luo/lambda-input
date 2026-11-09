@@ -8,8 +8,8 @@
 #pragma once
 #include "input-utils.h"
 #include "input-context.hpp"
-#include "../../lib/strbuf.h"
-#include "../../lib/escape.h"
+#include "lib/strbuf.h"
+#include "lib/escape.h"
 
 namespace lambda {
 

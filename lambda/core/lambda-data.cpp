@@ -2,12 +2,12 @@
 #include "lambda-decimal.hpp"
 #include "collection_storage.h"
 #include "target_identity.h"
-#include "../../lib/log.h"
-#include "../../lib/mempool.h"
-#include "../../lib/memtrack.h"
-#include "../../lib/math_checked.hpp"
-#include "../../lib/arena.h"  // for arena_owns()
-#include "../../lib/atomic.h"
+#include "lib/log.h"
+#include "lib/mempool.h"
+#include "lib/memtrack.h"
+#include "lib/math_checked.hpp"
+#include "lib/arena.h"  // for arena_owns()
+#include "lib/atomic.h"
 
 Type TYPE_NULL = {.type_id = LMD_TYPE_NULL};
 Type TYPE_UNDEFINED = {.type_id = LMD_TYPE_UNDEFINED};  // JavaScript undefined

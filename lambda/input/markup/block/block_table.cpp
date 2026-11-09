@@ -11,7 +11,7 @@
 #include "block_common.hpp"
 #include "../wiki.hpp"
 #include "../../../core/mark_reader.hpp"
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 #include "lib/arraylist.h"
 
 namespace lambda {

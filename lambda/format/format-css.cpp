@@ -2,8 +2,8 @@
 #include "format.h"
 #include "../input/css/css_formatter.hpp"
 #include "../input/css/css_style.hpp"
-#include "../../lib/stringbuf.h"
-#include "../../lib/string.h"
+#include "lib/stringbuf.h"
+#include "lib/string.h"
 #include <string.h>
 
 // Helper to check if item is a CssStylesheet (has 0xCC marker)

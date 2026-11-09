@@ -3,12 +3,12 @@
 
 #include "radiant_state_store.h"
 
-#include "../../lib/arraylist.h"
-#include "../../lib/file.h"
-#include "../../lib/log.h"
-#include "../../lib/mem.h"
-#include "../../lib/uuid.h"
-#include "../../lib/sqlite/sqlite3.h"
+#include "lib/arraylist.h"
+#include "lib/file.h"
+#include "lib/log.h"
+#include "lib/mem.h"
+#include "lib/uuid.h"
+#include "lib/sqlite/sqlite3.h"
 
 #include <pthread.h>
 #include <string.h>

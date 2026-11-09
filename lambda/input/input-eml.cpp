@@ -3,13 +3,13 @@
 #include "../io/mark_builder.hpp"
 #include "input-context.hpp"
 #include "source_tracker.hpp"
-#include "../../lib/base64.h"
-#include "../../lib/mail_mime.h"
-#include "../../lib/memtrack.h"
-#include "../../lib/strbuf.h"
+#include "lib/base64.h"
+#include "lib/mail_mime.h"
+#include "lib/memtrack.h"
+#include "lib/strbuf.h"
 
 extern "C" {
-#include "../../lib/str.h"
+#include "lib/str.h"
 }
 
 // line-oriented helpers and folded RFC header parsing

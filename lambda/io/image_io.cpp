@@ -1,8 +1,8 @@
 #include "image_io.h"
-#include "../../lib/file.h"
-#include "../../lib/memtrack.h"
-#include "../../lib/math_checked.hpp"
-#include "../../lib/log.h"
+#include "lib/file.h"
+#include "lib/memtrack.h"
+#include "lib/math_checked.hpp"
+#include "lib/log.h"
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>

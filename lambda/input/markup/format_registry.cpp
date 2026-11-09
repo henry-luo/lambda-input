@@ -7,8 +7,8 @@
 #include <cstring>
 
 extern "C" {
-#include "../../../lib/file.h"
-#include "../../../lib/str.h"
+#include "lib/file.h"
+#include "lib/str.h"
 }
 
 namespace lambda {

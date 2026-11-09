@@ -4,9 +4,9 @@
 
 #include "input-tex-internal.hpp"
 #include "input-latex-tables.h"
-#include "../../lib/str.h"
-#include "../../lib/log.h"
-#include "../../lib/memtrack.h"
+#include "lib/str.h"
+#include "lib/log.h"
+#include "lib/memtrack.h"
 #include <stdio.h>
 #include <new>
 

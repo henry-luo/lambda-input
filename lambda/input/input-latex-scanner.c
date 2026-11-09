@@ -1,5 +1,5 @@
 #include "input-latex-scanner.h"
-#include "../../lib/str.h"
+#include "lib/str.h"
 
 #include <ctype.h>
 #include <string.h>

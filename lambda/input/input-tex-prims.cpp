@@ -3,9 +3,9 @@
 #ifndef LAMBDA_NO_LATEX
 
 #include "input-tex-internal.hpp"
-#include "../../lib/str.h"
-#include "../../lib/log.h"
-#include "../../lib/memtrack.h"
+#include "lib/str.h"
+#include "lib/log.h"
+#include "lib/memtrack.h"
 #include <stdio.h>
 #include <new>
 

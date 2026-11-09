@@ -10,12 +10,12 @@
 #include "input-parse-options.h"
 #include "input-tex.hpp"
 #include "../io/mark_builder.hpp"
-#include "../../lib/log.h"
-#include "../../lib/str.h"
-#include "../../lib/strbuf.h"
-#include "../../lib/shell.h"
-#include "../../lib/url.h"
-#include "../../lib/memtrack.h"
+#include "lib/log.h"
+#include "lib/str.h"
+#include "lib/strbuf.h"
+#include "lib/shell.h"
+#include "lib/url.h"
+#include "lib/memtrack.h"
 #include <ctype.h>
 #include <string.h>
 

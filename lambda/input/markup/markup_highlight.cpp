@@ -16,9 +16,9 @@
 #include "../input.hpp"
 #include "../../io/input-allocation-context.h"
 #include "../html5/html5_parser.h"
-#include "../../../lib/mem_factory.h"
-#include "../../../lib/strbuf.h"
-#include "../../../lib/log.h"
+#include "lib/mem_factory.h"
+#include "lib/strbuf.h"
+#include "lib/log.h"
 #include <string.h>
 
 namespace lambda {

@@ -1,7 +1,7 @@
 #pragma once
 #include "mark_reader.hpp"
-#include "../../lib/arraylist.hpp"
-#include "../../lib/physics/physics.h"
+#include "lib/arraylist.hpp"
+#include "lib/physics/physics.h"
 
 // a read-only source cursor lets Mark and DOM scenes share the same physical compiler.
 struct PhysicsSceneSource {

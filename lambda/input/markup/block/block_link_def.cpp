@@ -12,7 +12,7 @@
  */
 #include "block_common.hpp"
 #include "../markup_highlight.hpp"
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 
 namespace lambda {
 namespace markup {

@@ -11,11 +11,11 @@
 
 using namespace lambda;
 #include <stdlib.h>
-#include "../../lib/datetime.h"
-#include "../../lib/file.h"
-#include "../../lib/file_utils.h"
-#include "../../lib/arraylist.h"
-#include "../../lib/log.h"
+#include "lib/datetime.h"
+#include "lib/file.h"
+#include "lib/file_utils.h"
+#include "lib/arraylist.h"
+#include "lib/log.h"
 
 // Returns an Input* representing the directory contents as a list of Path items
 // This mirrors how path iteration works in path.c resolve_directory_children()

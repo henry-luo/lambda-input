@@ -1,7 +1,7 @@
 #include "input-pdf-image.hpp"
-#include "../../lib/endian.h"
-#include "../../lib/image.h"
-#include "../../lib/mem.h"
+#include "lib/endian.h"
+#include "lib/image.h"
+#include "lib/mem.h"
 #include <openjpeg.h>
 #include <limits.h>
 #include <string.h>

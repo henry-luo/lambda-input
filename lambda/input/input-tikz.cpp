@@ -5,8 +5,8 @@
 #include "input-latex-scanner.h"
 #include "input-parsers.h"
 #include "../io/mark_builder.hpp"
-#include "../../lib/str.h"
-#include "../../lib/strbuf.h"
+#include "lib/str.h"
+#include "lib/strbuf.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>

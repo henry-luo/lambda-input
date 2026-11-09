@@ -5,10 +5,10 @@
 // belong to the character converter.
 #include "input-scene3d.hpp"
 #include "input-parsers.h"
-#include "../../lib/endian.h"
-#include "../../lib/str.h"
-#include "../../lib/strbuf.h"
-#include "../../lib/zlib_exact.h"
+#include "lib/endian.h"
+#include "lib/str.h"
+#include "lib/strbuf.h"
+#include "lib/zlib_exact.h"
 
 using namespace lambda;
 

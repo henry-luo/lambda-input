@@ -1,10 +1,10 @@
 #include "format.h"
 #include "format-utils.hpp"
 #include "../core/lambda-decimal.hpp"
-#include "../../lib/stringbuf.h"
-#include "../../lib/mem_factory.h"
-#include "../../lib/datetime.h"
-#include "../../lib/strbuf.h"
+#include "lib/stringbuf.h"
+#include "lib/mem_factory.h"
+#include "lib/datetime.h"
+#include "lib/strbuf.h"
 #include "../core/mark_reader.hpp"
 
 // Forward declarations using MarkReader API with JsonContext

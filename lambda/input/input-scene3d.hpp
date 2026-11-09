@@ -2,7 +2,7 @@
 #include "input.hpp"
 #include "input-context.hpp"
 #include "../core/mark_reader.hpp"
-#include "../../lib/arraylist.hpp"
+#include "lib/arraylist.hpp"
 #include <math.h>
 
 namespace lambda {

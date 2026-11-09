@@ -1,4 +1,4 @@
-#include "../../lib/mem.h"
+#include "lib/mem.h"
 #include <cstring>
 #include <ctime>
 #ifdef _WIN32
@@ -11,11 +11,11 @@
 #endif
 #include "input.hpp"
 #include "../core/data.hpp"
-#include "../../lib/hashmap.h"
-#include "../../lib/log.h"
-#include "../../lib/string.h"
-#include "../../lib/datetime.h"
-#include "../../lib/str.h"
+#include "lib/hashmap.h"
+#include "lib/log.h"
+#include "lib/string.h"
+#include "lib/datetime.h"
+#include "lib/str.h"
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>

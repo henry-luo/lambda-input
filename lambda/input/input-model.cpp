@@ -3,9 +3,9 @@
 #include "input-context.hpp"
 #include "input-utils.hpp"
 #include "../core/mark_reader.hpp"
-#include "../../lib/arraylist.hpp"
-#include "../../lib/hex.h"
-#include "../../lib/str.h"
+#include "lib/arraylist.hpp"
+#include "lib/hex.h"
+#include "lib/str.h"
 #include <math.h>
 
 using namespace lambda;

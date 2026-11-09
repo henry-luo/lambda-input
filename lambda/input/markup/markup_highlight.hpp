@@ -15,7 +15,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "../../../lib/arraylist.hpp"
+#include "lib/arraylist.hpp"
 
 namespace lambda {
 namespace markup {

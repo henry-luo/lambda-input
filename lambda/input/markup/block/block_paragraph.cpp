@@ -9,7 +9,7 @@
  */
 #include "block_common.hpp"
 #include "../markup_highlight.hpp"
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 #include <cstdio>
 #include <cstring>
 #include "lib/arraylist.h"

@@ -4,8 +4,8 @@
 
 #include <curl/curl.h>
 #include "../network/curl_trust.h"
-#include "../../lib/curl_runtime.h"
-#include "../../lib/host_paths.h"
+#include "lib/curl_runtime.h"
+#include "lib/host_paths.h"
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
@@ -14,19 +14,19 @@
 #else
 #include <unistd.h>
 #endif
-#include "../../lib/mem.h"
-#include "../../lib/byte_builder.h"
+#include "lib/mem.h"
+#include "lib/byte_builder.h"
 #include "input.hpp"
 #include "input-scene3d.hpp"
 #include "../io/fs_node.hpp"
 #include "../network/http_client.h"
 #include "../network/cookie_jar.h"
 #include "../network/enhanced_file_cache.h"
-#include "../../lib/file.h"
-#include "../../lib/log.h"
-#include "../../lib/str.h"
-#include "../../lib/string.h"
-#include "../../lib/mime-detect.h"
+#include "lib/file.h"
+#include "lib/log.h"
+#include "lib/str.h"
+#include "lib/string.h"
+#include "lib/mime-detect.h"
 
 // Structure to hold response data
 typedef struct {

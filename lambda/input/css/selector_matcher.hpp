@@ -4,9 +4,9 @@
 #include "dom_element.hpp"
 #include "css_style.hpp"
 #include "css_parser.hpp"
-#include "../../../lib/mempool.h"
-#include "../../../lib/hashmap.h"
-#include "../../../lib/arraylist.h"
+#include "lib/mempool.h"
+#include "lib/hashmap.h"
+#include "lib/arraylist.h"
 #include <stdint.h>
 #include <stdbool.h>
 

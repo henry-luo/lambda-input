@@ -1,6 +1,6 @@
 #include "pdf_decompress.h"
-#include "../../lib/byte_builder.h"
-#include "../../lib/mem.h"
+#include "lib/byte_builder.h"
+#include "lib/mem.h"
 #include <limits.h>
 #include <string.h>
 #include <zlib.h>

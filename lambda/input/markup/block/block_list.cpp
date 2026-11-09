@@ -15,7 +15,7 @@
 #include "../wiki.hpp"
 #include "../markup_highlight.hpp"
 #include <cstdio>
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 #include "lib/arraylist.h"
 #include "lib/str.h"
 

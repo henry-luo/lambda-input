@@ -6,11 +6,11 @@
 #include "input-utils.hpp"
 #include "../core/data.hpp"
 #include "../core/lambda-decimal.hpp"
-#include "../../lib/log.h"
-#include "../../lib/str.h"
-#include "../../lib/utf.h"
+#include "lib/log.h"
+#include "lib/str.h"
+#include "lib/utf.h"
 #include <errno.h>
-#include "../../lib/mem.h"
+#include "lib/mem.h"
 #include <limits.h>
 #include <string.h>
 

@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "../lib/https_pull.h"
-#include "../lib/mem.h"
+#include "lib/https_pull.h"
+#include "lib/mem.h"
 #include <stdlib.h>
 #include <string.h>
 

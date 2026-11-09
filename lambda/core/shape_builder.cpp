@@ -1,8 +1,8 @@
 #include "shape_builder.hpp"
 #include "data.hpp"  // For full ShapeEntry definition
-#include "../../lib/log.h"
-#include "../../lib/arena.h"
-#include "../../lib/mem_grow.hpp"
+#include "lib/log.h"
+#include "lib/arena.h"
+#include "lib/mem_grow.hpp"
 #include <string.h>
 #include <assert.h>
 

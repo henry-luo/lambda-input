@@ -2,8 +2,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "../../lib/strbuf.h"
-#include "../../lib/endian.h"
+#include "lib/strbuf.h"
+#include "lib/endian.h"
 
 #ifdef __cplusplus
 extern "C" {

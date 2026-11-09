@@ -1,7 +1,7 @@
 #include "input-character.hpp"
 #include "input-parsers.h"
-#include "../../lib/mime-detect.h"
-#include "../../lib/url.h"
+#include "lib/mime-detect.h"
+#include "lib/url.h"
 
 // `input(source, {type: 'character', flavor})`: a raw model tree converted
 // into the common <character> schema (vibe/Lambda_Pkg_Motion.md §6-§7).

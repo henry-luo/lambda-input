@@ -1,7 +1,7 @@
 #include "font_resource_faces.h"
-#include "../../lib/mem.h"
-#include "../../lib/str.h"
-#include "../../lib/queue.h"
+#include "lib/mem.h"
+#include "lib/str.h"
+#include "lib/queue.h"
 
 typedef struct FontResourceFaceNode {
     // link is first so this domain record can stay allocation/lifecycle-owned here.

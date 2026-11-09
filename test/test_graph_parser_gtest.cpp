@@ -7,11 +7,11 @@
 #include "../lambda/core/mark_reader.hpp"
 #include "../lambda/input/input.hpp"
 #include "../lambda/input/input-graph.h"
-#include "../lib/arraylist.h"
-#include "../lib/file.h"
-#include "../lib/mempool.h"
-#include "../lib/url.h"
-#include "../lib/log.h"
+#include "lib/arraylist.h"
+#include "lib/file.h"
+#include "lib/mempool.h"
+#include "lib/url.h"
+#include "lib/log.h"
 
 extern "C" {
     Input* input_from_source(const char* source, Url* abs_url, String* type, String* flavor);

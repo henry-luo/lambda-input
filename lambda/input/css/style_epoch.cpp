@@ -3,11 +3,11 @@
 #include "css_engine.hpp"
 #include "css_style_node.hpp"
 #include "dom_element.hpp"
-#include "../../../lib/log.h"
-#include "../../../lib/hash.h"
-#include "../../../lib/mem_factory.h"
-#include "../../../lib/mempool.h"
-#include "../../../lib/mem_grow.hpp"
+#include "lib/log.h"
+#include "lib/hash.h"
+#include "lib/mem_factory.h"
+#include "lib/mempool.h"
+#include "lib/mem_grow.hpp"
 
 #include <assert.h>
 #include <string.h>

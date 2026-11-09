@@ -1,8 +1,8 @@
 #ifndef FORMAT_UTILS_H
 #define FORMAT_UTILS_H
 
-#include "../../lib/stringbuf.h"
-#include "../../lib/escape.h"
+#include "lib/stringbuf.h"
+#include "lib/escape.h"
 #include "../core/data.hpp"
 #include "../core/mark_reader.hpp"
 

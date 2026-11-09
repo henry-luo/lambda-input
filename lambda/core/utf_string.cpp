@@ -3,10 +3,10 @@
 #include <utf8proc.h>
 #include <string.h>
 #include <stdlib.h>
-#include "../../lib/log.h"
-#include "../../lib/memtrack.h"
+#include "lib/log.h"
+#include "lib/memtrack.h"
 #include "utf_simple_casefold.inc"
-#include "../../lib/utf.h"
+#include "lib/utf.h"
 #include <limits.h>
 
 uint32_t utf8_simple_fold_next(uint32_t codepoint) {

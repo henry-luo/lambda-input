@@ -1,9 +1,9 @@
 #include "zip_archive.hpp"
-#include "../../lib/endian.h"
-#include "../../lib/log.h"
-#include "../../lib/memtrack.h"
-#include "../../lib/str.h"
-#include "../../lib/utf.h"
+#include "lib/endian.h"
+#include "lib/log.h"
+#include "lib/memtrack.h"
+#include "lib/str.h"
+#include "lib/utf.h"
 
 #include <limits.h>
 #include <stdarg.h>

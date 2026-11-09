@@ -6,7 +6,7 @@
 #ifdef __cplusplus
 
 #include "input-utils.hpp"
-#include "../../lib/str.h"
+#include "lib/str.h"
 #include <cstring>
 
 static inline void skip_to_eol(lambda::SourceTracker& tracker) {

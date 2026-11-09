@@ -3,10 +3,10 @@
 #include "../io/snapshot_identity.hpp"
 #include "../io/security_io.h"
 #include "../core/lambda-error-data.h"
-#include "../../lib/memtrack.h"
-#include "../../lib/str.h"
-#include "../../lib/utf.h"
-#include "../../lib/datetime.h"
+#include "lib/memtrack.h"
+#include "lib/str.h"
+#include "lib/utf.h"
+#include "lib/datetime.h"
 
 thread_local const ZipLimits* input_zip_limits = nullptr;
 static const char fs_backend_brand = 0;

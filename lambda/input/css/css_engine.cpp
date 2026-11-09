@@ -8,10 +8,10 @@
 #include <time.h>
 #include <stdint.h>
 #include <math.h>
-#include "../../../lib/mem_grow.hpp"
-#include "../../../lib/mem_factory.h"
-#include "../../../lib/str.h"
-#include "../../../lib/hash.h"
+#include "lib/mem_grow.hpp"
+#include "lib/mem_factory.h"
+#include "lib/str.h"
+#include "lib/hash.h"
 
 static uint64_t css_condition_hash_bytes(const char* text, size_t length) {
     uint64_t hash = UINT64_C(1469598103934665603);

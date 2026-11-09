@@ -10,9 +10,9 @@
  */
 
 #include "rdb_query.h"
-#include "../../lib/log.h"
+#include "lib/log.h"
 #include <string.h>
-#include "../../lib/mem.h"
+#include "lib/mem.h"
 
 extern "C" {
 

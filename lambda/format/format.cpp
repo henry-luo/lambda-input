@@ -1,16 +1,16 @@
 #include "format.h"
 #include "../io/script_format.hpp"
 #include "../core/print.h"
-#include "../../lib/base64.h"
-#include "../../lib/mem.h"
-#include "../../lib/strbuf.h"
-#include "../../lib/str.h"
-#include "../../lib/string.h"
+#include "lib/base64.h"
+#include "lib/mem.h"
+#include "lib/strbuf.h"
+#include "lib/str.h"
+#include "lib/string.h"
 #include "format-markup.h"
 #include "../core/lambda-decimal.hpp"
 #include "../core/mark_reader.hpp"
-#include "../../lib/stringbuf.h"
-#include "../../lib/log.h"
+#include "lib/stringbuf.h"
+#include "lib/log.h"
 
 static bool format_contains_complex(const ItemReader& item, int depth) {
     if (item.getType() == LMD_TYPE_COMPLEX) return true;

@@ -1,6 +1,6 @@
 #include "archive.hpp"
-#include "../../lib/log.h"
-#include "../../lib/memtrack.h"
+#include "lib/log.h"
+#include "lib/memtrack.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -247,8 +247,8 @@ bool archive_member_bytes(Archive* archive, uint32_t index, ByteSpan* bytes, Arc
 }
 
 #include "zip_archive.hpp"
-#include "../../lib/endian.h"
-#include "../../lib/str.h"
+#include "lib/endian.h"
+#include "lib/str.h"
 
 const char* archive_format_name(ArchiveFormat format) {
     static const char* names[] = {"", "zip", "7z", "tar", "rar", "rar5"};

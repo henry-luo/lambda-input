@@ -8,16 +8,16 @@
  *   Path("hosts") -> Path("etc") -> Path("file") -> ROOT_SENTINEL
  */
 
-#include "../../lib/strbuf.h"
-#include "../../lib/log.h"
-#include "../../lib/mempool.h"
-#include "../../lib/arraylist.h"
-#include "../../lib/hashmap_helpers.h"
-#include "../../lib/shell.h"
-#include "../../lib/mem.h"
+#include "lib/strbuf.h"
+#include "lib/log.h"
+#include "lib/mempool.h"
+#include "lib/arraylist.h"
+#include "lib/hashmap_helpers.h"
+#include "lib/shell.h"
+#include "lib/mem.h"
 #include "../lambda.h"
 #include "lambda-path.h"
-#include "../../lib/file.h"
+#include "lib/file.h"
 // The active C ABI mirrors DateTime as its packed word.
 extern DateTime* datetime_from_unix(Pool* pool, int64_t unix_timestamp);
 

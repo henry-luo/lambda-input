@@ -8,7 +8,7 @@
  * - Delimited blocks: ==== ---- **** ++++
  */
 #include "block_common.hpp"
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 #include <cstring>
 
 namespace lambda {

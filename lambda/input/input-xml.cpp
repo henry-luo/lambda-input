@@ -3,11 +3,11 @@
 #include "../io/mark_builder.hpp"
 #include "input-context.hpp"
 #include "source_tracker.hpp"
-#include "../../lib/html_entities.h"
-#include "../../lib/str.h"
-#include "../../lib/file.h"
-#include "../../lib/arraylist.h"
-#include "../../lib/hashmap_helpers.h"
+#include "lib/html_entities.h"
+#include "lib/str.h"
+#include "lib/file.h"
+#include "lib/arraylist.h"
+#include "lib/hashmap_helpers.h"
 #include "input-utils.h"
 
 using namespace lambda;

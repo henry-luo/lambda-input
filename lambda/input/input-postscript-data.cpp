@@ -2,8 +2,8 @@
 #include "input-pdf-image.hpp"
 #include "pdf_decompress.h"
 #include "../core/mark_reader.hpp"
-#include "../../lib/hex.h"
-#include "../../lib/mem.h"
+#include "lib/hex.h"
+#include "lib/mem.h"
 #include <limits.h>
 
 bool postscript_byte_view(Item source, const char** bytes, size_t* length, ByteBuilder* scratch) {

@@ -9,7 +9,7 @@
  * Extracted from input-markup.cpp parse_image() (lines 2226-2290)
  */
 #include "inline_common.hpp"
-#include "../../../../lib/str.h"
+#include "lib/str.h"
 #include <cstring>
 
 namespace lambda {

@@ -2,8 +2,8 @@
 #include "../core/lambda-decimal.hpp"
 #include <string.h>
 #include <ctype.h>
-#include "../../lib/stringbuf.h"
-#include "../../lib/mem_factory.h"
+#include "lib/stringbuf.h"
+#include "lib/mem_factory.h"
 #include "../core/mark_reader.hpp"
 #include "format-utils.hpp"
 

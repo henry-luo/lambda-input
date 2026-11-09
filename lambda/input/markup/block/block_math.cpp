@@ -4,7 +4,7 @@
  * Parses display math blocks ($$...$$)
  */
 #include "block_common.hpp"
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 
 namespace lambda {
 namespace markup {

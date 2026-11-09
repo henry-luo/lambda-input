@@ -2,10 +2,10 @@
 #include "format-utils.h"
 #include "format-utils.hpp"
 #include "../core/mark_reader.hpp"
-#include "../../lib/stringbuf.h"
-#include "../../lib/str.h"
-#include "../../lib/mem_factory.h"
-#include "../../lib/log.h"
+#include "lib/stringbuf.h"
+#include "lib/str.h"
+#include "lib/mem_factory.h"
+#include "lib/log.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>

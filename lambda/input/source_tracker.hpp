@@ -3,8 +3,8 @@
 #define LAMBDA_SOURCE_TRACKER_HPP
 
 #include "parse_error.hpp"
-#include "../../lib/strbuf.h"
-#include "../../lib/arraylist.hpp"
+#include "lib/strbuf.h"
+#include "lib/arraylist.hpp"
 #include <cstdint>
 #include <cstddef>
 

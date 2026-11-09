@@ -2,7 +2,7 @@
 
 #include "input.hpp"
 #include "input-parsers.h"
-#include "../../lib/log.h"
+#include "lib/log.h"
 #include <string.h>
 
 void parse_math(Input* input, const char* math_string, const char* flavor_str) {

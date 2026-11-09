@@ -4,11 +4,11 @@
 
 #include "cookie_jar.h"
 #include "radiant_state_store.h"
-#include "../../lib/log.h"
-#include "../../lib/mem.h"
-#include "../../lib/mem_grow.hpp"
-#include "../../lib/str.h"
-#include "../../lib/url.h"
+#include "lib/log.h"
+#include "lib/mem.h"
+#include "lib/mem_grow.hpp"
+#include "lib/str.h"
+#include "lib/url.h"
 
 #include <curl/curl.h>
 #include <string.h>

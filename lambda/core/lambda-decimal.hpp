@@ -13,7 +13,7 @@
 // the extended context serves inexact decimal operations, and exact +/-/*
 // operations use a local maximum-precision context.
 #pragma once
-#include "../../lib/lambda_api.h"
+#include "lib/lambda_api.h"
 
 // Forward declarations keep scalar users independent from libmpdec's context ABI.
 typedef struct mpd_context_t mpd_context_t;
@@ -21,7 +21,7 @@ typedef struct mpd_t mpd_t;
 
 #include <cstdint>
 #include <cstddef>
-#include "../../lib/strbuf.h"
+#include "lib/strbuf.h"
 
 // Forward declarations
 struct Decimal;

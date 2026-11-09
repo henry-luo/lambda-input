@@ -3,7 +3,7 @@
 #include "../lambda.h"
 #include "lambda-path.h"
 #include "../io/target.h"
-#include "../../lib/byte_storage.h"
+#include "lib/byte_storage.h"
 
 // ============================================================================
 // Definitions moved from lambda.h to keep the JIT-embedded header slim.

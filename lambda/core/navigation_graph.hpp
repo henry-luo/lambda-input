@@ -1,8 +1,8 @@
 #pragma once
 #include "mark_reader.hpp"
-#include "../../lib/navigation.h"
-#include "../../lib/arraylist.hpp"
-#include "../../lib/hashmap_typed.hpp"
+#include "lib/navigation.h"
+#include "lib/arraylist.hpp"
+#include "lib/hashmap_typed.hpp"
 struct NavigationBinding {char name[128];uint64_t id;};
 struct NavigationLinkBinding {NavigationBinding binding;char kind[32];NavigationLinkDesc description;};
 enum NavigationKind {NAVIGATION_GRAPH,NAVIGATION_GRID,NAVIGATION_MESH,NAVIGATION_BAKE,NAVIGATION_INVALID};

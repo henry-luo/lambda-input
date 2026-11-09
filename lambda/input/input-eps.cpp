@@ -2,8 +2,8 @@
 #include "input-parsers.h"
 #include "input-postscript.hpp"
 #include "input-context.hpp"
-#include "../../lib/str.h"
-#include "../../lib/utf.h"
+#include "lib/str.h"
+#include "lib/utf.h"
 #include <math.h>
 
 using namespace lambda;

@@ -28,9 +28,9 @@
 #include <map>
 #include "../../lambda/core/data.hpp"
 #include "../../lambda/core/mark_reader.hpp"
-#include "../../lib/strbuf.h"
-#include "../../lib/url.h"
-#include "../../lib/log.h"
+#include "lib/strbuf.h"
+#include "lib/url.h"
+#include "lib/log.h"
 #include "commonmark_html_formatter.hpp"
 #include "../test_baseline_mode.hpp"
 

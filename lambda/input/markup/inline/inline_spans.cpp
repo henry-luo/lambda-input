@@ -11,9 +11,9 @@
 #include "inline_common.hpp"
 #include "../wiki.hpp"
 #include "../markup_highlight.hpp"
-#include "../../../../lib/strbuf.h"
-#include "../../../../lib/log.h"
-#include "../../../../lib/str.h"
+#include "lib/strbuf.h"
+#include "lib/log.h"
+#include "lib/str.h"
 
 namespace lambda {
 namespace markup {

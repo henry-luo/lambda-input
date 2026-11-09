@@ -4,7 +4,7 @@
 #include "css_parser.hpp"
 #include "css_style.hpp"
 #include "css_environment.hpp"
-#include "../../../lib/mempool.h"
+#include "lib/mempool.h"
 #include <stdint.h>
 
 #ifdef __cplusplus

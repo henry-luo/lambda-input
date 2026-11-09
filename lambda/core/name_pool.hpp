@@ -1,10 +1,10 @@
 #pragma once
 
 #include "../lambda.h"
-#include "../../lib/mempool.h"
-#include "../../lib/strview.h"
-#include "../../lib/hashmap.h"
-#include "../../lib/ref_count.h"
+#include "lib/mempool.h"
+#include "lib/strview.h"
+#include "lib/hashmap.h"
+#include "lib/ref_count.h"
 #include "name_identity.h"
 
 typedef struct NamePool {

@@ -1,7 +1,7 @@
 #include "security_io.h"
-#include "../../lib/file.h"
-#include "../../lib/file_utils.h"
-#include "../../lib/arraylist.h"
+#include "lib/file.h"
+#include "lib/file_utils.h"
+#include "lib/arraylist.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>

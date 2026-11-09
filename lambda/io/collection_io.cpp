@@ -3,10 +3,10 @@
 #include "mark_builder.hpp"
 #include "../core/collection_storage.h"
 #include "../input/css/dom_node.hpp"
-#include "../../lib/arena.h"
-#include "../../lib/log.h"
-#include "../../lib/mempool.h"
-#include "../../lib/math_checked.hpp"
+#include "lib/arena.h"
+#include "lib/log.h"
+#include "lib/mempool.h"
+#include "lib/math_checked.hpp"
 
 // UI content helpers, shared by this Input-owned append and the runtime's
 // list_push: UI element content lives in an arena the collector never traces

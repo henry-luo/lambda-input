@@ -1,13 +1,13 @@
 #include "security_channel.h"
-#include "../../lib/endian.h"
-#include "../../lib/mem.h"
-#include "../../lib/ipc_stream.h"
+#include "lib/endian.h"
+#include "lib/mem.h"
+#include "lib/ipc_stream.h"
 #include <errno.h>
 #include <limits.h>
 #include <string.h>
 
 #ifndef _WIN32
-#include "../../lib/time_util.h"
+#include "lib/time_util.h"
 #include <pthread.h>
 
 enum { CHANNEL_HEADER = 32, CHANNEL_RESULT = 32, CHANNEL_PATH = 4096,

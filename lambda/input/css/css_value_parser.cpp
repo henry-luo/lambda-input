@@ -5,8 +5,8 @@
 #include <math.h>
 #include <limits.h>
 #include <stdio.h>
-#include "../../../lib/str.h"
-#include "../../../lib/string.h"
+#include "lib/str.h"
+#include "lib/string.h"
 
 // Forward declarations
 static void css_property_value_parser_set_default_env_vars(CssPropertyValueParser* parser);

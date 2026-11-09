@@ -4,7 +4,7 @@
 // Formatting is an io consumer.  Do not select a different Lambda ABI merely
 // because this public header was included before a runtime header.
 #include "../core/data.hpp"
-#include "../../lib/stringbuf.h"
+#include "lib/stringbuf.h"
 
 #ifdef __cplusplus
 #include <string>

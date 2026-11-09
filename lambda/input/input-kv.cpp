@@ -15,11 +15,11 @@
 #include "input-context.hpp"
 #include "input-utils.hpp"
 #include "source_tracker.hpp"
-#include "../../lib/str.h"
-#include "../../lib/string.h"
+#include "lib/str.h"
+#include "lib/string.h"
 
 extern "C" {
-#include "../../lib/log.h"
+#include "lib/log.h"
 }
 
 using namespace lambda;

@@ -2,7 +2,7 @@
 #include "input.hpp"
 #include "css/css_engine.hpp"
 #include "css/css_formatter.hpp"
-#include "../../lib/log.h"
+#include "lib/log.h"
 #include "lib/log.h"
 
 // Parse CSS using the new CSS engine

@@ -24,9 +24,9 @@
 #include <setjmp.h>
 #include "../lambda/core/data.hpp"
 #include "../lambda/core/mark_reader.hpp"
-#include "../lib/url.h"
-#include "../lib/log.h"
-#include "../lib/strbuf.h"
+#include "lib/url.h"
+#include "lib/log.h"
+#include "lib/strbuf.h"
 
 extern "C" {
     Input* input_from_source(const char* source, Url* abs_url, String* type, String* flavor);

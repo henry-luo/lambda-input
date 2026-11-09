@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../core/data.hpp"
-#include "../../lib/strbuf.h"
+#include "lib/strbuf.h"
 
 // each exchange owns its parsed values until its serialized reply is captured.
 struct McpExchange {

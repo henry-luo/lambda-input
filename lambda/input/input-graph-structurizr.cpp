@@ -1,5 +1,5 @@
 #include "input-graph.h"
-#include "../../lib/arraylist.h"
+#include "lib/arraylist.h"
 #include "../io/mark_builder.hpp"
 #include "../core/mark_reader.hpp"
 #include "input-context.hpp"

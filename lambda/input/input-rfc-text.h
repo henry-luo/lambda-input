@@ -13,9 +13,9 @@
 
 #include "input-utils.h"
 #include "input-context.hpp"
-#include "../../lib/str.h"
-#include "../../lib/stringbuf.h"
-#include "../../lib/arraylist.h"
+#include "lib/str.h"
+#include "lib/stringbuf.h"
+#include "lib/arraylist.h"
 
 // RFC 6350/5545 unfold the entire content line before names or parameters are read.
 static inline const char* rfc_unfold_content_lines(Input* input, const char* source) {

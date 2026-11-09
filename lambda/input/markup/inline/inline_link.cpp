@@ -13,8 +13,8 @@
  */
 #include "inline_common.hpp"
 #include "../markup_highlight.hpp"
-#include "../../../../lib/html_entities.h"
-#include "../../../../lib/strbuf.h"
+#include "lib/html_entities.h"
+#include "lib/strbuf.h"
 #include <cstring>
 
 namespace lambda {

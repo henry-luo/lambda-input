@@ -2,21 +2,21 @@
 // Full implementation with hashmap-based deduplication and arraylist scheduling
 
 #include "network_resource_manager.h"
-#include "../../lib/host_paths.h"
+#include "lib/host_paths.h"
 #include "network_downloader.h"
 #include "network_scheduler.h"
 #include "font_resource_faces.h"
 #include "resource_processor_hook.h"
 #include "cookie_jar.h"
 #include "../input/css/dom_element.hpp"
-#include "../../lib/url.h"
-#include "../../lib/log.h"
-#include "../../lib/hashmap.h"
-#include "../../lib/time_util.h"
-#include "../../lib/hashmap_typed.hpp"
-#include "../../lib/arraylist.h"
-#include "../../lib/file.h"
-#include "../../lib/mem.h"
+#include "lib/url.h"
+#include "lib/log.h"
+#include "lib/hashmap.h"
+#include "lib/time_util.h"
+#include "lib/hashmap_typed.hpp"
+#include "lib/arraylist.h"
+#include "lib/file.h"
+#include "lib/mem.h"
 #include <string.h>
 #include <time.h>
 

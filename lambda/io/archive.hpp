@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../../lib/arraylist.h"
-#include "../../lib/byte_storage.h"
-#include "../../lib/hashmap.h"
-#include "../../lib/strbuf.h"
+#include "lib/arraylist.h"
+#include "lib/byte_storage.h"
+#include "lib/hashmap.h"
+#include "lib/strbuf.h"
 
 enum ArchiveFormat { ARCHIVE_UNKNOWN, ARCHIVE_ZIP, ARCHIVE_7Z, ARCHIVE_TAR, ARCHIVE_RAR, ARCHIVE_RAR5 };
 static constexpr uint32_t ARCHIVE_NO_ENTRY = UINT32_MAX;

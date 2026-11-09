@@ -6,10 +6,10 @@
 #pragma once
 
 #include "input-tex.hpp"
-#include "../../lib/arena.h"
-#include "../../lib/strbuf.h"
-#include "../../lib/arraylist.hpp"
-#include "../../lib/hashmap_typed.hpp"
+#include "lib/arena.h"
+#include "lib/strbuf.h"
+#include "lib/arraylist.hpp"
+#include "lib/hashmap_typed.hpp"
 #include <string.h>
 
 namespace tex {

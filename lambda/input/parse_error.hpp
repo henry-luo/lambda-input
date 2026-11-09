@@ -2,8 +2,8 @@
 #ifndef LAMBDA_PARSE_ERROR_HPP
 #define LAMBDA_PARSE_ERROR_HPP
 
-#include "../../lib/arraylist.h"
-#include "../../lib/strbuf.h"
+#include "lib/arraylist.h"
+#include "lib/strbuf.h"
 #include <cstdint>
 #include <cstddef>
 

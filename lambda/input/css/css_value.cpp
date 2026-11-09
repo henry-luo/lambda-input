@@ -3,23 +3,23 @@
 #include <limits.h>
 
 extern "C" {
-#include "../../../lib/log.h"
-#include "../../../lib/str.h"
-#include "../../../lib/mempool.h"
-#include "../../../lib/hashmap_helpers.h"
+#include "lib/log.h"
+#include "lib/str.h"
+#include "lib/mempool.h"
+#include "lib/hashmap_helpers.h"
 }
 #include "css_value.hpp"
 #include "css_style.hpp"
 #include "css_style_node.hpp"
 #include "css_formatter.hpp"
 
-#include "../../../lib/color.h"
-#include "../../../lib/strbuf.h"
-#include "../../../lib/arraylist.h"
-#include "../../../lib/arraylist.hpp"
-#include "../../../lib/hashmap_typed.hpp"
-#include "../../../lib/math_checked.hpp"
-#include "../../../lib/recursion_guard.hpp"
+#include "lib/color.h"
+#include "lib/strbuf.h"
+#include "lib/arraylist.h"
+#include "lib/arraylist.hpp"
+#include "lib/hashmap_typed.hpp"
+#include "lib/math_checked.hpp"
+#include "lib/recursion_guard.hpp"
 #include <math.h>
 
 double css_clamp_numeric_value(double value, double minimum, double maximum) {

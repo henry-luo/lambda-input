@@ -1,11 +1,11 @@
 #include "format.h"
-#include "../../lib/windows_compat.h"  // For Windows compatibility functions like strndup
-#include "../../lib/stringbuf.h"
-#include "../../lib/mem_factory.h"
+#include "lib/windows_compat.h"  // For Windows compatibility functions like strndup
+#include "lib/stringbuf.h"
+#include "lib/mem_factory.h"
 #include "format-utils.hpp"
 #include "../core/mark_reader.hpp"
 #include "../io/target.h"
-#include "../../lib/log.h"
+#include "lib/log.h"
 #include "html-defs.h"  // html_is_raw_text_element
 
 void print_named_items(StringBuf *strbuf, TypeMap *map_type, void* map_data);

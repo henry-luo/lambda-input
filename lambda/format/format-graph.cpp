@@ -1,8 +1,8 @@
 #include "format.h"
 #include "../core/mark_reader.hpp"
-#include "../../lib/escape.h"
-#include "../../lib/stringbuf.h"
-#include "../../lib/log.h"
+#include "lib/escape.h"
+#include "lib/stringbuf.h"
+#include "lib/log.h"
 
 #include <string.h>
 

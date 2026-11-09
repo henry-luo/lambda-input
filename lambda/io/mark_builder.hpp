@@ -4,9 +4,9 @@
 #include "../core/data.hpp"
 #include "../core/name_pool.hpp"
 #include "../core/lambda_typed.hpp"
-#include "../../lib/mempool.h"
-#include "../../lib/strbuf.h"
-#include "../../lib/stringbuf.h"
+#include "lib/mempool.h"
+#include "lib/strbuf.h"
+#include "lib/stringbuf.h"
 #include <initializer_list>
 
 // Forward declarations

@@ -28,7 +28,11 @@ def main():
         write_changed(spec['path'], '\n'.join(lines) + '\n')
     for spec in config['dispatch_generators']:
         # Keep the upstream dispatch DSL; feature selection is owned by JSON.
-        output = subprocess.check_output(spec['command'], text=True)
+        # Codec sources belong to input even when the caller builds from Lambda.
+        input_root = Path(__file__).resolve().parent.parent
+        command = [str(input_root / part) if part.startswith('lib/') else part
+                   for part in spec['command']]
+        output = subprocess.check_output(command, text=True)
         write_changed(spec['path'], output)
 
 

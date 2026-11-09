@@ -1,8 +1,8 @@
 #include "input.hpp"
 #include "input-context.hpp"
 #include "../io/mark_builder.hpp"
-#include "../../lib/str.h"
-#include "../../lib/stringbuf.h"
+#include "lib/str.h"
+#include "lib/stringbuf.h"
 #include <ctype.h>
 
 using namespace lambda;

@@ -1,5 +1,5 @@
 #pragma once
-#include "../../lib/lambda_api.h"
+#include "lib/lambda_api.h"
 
 #include <string.h>  // moved outside extern "C" block to fix C++ compatibility
 #include <mpdecimal.h>
@@ -21,16 +21,16 @@ extern "C" {
 // runtime-private implementation detail.
 typedef struct mpd_context_t mpd_context_t;
 
-#include "../../lib/strbuf.h"
-#include "../../lib/stringbuf.h"
-#include "../../lib/hashmap.h"
-#include "../../lib/mempool.h"
-#include "../../lib/arena.h"
-#include "../../lib/arraylist.h"
-#include "../../lib/strview.h"
-#include "../../lib/hash.h"
-#include "../../lib/datetime.h"
-#include "../../lib/url.h"
+#include "lib/strbuf.h"
+#include "lib/stringbuf.h"
+#include "lib/hashmap.h"
+#include "lib/mempool.h"
+#include "lib/arena.h"
+#include "lib/arraylist.h"
+#include "lib/strview.h"
+#include "lib/hash.h"
+#include "lib/datetime.h"
+#include "lib/url.h"
 
 #ifndef max
 #define max(a, b) ((a) > (b) ? (a) : (b))

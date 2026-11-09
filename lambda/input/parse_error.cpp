@@ -1,5 +1,5 @@
 #include "parse_error.hpp"
-#include "../../lib/mem.h"
+#include "lib/mem.h"
 #include <cstring>
 
 namespace lambda {

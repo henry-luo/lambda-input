@@ -1,8 +1,8 @@
 #include "dom_xml_serializer.h"
 #include "dom_element.hpp"
-#include "../../../lib/escape.h"
-#include "../../../lib/mem_factory.h"
-#include "../../../lib/strbuf.h"
+#include "lib/escape.h"
+#include "lib/mem_factory.h"
+#include "lib/strbuf.h"
 #include <stdio.h>
 #include <string.h>
 

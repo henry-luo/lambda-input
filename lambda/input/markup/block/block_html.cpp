@@ -13,8 +13,8 @@
  * Type 7: Complete open/close tag on single line - ends at blank line
  */
 #include "block_common.hpp"
-#include "../../../../lib/mem.h"
-#include "../../../../lib/str.h"
+#include "lib/mem.h"
+#include "lib/str.h"
 #include <cstring>
 
 namespace lambda {

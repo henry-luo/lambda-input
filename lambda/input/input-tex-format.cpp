@@ -12,8 +12,8 @@
 #ifndef LAMBDA_NO_LATEX
 
 #include "input-tex-internal.hpp"
-#include "../../lib/strbuf.h"
-#include "../../lib/log.h"
+#include "lib/strbuf.h"
+#include "lib/log.h"
 #include <pthread.h>
 #include <string.h>
 

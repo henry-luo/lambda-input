@@ -1,7 +1,7 @@
 #include "format.h"
 #include "format-markup.h"
 #include "../core/mark_reader.hpp"
-#include "../../lib/stringbuf.h"
+#include "lib/stringbuf.h"
 
 // Forward declarations
 static void format_mdx_item_reader(StringBuf* sb, const ItemReader& item);

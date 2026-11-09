@@ -3,10 +3,10 @@
 // rest poses, skin binds, body geometry and baked clips are then written in
 // character coordinates: metres, Y-up, right-handed, +Z forward.
 #include "input-character.hpp"
-#include "../../lib/base64.h"
-#include "../../lib/hashmap_typed.hpp"
-#include "../../lib/math_utils.h"
-#include "../../lib/strbuf.h"
+#include "lib/base64.h"
+#include "lib/hashmap_typed.hpp"
+#include "lib/math_utils.h"
+#include "lib/strbuf.h"
 
 namespace lambda {
 

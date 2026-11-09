@@ -4,11 +4,11 @@
 #include "format.h"
 #include "format-utils.hpp"
 #include "../core/mark_reader.hpp"
-#include "../../lib/stringbuf.h"
-#include "../../lib/mem_factory.h"
-#include "../../lib/datetime.h"
-#include "../../lib/strbuf.h"
-#include "../../lib/log.h"
+#include "lib/stringbuf.h"
+#include "lib/mem_factory.h"
+#include "lib/datetime.h"
+#include "lib/strbuf.h"
+#include "lib/log.h"
 #include <string.h>
 
 // forward declarations

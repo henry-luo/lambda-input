@@ -1,8 +1,8 @@
 // LaTeX Formatter - Pure MarkReader (Gen3) implementation
 #include "format.h"
 #include "format-utils.hpp"
-#include "../../lib/stringbuf.h"
-#include "../../lib/mem_factory.h"
+#include "lib/stringbuf.h"
+#include "lib/mem_factory.h"
 #include "../core/mark_reader.hpp"
 #include <string.h>
 

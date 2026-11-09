@@ -1,10 +1,10 @@
 #include "css_formatter.hpp"
 #include "css_parser.hpp"
 #include "css_style.hpp"
-#include "../../../lib/str.h"
-#include "../../../lib/stringbuf.h"
-#include "../../../lib/strview.h"
-#include "../../../lib/escape.h"
+#include "lib/str.h"
+#include "lib/stringbuf.h"
+#include "lib/strview.h"
+#include "lib/escape.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>

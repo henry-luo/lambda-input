@@ -1,7 +1,7 @@
 #include "input-postscript.hpp"
 #include "pdf_decompress.h"
-#include "../../lib/hex.h"
-#include "../../lib/str.h"
+#include "lib/hex.h"
+#include "lib/str.h"
 #include <math.h>
 #include <limits.h>
 

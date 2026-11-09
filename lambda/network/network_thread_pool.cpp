@@ -3,9 +3,9 @@
 // Replaces custom pthreads + priority queue with libuv's built-in threadpool.
 
 #include "network_thread_pool.h"
-#include "../../lib/log.h"
-#include "../../lib/uv_loop.h"
-#include "../../lib/mem.h"
+#include "lib/log.h"
+#include "lib/uv_loop.h"
+#include "lib/mem.h"
 #ifdef _WIN32
 #include <windows.h>
 static inline int setenv(const char* name, const char* value, int overwrite) {

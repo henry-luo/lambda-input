@@ -14,17 +14,17 @@
 #include "block/block_common.hpp"
 #include "../html5/html5_parser.h"
 #include "../line_counter.hpp"
-#include "../../../lib/html_entities.h"
-#include "../../../lib/memtrack.h"
-#include "../../../lib/hashmap.h"
-#include "../../../lib/hashmap_typed.hpp"
-#include "../../../lib/arena.h"
+#include "lib/html_entities.h"
+#include "lib/memtrack.h"
+#include "lib/hashmap.h"
+#include "lib/hashmap_typed.hpp"
+#include "lib/arena.h"
 #include "../markup-format.h"
 #include "../../core/utf_string.h"
 #include "lib/log.h"
 #include <cstring>
 #include <new>
-#include "../../../lib/mem.h"
+#include "lib/mem.h"
 
 namespace lambda {
 namespace markup {

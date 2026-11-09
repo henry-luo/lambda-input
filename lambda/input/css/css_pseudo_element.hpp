@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../lib/str.h"
+#include "lib/str.h"
 #include <stddef.h>
 #include <stdbool.h>
 

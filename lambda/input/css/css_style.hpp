@@ -1,13 +1,13 @@
 #ifndef CSS_STYLE_H
 #define CSS_STYLE_H
 
-#include "../../../lib/mempool.h"
-#include "../../../lib/log.h"
-#include "../../../lib/avl_tree.h"
+#include "lib/mempool.h"
+#include "lib/log.h"
+#include "lib/avl_tree.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "../../../lib/strview.h"
+#include "lib/strview.h"
 #include "css_value.hpp"
 #include "../../core/name_identity.h"
 

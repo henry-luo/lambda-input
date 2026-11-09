@@ -1,7 +1,7 @@
 #include "css_style_node.hpp"
 #include "css_style.hpp"
 #include "css_parser.hpp"
-#include "../../../lib/string.h"
+#include "lib/string.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

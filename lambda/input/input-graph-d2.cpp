@@ -1,5 +1,5 @@
 #include "input-graph.h"
-#include "../../lib/str.h"
+#include "lib/str.h"
 #include "../io/mark_builder.hpp"
 #include "input-context.hpp"
 #include "input-utils.hpp"

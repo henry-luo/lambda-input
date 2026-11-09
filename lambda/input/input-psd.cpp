@@ -1,7 +1,7 @@
 #include "input.hpp"
 #include "input-parsers.h"
 #include "../io/mark_builder.hpp"
-#include "../../lib/image_psd.h"
+#include "lib/image_psd.h"
 
 namespace {
 struct PsdInput {

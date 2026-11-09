@@ -9,7 +9,7 @@
 #define MARKUP_COMMON_HPP
 
 #include "../../core/data.hpp"
-#include "../../../lib/str.h"
+#include "lib/str.h"
 #include "../input-context.hpp"
 #include "../parse_error.hpp"
 #include <cstring>

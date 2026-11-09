@@ -1,6 +1,6 @@
 #pragma once
 #include "input.hpp"
-#include "../../lib/byte_builder.h"
+#include "lib/byte_builder.h"
 
 // shared portable image transport; pixel bytes are top-down RGBA8.
 String* pdf_rgba_image_data_uri(Input* owner, const uint8_t* pixels, int width, int height);

@@ -4,11 +4,11 @@
 #include "../input/input.hpp"
 #include "../input/input-parsers.h"
 #include "../format/format.h"
-#include "../../lib/mem_context.h"
-#include "../../lib/mem_factory.h"
-#include "../../lib/mem.h"
-#include "../../lib/utf.h"
-#include "../../lib/base64.h"
+#include "lib/mem_context.h"
+#include "lib/mem_factory.h"
+#include "lib/mem.h"
+#include "lib/utf.h"
+#include "lib/base64.h"
 #include <math.h>
 #include <string.h>
 

@@ -12,10 +12,10 @@
 
 #include "format.h"
 #include "format-markup.h"
-#include "../../lib/stringbuf.h"
-#include "../../lib/str.h"
-#include "../../lib/emoji_shortcodes.h"
-#include "../../lib/log.h"
+#include "lib/stringbuf.h"
+#include "lib/str.h"
+#include "lib/emoji_shortcodes.h"
+#include "lib/log.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>

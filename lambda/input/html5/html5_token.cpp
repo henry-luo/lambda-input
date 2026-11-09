@@ -1,8 +1,8 @@
 #include "html5_token.h"
 #include "../../io/mark_builder.hpp"
-#include "../../../lib/log.h"
-#include "../../../lib/string.h"
-#include "../../../lib/str.h"
+#include "lib/log.h"
+#include "lib/string.h"
+#include "lib/str.h"
 #include <string.h>
 #include <stdio.h>
 

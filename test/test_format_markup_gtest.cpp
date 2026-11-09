@@ -13,9 +13,9 @@
 #include "../lambda/format/format.h"
 #include "../lambda/format/format-markup.h"
 #include "../lambda/format/format-utils.h"
-#include "../lib/mempool.h"
-#include "../lib/log.h"
-#include "../lib/test_utils.h"
+#include "lib/mempool.h"
+#include "lib/log.h"
+#include "lib/test_utils.h"
 
 extern "C" {
     Input* input_from_source(char* source, Url* abs_url, String* type, String* flavor);

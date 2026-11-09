@@ -1,6 +1,6 @@
 #include "security_policy.h"
-#include "../../lib/arraylist.h"
-#include "../../lib/mem.h"
+#include "lib/arraylist.h"
+#include "lib/mem.h"
 #include <pthread.h>
 #include <limits.h>
 

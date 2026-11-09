@@ -5,8 +5,8 @@
 #include "../../core/well_known_markup_names.h"
 #include <string.h>
 #include "html5_token.h"
-#include "../../../lib/stringbuf.h"
-#include "../../../lib/mem_kind.hpp"
+#include "lib/stringbuf.h"
+#include "lib/mem_kind.hpp"
 #include "../line_counter.hpp"
 
 // ============================================================================

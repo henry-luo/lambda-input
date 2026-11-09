@@ -17,15 +17,15 @@
 #include <stdbool.h>
 
 #include "../core/data.hpp"
-#include "../../lib/strbuf.h"
-#include "../../lib/log.h"
-#include "../../lib/memtrack.h"
-#include "../../lib/url.h"
-#include "../../lib/rdb.h"
-#include "../../lib/hashmap_helpers.h"
-#include "../../lib/file.h"
-#include "../../lib/path_str.h"
-#include "../../lib/str.h"
+#include "lib/strbuf.h"
+#include "lib/log.h"
+#include "lib/memtrack.h"
+#include "lib/url.h"
+#include "lib/rdb.h"
+#include "lib/hashmap_helpers.h"
+#include "lib/file.h"
+#include "lib/path_str.h"
+#include "lib/str.h"
 
 #ifdef _WIN32
 // (no special includes needed)

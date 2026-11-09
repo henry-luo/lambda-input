@@ -1,10 +1,10 @@
 #include "input-scene3d.hpp"
 #include "input-parsers.h"
-#include "../../lib/base64.h"
-#include "../../lib/mesh_uv.h"
-#include "../../lib/scene3d_material.h"
-#include "../../lib/scene3d_drawable.h"
-#include "../../lib/scene3d_animation.h"
+#include "lib/base64.h"
+#include "lib/mesh_uv.h"
+#include "lib/scene3d_material.h"
+#include "lib/scene3d_drawable.h"
+#include "lib/scene3d_animation.h"
 
 namespace lambda {
 namespace {

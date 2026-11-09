@@ -12,7 +12,7 @@
 
 #include "../markup_parser.hpp"
 #include "../format_adapter.hpp"
-#include "../../../../lib/mem.h"
+#include "lib/mem.h"
 
 namespace lambda {
 namespace markup {

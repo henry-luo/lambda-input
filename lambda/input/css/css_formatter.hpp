@@ -3,8 +3,8 @@
 
 #include "css_parser.hpp"
 #include "css_style.hpp"
-#include "../../../lib/mempool.h"
-#include "../../../lib/stringbuf.h"
+#include "lib/mempool.h"
+#include "lib/stringbuf.h"
 
 #ifdef __cplusplus
 extern "C" {

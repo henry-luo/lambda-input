@@ -3,9 +3,9 @@
 #include "input-context.hpp"
 #include "input-utils.hpp"
 #include "source_tracker.hpp"
-#include "../../lib/datetime.h"
-#include "../../lib/mem.h"
-#include "../../lib/str.h"
+#include "lib/datetime.h"
+#include "lib/mem.h"
+#include "lib/str.h"
 #include "../core/lambda-decimal.hpp"
 #include "../core/mark_name.hpp"
 
