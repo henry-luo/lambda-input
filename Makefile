@@ -61,7 +61,7 @@ vendor-deps:
 	$(PYTHON) scripts/build_vendor.py
 
 # Build the pinned networking provider with the backend required by trust_store.
-curl-deps:
+curl-deps: vendor-deps
 	$(PYTHON) scripts/build_curl.py
 
 # Build the owned codec, archive-reader and RE2 providers from the same manifest.
@@ -137,14 +137,77 @@ $(CXX) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(shell $(PKG_CONFIG) --cflags $(NATI
   -framework CoreGraphics -framework SystemConfiguration $(NATIVE_TEST_EXTRA_LIBS) -o $(2)
 endef
 
-test-native: check-native-test-deps all native-deps
+# Owner-specific unit tests use the same input archives as downstream clients.
+MIGRATED_LIB_TESTS = atomic base64 binsearch color datetime digest endian hash hex lru_cache \
+  math_utils sort str str_scan strbuf strview stringbuf time_util uuid url url_extra arraylist \
+  arena hashmap_helpers byte_storage checked_alloc file_module font_config font_context fts grep mail_imap mail_mime mem_context \
+  mem_factory mem_vm mempool memtrack mime_detect scratch_arena shell span thread_pool woff2
+MIGRATED_TEST_SOURCES = $(addprefix test/lib/test_,$(addsuffix _gtest.cpp,$(MIGRATED_LIB_TESTS))) \
+  test/test_physics_gtest.cpp test/test_input_sourcepos_gtest.cpp \
+  test/css/test_css_tokenizer_gtest.cpp test/css/test_css_parser_gtest.cpp \
+  test/css/test_css_engine_unit.cpp test/css/test_css_formatter_unit.cpp \
+  test/css/test_css_parser_unit.cpp test/css/test_css_tokenizer_unit.cpp test/lib/test_avl_tree.cpp \
+  test/css/test_css_style_node.cpp test/css/test_css_system.cpp test/css/test_css_engine_negative.cpp \
+  test/css/test_css_roundtrip_unit.cpp test/css/test_compound_descendant_selectors.cpp \
+  test/css/test_selector_groups.cpp test/css/test_css_integration_gtest.cpp \
+  test/css/test_css_files_safe_gtest.cpp test/css/test_css_frameworks_gtest.cpp test/css/test_css_to_mark_gtest.cpp \
+  test/test_mark_builder_gtest.cpp test/test_mark_builder_deepcopy_gtest.cpp test/test_mark_editor_gtest.cpp test/test_name_pool_gtest.cpp test/test_namespace_gtest.cpp test/test_path_gtest.cpp test/test_mark_reader_gtest.cpp test/test_entity_emoji_gtest.cpp test/test_input_rdb_gtest.cpp test/test_input_eps_gtest.cpp test/test_input_pdf_gtest.cpp test/test_html_gtest.cpp test/test_html_negative_gtest.cpp test/test_graph_formatter_gtest.cpp test/test_mdx_roundtrip_gtest.cpp test/test_jsx_roundtrip_gtest.cpp \
+  test/test_error_tracking.cpp test/test_markup_roundtrip_gtest.cpp test/test_zip_gtest.cpp \
+  test/test_radiant_agent_state_gtest.cpp test/test_network_scheduler_gtest.cpp test/parser/test_parser_robustness_gtest.cpp \
+  test/test_navigation_gtest.cpp test/test_priority_queue_gtest.cpp test/test_recursion_guard_gtest.cpp test/test_security_policy_gtest.cpp \
+  test/test_rdb_query_gtest.cpp test/markup/test_rst_functional_gtest.cpp \
+  test/test_input_model_gtest.cpp test/test_input_roundtrip_gtest.cpp test/test_markup_modular_gtest.cpp \
+  test/test_format_markup_gtest.cpp test/test_dir_gtest.cpp test/test_graph_mermaid_gtest.cpp \
+  test/wpt/test_wpt_html_parser_gtest.cpp test/markup/test_markdown_gtest.cpp test/test_yaml_suite_gtest.cpp
+MIGRATED_TEST_BINS = $(patsubst %.cpp,build/%,$(MIGRATED_TEST_SOURCES))
+
+# Test utility objects are archived by their owner for native test clients.
+TEST_HELPER_OBJECTS = build/obj/test-utils/$(PROFILE)/test_utils.o build/obj/test-utils/$(PROFILE)/test_utils_pool.o build/obj/test-utils/$(PROFILE)/test_input_test_helpers.o
+build/obj/test-utils/$(PROFILE)/%.o: lib/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(LIB_DEFINES) $(CFLAGS) -std=c17 -MMD -MP -MF $@.d -c $< -o $@
+
+build/obj/test-utils/$(PROFILE)/test_input_test_helpers.o: test/test_input_test_helpers.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CPPFLAGS) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(DATA_DEFINES) $(CXXFLAGS) -std=c++17 -MMD -MP -MF $@.d -c $< -o $@
+
+build/lib/$(PROFILE)/liblambda-test-utils.a: $(TEST_HELPER_OBJECTS)
+	@mkdir -p $(@D)
+	rm -f $@
+	$(AR) rcs $@ $^
+
+$(NATIVE_TEST_LIBS): | native-deps
+$(CURL_PREFIX)/lib/libcurl.a: | curl-deps
+
+build/test/%: test/%.cpp build/lib/$(PROFILE)/liblambda-test-utils.a build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a $(NATIVE_TEST_LIBS) $(CURL_PREFIX)/lib/libcurl.a | all check-native-test-deps
+	@mkdir -p $(@D)
+	$(call LINK_NATIVE_TEST,$<,$@,$(CXXFLAGS),build/lib/$(PROFILE)/liblambda-test-utils.a build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a)
+
+# YAML and Markdown corpora have independent upstream owners and pinned data.
+.PHONY: setup-test-data test-network-online
+setup-test-data:
+	$(PYTHON) scripts/setup_test_data.py
+
+test-network-online: build/test/test_network_gtest build/test/test_http_gtest
+	./build/test/test_network_gtest
+	./build/test/test_http_gtest
+
+.PHONY: test-perf
+test-perf:
+	@test "$(PROFILE)" = release || { echo "input test-perf requires PROFILE=release"; exit 1; }
+	$(MAKE) PROFILE=release build/test/perf/test_avl_tree_perf
+	./build/test/perf/test_avl_tree_perf
+
+test-native: setup-test-data check-native-test-deps all native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest
 	@mkdir -p build/test
 	$(call LINK_NATIVE_TEST,$(NATIVE_TEST_SOURCES),build/test/test_input_native)
 	$(call LINK_NATIVE_TEST,test/test_graph_parser_gtest.cpp,build/test/test_graph_parser_native)
 	$(call LINK_NATIVE_TEST,test/test_input_https_pull_gtest.cpp lib/https_pull.cpp,build/test/test_input_https_pull_native,-DLAMBDA_HTTPS_PULL_TESTING,build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a)
-	$(PYTHON) test/run_native_tests.py ./build/test/test_input_native
-	$(PYTHON) test/run_native_tests.py ./build/test/test_input_https_pull_native
-	./build/test/test_graph_parser_native
+	@rc=0; $(PYTHON) test/run_native_tests.py ./build/test/test_input_native || rc=1; \
+	  $(PYTHON) test/run_native_tests.py ./build/test/test_input_https_pull_native || rc=1; \
+	  ./build/test/test_graph_parser_native || rc=1; \
+	  ./build/test/test_http_gtest --gtest_filter=HttpInputTest.SendsBrowserNavigationHeadersForDocumentDownloads:HttpInputTest.KeepsRedirectCookiesWithoutSessionJar:HttpInputTest.DecodesBrotliDocumentResponses:HttpInputTest.ErrorDocumentsRetainFinalResponseMetadataButResourcesReject:HttpInputTest.TruncatedErrorDocumentRemainsTransportFailure:HttpInputTest.TopLevelNavigationUsesPageLoadTimeout || rc=1; \
+	  for test_bin in $(MIGRATED_TEST_BINS); do ./$$test_bin || rc=1; done; exit $$rc
 
 clean:
 	rm -rf build

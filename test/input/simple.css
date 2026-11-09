@@ -1,0 +1,32 @@
+/* CSS Stylesheet Parser Test */
+
+/* Basic selectors and declarations */
+body {
+    margin: 0;
+    padding: 20px;
+    font-family: Arial, sans-serif;
+    background-color: #f5f5f5;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 5 auto;
+    background: white;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+#header {
+    background: linear-gradient(to right, #007bff, #0056b3);
+    color: white;
+    padding: 1rem 2rem;
+    border-radius: 8px;
+}
+
+
+/* Pseudo-classes and !important */
+.button:hover {
+    background-color: #0056b3 !important;
+    transform: scale(1.05);
+}
+
+

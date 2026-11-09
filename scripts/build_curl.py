@@ -95,7 +95,12 @@ def main():
     platform_flags = variables['PLATFORM_FLAGS']
     for key in ('CFLAGS', 'LDFLAGS'):
         env[key] = ' '.join(value for value in (variables[key], platform_flags) if value)
-    command = [str(source / 'configure'), f'--prefix={prefix}',
+    # The pinned static decoder also needs its common archive during configure.
+    brotli = DEPS / 'brotli'
+    env['PKG_CONFIG_PATH'] = os.pathsep.join(filter(None, (str(brotli / 'lib/pkgconfig'), env.get('PKG_CONFIG_PATH', ''))))
+    env['LIBS'] = ' '.join(filter(None, (env.get('LIBS', ''), '-lbrotlicommon')))
+    env['LDFLAGS'] = ' '.join(filter(None, (env['LDFLAGS'], f'-L{brotli / "lib"}')))
+    command = [str(source / 'configure'), f'--prefix={prefix}', f'--with-brotli={brotli}',
                f'--with-mbedtls={prefixes["mbedtls"]}', f'--with-nghttp2={prefixes["libnghttp2"]}',
                *config['configure_options']]
     print(f'INPUT_CURL: building {version} with mbedTLS and HTTP/2', flush=True)
