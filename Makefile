@@ -50,7 +50,7 @@ LIB_DEFINES = $(PROFILE_DEFINES) -DUTF8PROC_STATIC -DMEMPOOL_RUNTIME_VM_PROVIDER
 DATA_DEFINES = $(PROFILE_DEFINES) -DSIMPLE_SCHEMA_PARSER -DPATH_NO_ITERATION -DLAMBDA_IO_STATIC_VALUES \
   -DUTF8PROC_STATIC -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION
 
-.PHONY: all clean vendor-deps check-boundary check-curl check-native-test-deps configure curl-deps native-deps test-native force-build-signature
+.PHONY: all clean vendor-deps check-boundary check-curl check-native-test-deps configure curl-deps native-deps test-native test-input-baseline force-build-signature
 all: vendor-deps curl-deps native-deps build/lib/$(PROFILE)/liblambda-lib.a build/lib/$(PROFILE)/liblambda-input.a
 
 # The input owner generates the pinned vendor configuration before compilation.
@@ -197,6 +197,8 @@ test-perf:
 	@test "$(PROFILE)" = release || { echo "input test-perf requires PROFILE=release"; exit 1; }
 	$(MAKE) PROFILE=release build/test/perf/test_avl_tree_perf
 	./build/test/perf/test_avl_tree_perf
+
+test-input-baseline: test-native
 
 test-native: setup-test-data check-native-test-deps all native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest
 	@mkdir -p build/test
