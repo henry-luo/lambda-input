@@ -63,3 +63,27 @@ backing data, but the old member names and constructor description are stale.
 Review the current ownership and mutation invariants, including D5.5.1 and
 D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
+
+<a id="li-004"></a>
+
+### LI-004 — ZIP output cannot store one entry uncompressed
+
+**Status:** OPEN — missing capability; confirmed by source reading.
+**Observed:** 2026-11-10. **Lambda blocker:** no. Lambda's `.painting` files
+are valid ZIPs without it.
+
+ZIP output applies one `compression` option (`'deflate'` or `'stored'`) to every
+entry. The method comes from `write->method` in `lambda/input/input-zip.cpp` and
+`options.method` in `lambda/io/zip_archive.cpp`. Container formats in the ODF,
+OpenRaster and Krita `.kra` style require their first entry, `mimetype`, to be
+stored uncompressed so file-type sniffers can read it at a fixed offset.
+Lambda's painting files (`lambda.paint`, `Lambda_Pkg_Paint.md` PT12) follow that
+layout but can only write `mimetype` first and deflated. Entry order is kept
+when `deterministic` is false.
+
+Reproduce: write `<fs kind: 'dir', <fs name: "mimetype", kind: 'file', "x">>`
+with `output(tree, path, {format: 'zip'})`, then read it back with
+`input(path, 'zip')`; the member's `compression` attribute is `'deflate'`.
+Expected: a per-file attribute on constructed trees, for example
+`<fs name: "mimetype", kind: 'file', compression: 'stored', ...>`, that
+overrides the archive default for that entry (S10.1.4 output options).
