@@ -748,41 +748,18 @@ Item js_scalar_storage_read(Item item, bool immortal) {
     return scalar_storage_read_as(item, immortal, true);
 }
 
+// Execution threads install a re-homing provider; native Input readers borrow
+// only from their live Input-owned storage when no runtime is attached.
+static __thread ScalarStorageReadHost scalar_storage_read_host = nullptr;
+
+void scalar_storage_bind_host(ScalarStorageReadHost host) {
+    scalar_storage_read_host = host;
+}
+
 static Item scalar_storage_read_as(Item item, bool immortal, bool js_number) {
-    if (immortal) return item;
-#ifdef LAMBDA_IO_STATIC_VALUES
-    // The standalone input library has no execution side stack; all of its
-    // container storage is owned by the live input pool, so the reference is
-    // already stable for the reader's lifetime.
-    (void)js_number;
-    return item;
-#else
-    // Owned storage may move or die independently of the reader. Re-home its
-    // interior scalar references in the current number frame before escape.
-    // Inline float Items and packed narrow values already carry their payload;
-    // avoid routing those stable values through the scalar-home helpers.
-    if (!lambda_item_uses_scalar_home(item)) return item;
-    switch (get_type_id(item)) {
-    case LMD_TYPE_INT64: {
-        int64_t value = item.get_int64();
-        if (js_number && value >= INT53_MIN && value <= INT53_MAX) {
-            return (Item){.item = i2it(value)};
-        }
-        return box_int64_value(value);
-    }
-    case LMD_TYPE_UINT64: {
-        uint64_t value = item.get_uint64();
-        if (js_number && value <= (uint64_t)INT53_MAX) {
-            return (Item){.item = i2it((int64_t)value)};
-        }
-        return box_uint64_value(value);
-    }
-    case LMD_TYPE_FLOAT:
-        return push_d(item.get_double());
-    default:
-        return item;
-    }
-#endif
+    if (immortal || !lambda_item_uses_scalar_home(item)) return item;
+    ScalarStorageReadHost host = scalar_storage_read_host;
+    return host ? host(item, js_number) : item;
 }
 
 // Read shape and strides into caller-provided arrays. Returns zero for invalid

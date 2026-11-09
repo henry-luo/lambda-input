@@ -96,7 +96,7 @@ check-boundary: all
 # Link all input providers so unused objects cannot conceal missing dependencies.
 NATIVE_TEST_PACKAGES = gtest_main libutf8proc thorvg libuv libbrotlidec libmpdec libopenjp2 liblzma libzstd openssl
 NATIVE_TEST_SOURCES = test/test_input_blob_url_gtest.cpp test/test_input_dom_native_gtest.cpp \
-  test/test_input_math_gtest.cpp test/test_input_test_helpers.cpp test/test_input_curl_gtest.cpp test/test_image_io_gtest.cpp
+  test/test_input_math_gtest.cpp test/test_input_test_helpers.cpp test/test_input_curl_gtest.cpp test/test_input_scalar_storage_gtest.cpp test/test_image_io_gtest.cpp
 NATIVE_TEST_LIBS = build/lib/native/$(NATIVE_PROFILE)/libre2.a \
   build/lib/native/$(NATIVE_PROFILE)/liblambda-archive-readers.a \
   build/lib/native/$(NATIVE_PROFILE)/liblambda-image-codecs.a

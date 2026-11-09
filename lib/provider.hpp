@@ -14,3 +14,13 @@ template<class Operations>
 inline const Operations* lambda_provider_load(const Operations* const* slot) {
     return __atomic_load_n(slot, __ATOMIC_ACQUIRE);
 }
+
+// A missing optional provider leaves outputs unchanged and returns a default.
+template<class Operations, class Result, class... Parameters, class... Arguments>
+inline Result lambda_provider_call(const Operations* operations,
+                                   Result (*Operations::*operation)(Parameters...),
+                                   Arguments... arguments) {
+    if (operations && operations->*operation)
+        return (operations->*operation)(arguments...);
+    return Result();
+}

@@ -1,7 +1,7 @@
 // test_utils.c — pure-C helpers (no Lambda runtime deps).
 // See lib/test_utils.h for the API contract.
 //
-// The companion file lib/test_utils_runtime.cpp owns the Pool+Heap+EvalContext
+// The companion file test/test_utils_runtime.cpp owns the Pool+Heap+EvalContext
 // fixture; tests that only need temp files / process spawn / string utils can
 // link this .c file alone.
 

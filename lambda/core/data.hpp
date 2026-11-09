@@ -643,6 +643,10 @@ Item map_get_by_name_id(Container* owner, TypeMap* map_type, void* map_data,
     NameId name_id, bool* is_found);
 bool map_shape_field_store_native_lane(void* field_ptr, const ShapeEntry* field,
     Item value);
+// A runtime binds this provider only while the current thread owns an evaluator.
+// Without one, Input readers borrow from their live Input-owned storage.
+typedef Item (*ScalarStorageReadHost)(Item item, bool js_number);
+void scalar_storage_bind_host(ScalarStorageReadHost host);
 Item scalar_storage_read(Item item, bool immortal);
 // JS reading: an in-band i64/u64 may return as an inline int (one JS number type)
 Item js_scalar_storage_read(Item item, bool immortal);
