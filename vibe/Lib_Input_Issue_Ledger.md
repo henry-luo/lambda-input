@@ -12,6 +12,35 @@ owner-side fix and verification, and retain the ID when the issue is resolved.
 
 ## Open issues
 
+<a id="li-007"></a>
+
+### LI-007 — Shared header retains declarations from the second runtime retirement
+
+**Status:** OPEN — owner header cleanup. **Observed:** 2026-11-10, Lambda
+`5f3550a38` plus the second runtime audit. **Lambda blocker:** no; the
+36 declarations have no source, generated-import or host-export consumer.
+Authority: **D9.1.1v4 / D9.1.3v2** (header ownership), **D9.4.6** (host exports).
+
+Lambda's second audit retires 88 functions and 43 runtime-only JIT import rows,
+including old array fills/read adapters, scalar/boolean wrappers, map type-list
+adapters and unused COW profiling adapters. Input's `lambda/lambda.h` still
+advertises 36 of these removed functions. The expected result is that the
+shared ABI header declares only the remaining implementation surface.
+
+Exact declaration inventory and prepared, unapplied patch:
+`../lambda/temp/mvp_legacy_reaudit/input-declarations.json` and
+`../lambda/temp/mvp_legacy_reaudit/input-header.patch`. Reproduce the inventory
+from Lambda with `python3 temp/mvp_legacy_reaudit/post_audit.py`; the original
+caller audit is `selected-before.json` in the same directory. This is a stale
+header issue, not a reproduced input parser defect. Lambda's runtime builds
+without those definitions because no consumer remains. The native math catalog,
+Radiant's `fn_call3_into` assembly alias and unary imported-predicate trampoline
+are retained. No input/Radiant source or header is edited in this follow-up;
+the earlier LI-006 exception was scoped to its region patch only.
+
+Implementation and qualification record:
+`../lambda/vibe/impl/Lambda_Impl_MIR_Full_Retirement.md`, second runtime audit.
+
 <a id="li-005"></a>
 
 ### LI-005 — Boundary check looks in the unprofiled object directory
@@ -80,6 +109,41 @@ D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
 
 ## Resolved issues
+
+<a id="li-006"></a>
+
+### LI-006 — Region retirement needs the shared map allocator declaration updated
+
+**Status:** RESOLVED — approved shared-header edit applied and verified on
+2026-11-10. **Lambda blocker:** no. Authority: **D9.1.1v4 / D9.1.3v2**
+(header ownership), **D6.3** (GC ownership).
+
+The user explicitly approved the one-file exception for input-owned
+`lambda/lambda.h`. The applied change exactly matches the reviewed patch at
+`../lambda/temp/mvp_region_retirement/input-header.patch`: remove the region
+opaque type and region-only declarations, and change
+`map_alloc_for_type(TypeMap*, LambdaRegion*, int64_t)` to the GC-only
+`map_alloc_for_type(TypeMap*, int64_t)`. No other input/Radiant source or header
+was edited by Lambda for this retirement. The change remains uncommitted.
+
+Lambda removed the allocator, block/cache helpers, heap cache fields, teardown
+and region JIT entries, and migrated all 19 existing native calls plus MVP's
+emitted call and import metadata. Input and Radiant have no implementation
+callers. The former owner boundary was the only dependency blocking complete
+retirement; no compatibility argument or alternate API was introduced.
+
+Verification: input and Radiant archives and the private Lambda release rebuild
+successfully. A tracked-source audit across all three projects finds no retired
+region names. Nine selected native/profiling GTests, seven focused Python unit
+methods, six JS map-growth/GC cases, four typed/untyped tree benchmark goldens
+and four diagnostic root/memory parity cases pass. No owner or Lambda/Radiant
+baseline suite was run. Receipts and source/binary identities:
+`../lambda/temp/mvp_region_retirement/`; implementation record:
+`../lambda/vibe/impl/Lambda_Impl_MIR_MVP_Regions_and_Profiling.md`.
+
+The original issue was retained Full MIR declarations in the owner header,
+not a reproduced input parser failure. The prior caller inventory/reproduction
+is recorded in `../lambda/temp/mvp_region_retirement/source-audit.json`.
 
 <a id="li-004"></a>
 

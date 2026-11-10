@@ -1852,10 +1852,6 @@ void* heap_calloc(size_t size, TypeId type_id);
 // valid after their creating invocation's number frame is reclaimed.
 void* heap_calloc_closure_env(size_t size);
 void* heap_calloc_class(size_t size, TypeId type_id, int cls);  // allocate with pre-computed size class
-typedef struct LambdaRegion LambdaRegion;
-LambdaRegion* lambda_region_begin(void);
-void lambda_region_end(LambdaRegion* region);
-void* lambda_region_calloc(LambdaRegion* region, size_t size, TypeId type_id);
 void* heap_data_calloc(size_t size);  // allocate GC-managed data buffer (for map/object data)
 uint64_t* heap_gc_root_slot_new(uint64_t value);
 bool heap_try_register_gc_root(uint64_t* slot);
@@ -2788,8 +2784,7 @@ extern "C" {
     Map* map_with_data(int64_t type_index);
     Map* map_fill_reserve_data(Map* map);
     // shared physical construction; profiles retain layout and property admission.
-    Map* map_alloc_for_type(struct TypeMap* map_type, LambdaRegion* region,
-        int64_t minimum_capacity);
+    Map* map_alloc_for_type(struct TypeMap* map_type, int64_t minimum_capacity);
     bool map_field_store(void* field_ptr, Item value, TypeId value_type);
     void map_field_store_int_as_float(void* field_ptr, Item value);
     // neutral packed-field mutation; no descriptors, prototype dispatch, or JS hooks.
@@ -2804,11 +2799,7 @@ extern "C" {
     bool map_shape_delete_resolved(Map* map, struct ShapeEntry* field);
     bool map_field_store_dynamic_item(void* field_ptr, Item value);
     Map* map_with_tl(int64_t type_index, void* type_list_ptr);
-    Map* map_with_region_tl(LambdaRegion* region, int64_t type_index,
-        void* type_list_ptr);
     Map* map_with_type_tl(struct TypeMap* map_type, void* type_list_ptr);
-    Map* map_with_region_type_tl(LambdaRegion* region, struct TypeMap* map_type,
-        void* type_list_ptr);
     Element* elmt(int64_t type_index);
     Element* elmt_with_tl(int64_t type_index, void* type_list_ptr);
     Element* elmt_with_type(struct TypeElmt* elmt_type);
