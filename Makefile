@@ -209,15 +209,22 @@ test-network-online: build/test/test_network_gtest build/test/test_http_gtest
 	./build/test/test_network_gtest
 	./build/test/test_http_gtest
 
-.PHONY: test-perf
+.PHONY: test-perf test-api-headers
 test-perf:
 	@test "$(PROFILE)" = release || { echo "input test-perf requires PROFILE=release"; exit 1; }
 	$(MAKE) PROFILE=release build/test/perf/test_avl_tree_perf
 	./build/test/perf/test_avl_tree_perf
 
+test-api-headers:
+	$(CC) $(CPPFLAGS) $(PLATFORM_FLAGS) -Ilib -std=c17 -fsyntax-only test/test_lambda_api_lib_only.c
+	$(CXX) $(CPPFLAGS) $(PLATFORM_FLAGS) -Ilib -std=c++17 -x c++ -fsyntax-only test/test_lambda_api_lib_only.c
+	$(CC) $(CPPFLAGS) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(LIB_DEFINES) -std=c17 -fsyntax-only test/test_lambda_api_headers.c
+	$(CC) $(CPPFLAGS) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(LIB_DEFINES) -std=c17 -DLAMBDA_TEST_DATETIME_FIRST -fsyntax-only test/test_lambda_api_headers.c
+	$(CXX) $(CPPFLAGS) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(LIB_DEFINES) $(CXXFLAGS) -std=c++17 -fsyntax-only test/test_lambda_api_headers.cpp
+
 test-input-baseline: test-native
 
-test-native: setup-test-data check-native-test-deps all native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest build/test/test_runtime_scalar_storage_gtest
+test-native: test-api-headers setup-test-data check-native-test-deps all native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest build/test/test_runtime_scalar_storage_gtest
 	@mkdir -p build/test
 	$(call LINK_NATIVE_TEST,$(NATIVE_TEST_SOURCES),build/test/test_input_native)
 	$(call LINK_NATIVE_TEST,test/test_graph_parser_gtest.cpp,build/test/test_graph_parser_native)

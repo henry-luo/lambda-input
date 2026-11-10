@@ -13,7 +13,15 @@
 // the extended context serves inexact decimal operations, and exact +/-/*
 // operations use a local maximum-precision context.
 #pragma once
-#include "lib/lambda_api.h"
+#ifndef LAMBDA_API_ONLY
+#define LAMBDA_API_ONLY
+#define LAMBDA_API_ONLY_LOCAL
+#endif
+#include "lambda/lambda.h"
+#ifdef LAMBDA_API_ONLY_LOCAL
+#undef LAMBDA_API_ONLY_LOCAL
+#undef LAMBDA_API_ONLY
+#endif
 
 // Forward declarations keep scalar users independent from libmpdec's context ABI.
 typedef struct mpd_context_t mpd_context_t;

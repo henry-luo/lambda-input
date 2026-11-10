@@ -1,5 +1,33 @@
-#pragma once
-#include "lib/lambda_api.h"
+#ifndef LAMBDA_API_H
+#define LAMBDA_API_H
+// Module API annotations are source-contract markers today.  Static archives
+// do not need symbol exporting, but keeping the annotation at each public
+// declaration lets the validation DSOs adopt hidden visibility without
+// changing their headers again.
+#if defined(_WIN32)
+#if defined(LAMBDA_BUILD_SHARED)
+#define LAMBDA_API __declspec(dllexport)
+#elif defined(LAMBDA_USE_SHARED)
+#define LAMBDA_API __declspec(dllimport)
+#else
+#define LAMBDA_API
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+#define LAMBDA_API __attribute__((visibility("default")))
+#else
+#define LAMBDA_API
+#endif
+
+#define LAMBDA_LIB_API LAMBDA_API
+#define LAMBDA_CORE_API LAMBDA_API
+#define LAMBDA_IO_API LAMBDA_API
+#define LAMBDA_RT_API LAMBDA_API
+#define RADIANT_API LAMBDA_API
+#endif // LAMBDA_API_H
+
+// Library headers can request annotations without importing the value ABI.
+#if !defined(LAMBDA_API_ONLY) && !defined(LAMBDA_MAIN_HEADER_INCLUDED)
+#define LAMBDA_MAIN_HEADER_INCLUDED
 
 // Shared C and C++ value declarations. Direct MIR emission uses the value ABI
 // and runtime import signatures; generated modules do not parse this header.
@@ -2023,3 +2051,5 @@ const char* fn_to_cstr(Item item);  // convert Item to C string (for path segmen
 #ifdef __cplusplus
 }
 #endif
+
+#endif // !LAMBDA_API_ONLY && !LAMBDA_MAIN_HEADER_INCLUDED

@@ -110,6 +110,48 @@ has been reproduced in this review.
 
 ## Resolved issues
 
+<a id="li-009"></a>
+
+### LI-009 — Shared-header migration blocks Lambda release tuning build
+
+**Status:** RESOLVED — normal input and Lambda release builds passed after the owner header repair and Lambda consumer migration.
+**Observed:** 2026-11-10, Darwin arm64, input HEAD `0b49aa017d` plus its
+uncommitted shared-header migration. **Lambda blocker:** yes, candidate release
+build for the Result55 regression-tuning task. Authority: **D9.1.1v4 /
+D9.1.3v2** (source ownership), **D6.3** (shared runtime ABI).
+
+From `../Lambda-opus`, reproduce with
+`make build-lambda-split SPLIT_PROFILE=release SPLIT_OUTPUT=temp/result55_tuning/candidate1 JOBS=4`.
+The input release build fails compiling `lib/datetime.c` with a conflicting
+`DateTime` typedef (`lib/datetime.h:35` struct versus `lambda/lambda.h:592`
+uint64_t), and compiling `lib/document_lifetime_guard.cpp` with unknown
+`MemCategory` at `lib/string.h:42`. The latter include chain is
+`mem.h -> memtrack.h -> lambda/lambda.h -> lib/datetime.h -> lib/string.h`,
+which reaches the string API before the MemCategory declaration.
+
+Complete compiler evidence:
+`../Lambda-opus/temp/result55_tuning/build-candidate1.log` (lines 93–187).
+Expected: the normal input release build succeeds with the shared headers
+self-consistent in C and C++. These are observed include/type failures; the
+intended final header layering is an owner decision. Header contents changed
+again during diagnosis (datetime.h now forward-declares StrBuf), so the log
+qualifies the failed build's source state, not a subsequent owner fix. No
+input source or build rule was edited by the Lambda task. Lambda compiler
+experiments remain unqualified until the normal release build succeeds.
+
+**Verification, 2026-11-10:** the owner's subsequent header changes removed
+the reported DateTime/MemCategory failures. A retry overlapped an active owner
+curl build and failed with missing `conftest` files; process inspection confirmed
+the concurrent configure/build. After that job finished, the normal split
+release build reached Lambda and exposed stale `lib/lambda_api.h` and
+`lib/lambda_alloca.h` consumers. Lambda-owned callers now use a shared
+visibility-only wrapper over `lambda/lambda.h` and the existing `lib/alloca.h`.
+The complete normal release build exited 0 and produced the unchanged-compiler
+control at `../Lambda-opus/temp/result55_tuning/control`. Evidence:
+`../Lambda-opus/temp/result55_tuning/build-control-migrated2.log`.
+This task changed no input implementation/header/build source; owner edits
+remain independently owned. Lambda tuning can resume.
+
 <a id="li-006"></a>
 
 ### LI-006 — Region retirement needs the shared map allocator declaration updated
