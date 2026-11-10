@@ -488,6 +488,9 @@ bool zip_write_entries(const ArrayList* entries, const ZipWriteOptions* requeste
     uint64_t total = 0;
     for (int i = 0; ok && i < entries->length; i++) {
         ZipOutputEntry* source = (ZipOutputEntry*)entries->data[i];
+        if (source && source->has_method && source->method != 0 && source->method != 8) {
+            ok = zip_fail(error, "ZIP output entry compression method is invalid"); break;
+        }
         if (!source || !source->path || (!source->bytes && source->length) ||
                 (source->directory && source->length) ||
                 ((source->mode & 0170000) && (source->mode & 0170000) != 0100000 && (source->mode & 0170000) != 0040000) ||
@@ -518,7 +521,7 @@ bool zip_write_entries(const ArrayList* entries, const ZipWriteOptions* requeste
         if (!ok) break;
         if (source->directory) strbuf_append_char(name, '/');
         if (name->length > UINT16_MAX) { ok = zip_fail(error, "ZIP output name exceeds record limit"); break; }
-        uint16_t method = source->directory ? 0 : options.method;
+        uint16_t method = source->directory ? 0 : (source->has_method ? source->method : options.method);
         uint32_t time = options.deterministic || !source->dos_time ? 0x00210000 : source->dos_time;
         uint32_t crc = zip_crc(source->bytes, source->length);
         uint64_t offset = out->length;

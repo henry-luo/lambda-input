@@ -28,6 +28,8 @@ struct ZipOutputEntry {
     uint32_t mode;
     uint32_t dos_time;
     bool directory;
+    bool has_method;             // otherwise use the archive default
+    uint16_t method;             // 0 Stored, 8 raw DEFLATE
 };
 
 struct ZipWriteOptions {

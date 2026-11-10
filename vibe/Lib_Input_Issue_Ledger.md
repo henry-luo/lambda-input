@@ -145,6 +145,39 @@ The original issue was retained Full MIR declarations in the owner header,
 not a reproduced input parser failure. The prior caller inventory/reproduction
 is recorded in `../lambda/temp/mvp_region_retirement/source-audit.json`.
 
+<a id="li-008"></a>
+
+### LI-008 — ZIP output cannot store one entry uncompressed
+
+**Status:** RESOLVED — per-file compression override implemented 2026-11-10.
+**Observed:** 2026-11-10. **Lambda blocker:** no. Lambda's `.painting` files
+are valid ZIPs without it.
+
+ZIP output applied one `compression` option (`'deflate'` or `'stored'`) to every
+entry. The method came from `write->method` in `lambda/input/input-zip.cpp` and
+`options.method` in `lambda/io/zip_archive.cpp`. Container formats in the ODF,
+OpenRaster and Krita `.kra` style require their first entry, `mimetype`, to be
+stored uncompressed so file-type sniffers can read it at a fixed offset.
+Lambda's painting files (`lambda.paint`, `Lambda_Pkg_Paint.md` PT12) follow that
+layout but could only write `mimetype` first and deflated. Entry order is kept
+when `deterministic` is false.
+
+The original reproduction wrote
+`<fs kind: 'dir', <fs name: "mimetype", kind: 'file', "x">>` with
+`output(tree, path, {format: 'zip'})`; reading it with `input(path, 'zip')`
+reported `'deflate'`, with no per-file way to select `'stored'`.
+
+The constructed-file `compression` attribute now selects `'stored'` or
+`'deflate'` for that file, overriding the archive default (S10.1.4). Absent
+attributes inherit the default, while captured archive-node compression remains
+source metadata. See [ZIP output](../README.md#zip-output) for an example and
+the ordering and ZIP64 constraints on fixed-offset payloads.
+
+Verification: `ZipTest.ConstructedFilesOverrideArchiveCompression` reproduced
+both ignored override directions before the fix. Afterward all 35 cases in
+`build/test/test_zip_gtest` passed, including fixed-offset payload, invalid
+values, archive defaults, captured nodes, and deterministic ZIP64 coverage.
+
 <a id="li-004"></a>
 
 ### LI-004 — Shared Lambda header retains retired Full MIR helper declarations

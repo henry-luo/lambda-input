@@ -359,6 +359,13 @@ static bool fs_output_error(ZipError* error, const char* message) {
     if (error) snprintf(error->message, sizeof(error->message), "%s", message);
     return false;
 }
+static bool fs_zip_compression(Item value, uint16_t* method, ZipError* error) {
+    if (is_text_type_id(get_type_id(value))) {
+        if (value.get_len() == 6 && !memcmp(value.get_chars(), "stored", 6)) { *method = 0; return true; }
+        if (value.get_len() == 7 && !memcmp(value.get_chars(), "deflate", 7)) { *method = 8; return true; }
+    }
+    return fs_output_error(error, "ZIP compression must be stored or deflate");
+}
 static Item fs_materialized_attr(Item node, const char* name) {
     return get_type_id(node) == LMD_TYPE_ELEMENT
         ? (Item){.item = node.element->get_attr(name).item} : ItemNull;
@@ -454,6 +461,12 @@ static bool fs_output_walk(Item node, const char* parent, bool root,
     } else {
         ZipOutputEntry* entry = fs_output_entry(pool, path, budget, limits, error);
         if (!entry) { strbuf_free(path); return false; }
+        // Read overrides only from constructed files; archive nodes expose source metadata.
+        if (materialized && node.element->has_field("compression")) {
+            Item compression = fs_materialized_attr(node, "compression");
+            if (!fs_zip_compression(compression, &entry->method, error)) { strbuf_free(path); return false; }
+            entry->has_method = true;
+        }
         uint64_t available = limits.expanded_bytes - budget->expanded;
         if (available > limits.member_bytes) available = limits.member_bytes;
         if (fs) {
@@ -555,12 +568,7 @@ bool fs_zip_options(Item options, ZipLimits* limits, ZipWriteOptions* write, Zip
     bool found = false;
     Item compression = {.item = map->get("compression").item};
     found = map->has_field("compression");
-    if (found) {
-        if (!is_text_type_id(get_type_id(compression))) return fs_output_error(error, "ZIP compression must be stored or deflate");
-        if (!strcmp(compression.get_chars(), "stored")) write->method = 0;
-        else if (!strcmp(compression.get_chars(), "deflate")) write->method = 8;
-        else return fs_output_error(error, "ZIP compression must be stored or deflate");
-    }
+    if (found && !fs_zip_compression(compression, &write->method, error)) return false;
     Item level = {.item = map->get("compression_level").item};
     found = map->has_field("compression_level");
     if (found) {
