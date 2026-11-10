@@ -1,4 +1,4 @@
-// lib/lambda_alloca.h — bounded `alloca` macro.
+// lib/alloca.h — bounded `alloca` macro.
 //
 // Lambda's MIR codegen and a handful of layout/runtime paths use `alloca` for
 // scratch buffers sized by an in-bounds count (`argc`, `nparams`, `nops`,
