@@ -155,6 +155,153 @@ TEST_F(ZipTest, WriterRoundTripsBinaryEmptyAndZip64Deterministically) {
     arraylist_free(entries);
 }
 
+TEST_F(ZipTest, ConstructedFilesOverrideArchiveCompression) {
+    Input* input = InputManager::create_input(nullptr);
+    ASSERT_NE(input, nullptr);
+    MarkBuilder builder(input);
+    Item tree = builder.element("fs").attr("kind", "dir")
+        .child(builder.element("fs").attr("name", "mimetype").attr("kind", "file")
+            .attr("compression", builder.createSymbolItem("stored")).text("application/example").final())
+        .child(builder.element("fs").attr("name", "compressed").attr("kind", "file")
+            .attr("compression", "deflate").text("compressed data").final())
+        .child(builder.element("fs").attr("name", "default").attr("kind", "file")
+            .text("default data").final())
+        .final();
+    for (int default_method : {0, 8}) {
+        ZipWriteOptions options = zip_default_write_options();
+        options.method = default_method;
+        StrBuf* bytes = strbuf_new();
+        ASSERT_TRUE(fs_zip_encode(tree, &options, bytes, &error)) << error.message;
+        ASSERT_GE(bytes->length, 38u + strlen("application/example"));
+        const uint8_t* raw = (const uint8_t*)bytes->str;
+        EXPECT_EQ(read_le16(raw + 8), 0u);
+        EXPECT_EQ(read_le16(raw + 26), 8u);
+        EXPECT_EQ(read_le16(raw + 28), 0u);
+        EXPECT_EQ(memcmp(raw + 30, "mimetype", 8), 0);
+        EXPECT_EQ(memcmp(raw + 38, "application/example", strlen("application/example")), 0);
+        ZipArchive* archive = zip_archive_open(bytes->str, bytes->length, nullptr, nullptr, 0, &error);
+        ASSERT_NE(archive, nullptr) << error.message;
+        uint32_t stored = find(archive, "mimetype"), deflated = find(archive, "compressed");
+        uint32_t inherited = find(archive, "default");
+        ASSERT_NE(stored, UINT32_MAX); ASSERT_NE(deflated, UINT32_MAX); ASSERT_NE(inherited, UINT32_MAX);
+        EXPECT_EQ(zip_archive_entry(archive, stored)->method, 0u);
+        EXPECT_EQ(zip_archive_entry(archive, deflated)->method, 8u);
+        EXPECT_EQ(zip_archive_entry(archive, inherited)->method, (unsigned)default_method);
+        zip_archive_release(archive);
+        strbuf_free(bytes);
+    }
+}
+
+TEST_F(ZipTest, ConstructedCompressionRejectsInvalidValues) {
+    Input* input = InputManager::create_input(nullptr);
+    ASSERT_NE(input, nullptr);
+    MarkBuilder builder(input);
+    Item invalid[] = {builder.createStringItem("gzip"), builder.createInt(1), ItemNull,
+        builder.createStringItem("stored\0x", 8)};
+    for (Item value : invalid) {
+        Item file = builder.element("fs").attr("name", "bad").attr("kind", "file")
+            .attr("compression", value).text("payload").final();
+        Item tree = builder.element("fs").attr("kind", "dir").child(file).final();
+        StrBuf* bytes = strbuf_new();
+        EXPECT_FALSE(fs_zip_encode(tree, nullptr, bytes, &error));
+        EXPECT_STREQ(error.message, "ZIP compression must be stored or deflate");
+        strbuf_free(bytes);
+    }
+}
+
+TEST_F(ZipTest, CompressionOptionAcceptsOnlyExactTextValues) {
+    Input* input = InputManager::create_input(nullptr);
+    ASSERT_NE(input, nullptr);
+    MarkBuilder builder(input);
+    Item values[] = {builder.createSymbolItem("stored"), builder.createStringItem("deflate"),
+        builder.createStringItem("stored\0x", 8), ItemNull};
+    for (int i = 0; i < 4; i++) {
+        Item map = builder.map().put("compression", values[i]).final();
+        ZipLimits limits = zip_default_limits();
+        ZipWriteOptions options = zip_default_write_options();
+        bool ok = fs_zip_options(map, &limits, &options, &error);
+        if (i < 2) {
+            EXPECT_TRUE(ok) << error.message;
+            EXPECT_EQ(options.method, i == 0 ? 0u : 8u);
+        } else {
+            EXPECT_FALSE(ok);
+            EXPECT_STREQ(error.message, "ZIP compression must be stored or deflate");
+        }
+    }
+}
+
+TEST_F(ZipTest, CompressionOverridesWorkWithDeterministicZip64) {
+    Input* input = InputManager::create_input(nullptr);
+    ASSERT_NE(input, nullptr);
+    MarkBuilder builder(input);
+    Item tree = builder.element("fs").attr("kind", "dir")
+        .child(builder.element("fs").attr("name", "z").attr("kind", "file")
+            .attr("compression", "stored").text("stored bytes").final())
+        .child(builder.element("fs").attr("name", "a").attr("kind", "file")
+            .attr("compression", "deflate").text("deflated bytes").final())
+        .final();
+    ZipWriteOptions options = zip_default_write_options();
+    options.method = 0; options.force_zip64 = true; options.deterministic = true;
+    StrBuf* first = strbuf_new(); StrBuf* second = strbuf_new();
+    ASSERT_TRUE(fs_zip_encode(tree, &options, first, &error)) << error.message;
+    ASSERT_TRUE(fs_zip_encode(tree, &options, second, &error)) << error.message;
+    ASSERT_EQ(first->length, second->length);
+    EXPECT_EQ(memcmp(first->str, second->str, first->length), 0);
+    ZipArchive* archive = zip_archive_open(first->str, first->length, nullptr, nullptr, 0, &error);
+    ASSERT_NE(archive, nullptr) << error.message;
+    EXPECT_TRUE(archive->zip64);
+    ASSERT_EQ(archive->entries->length, 3);
+    EXPECT_STREQ(zip_archive_entry(archive, 1)->path, "a");
+    EXPECT_EQ(zip_archive_entry(archive, 1)->method, 8u);
+    EXPECT_STREQ(zip_archive_entry(archive, 2)->path, "z");
+    EXPECT_EQ(zip_archive_entry(archive, 2)->method, 0u);
+    ByteSpan bytes = {};
+    ASSERT_TRUE(zip_entry_bytes(archive, 1, &bytes, &error));
+    ASSERT_EQ(bytes.length, strlen("deflated bytes"));
+    EXPECT_EQ(memcmp(byte_span_data(&bytes), "deflated bytes", bytes.length), 0);
+    ASSERT_TRUE(zip_entry_bytes(archive, 2, &bytes, &error));
+    ASSERT_EQ(bytes.length, strlen("stored bytes"));
+    EXPECT_EQ(memcmp(byte_span_data(&bytes), "stored bytes", bytes.length), 0);
+    zip_archive_release(archive); strbuf_free(first); strbuf_free(second);
+}
+
+TEST_F(ZipTest, CapturedCompressionMetadataDoesNotOverrideOutputDefault) {
+    ZipOutputEntry stored = {"stored", (const uint8_t*)"one", 3, 0, 0, false};
+    ZipOutputEntry deflated = {"deflated", (const uint8_t*)"two", 3, 0, 0, false};
+    stored.has_method = true; stored.method = 0;
+    deflated.has_method = true; deflated.method = 8;
+    ArrayList* entries = arraylist_new(2);
+    arraylist_append(entries, &stored); arraylist_append(entries, &deflated);
+    StrBuf* source = strbuf_new();
+    ASSERT_TRUE(zip_write_entries(entries, nullptr, source, &error)) << error.message;
+    Input* input = input_from_source_n(source->str, source->length, nullptr, nullptr, nullptr);
+    ASSERT_NE(input, nullptr); ASSERT_FALSE(input->parse_failed);
+    for (int method : {0, 8}) {
+        ZipWriteOptions options = zip_default_write_options(); options.method = method;
+        StrBuf* result = strbuf_new();
+        ASSERT_TRUE(fs_zip_encode(input->root, &options, result, &error)) << error.message;
+        ZipArchive* archive = zip_archive_open(result->str, result->length, nullptr, nullptr, 0, &error);
+        ASSERT_NE(archive, nullptr) << error.message;
+        ASSERT_EQ(archive->entries->length, 3);
+        EXPECT_EQ(zip_archive_entry(archive, 1)->method, (unsigned)method);
+        EXPECT_EQ(zip_archive_entry(archive, 2)->method, (unsigned)method);
+        zip_archive_release(archive); strbuf_free(result);
+    }
+    strbuf_free(source); arraylist_free(entries);
+}
+
+TEST_F(ZipTest, WriterRejectsInvalidCompressionOverride) {
+    ZipOutputEntry file = {"file", (const uint8_t*)"x", 1, 0, 0, false};
+    file.has_method = true; file.method = 9;
+    ArrayList* entries = arraylist_new(1); arraylist_append(entries, &file);
+    StrBuf* output = strbuf_new();
+    EXPECT_FALSE(zip_write_entries(entries, nullptr, output, &error));
+    EXPECT_STREQ(error.message, "ZIP output entry compression method is invalid");
+    file.has_method = false;
+    EXPECT_TRUE(zip_write_entries(entries, nullptr, output, &error)) << error.message;
+    strbuf_free(output); arraylist_free(entries);
+}
+
 TEST_F(ZipTest, WriterRejectsDuplicatesAndUnsafeTrees) {
     ZipOutputEntry file = {"a", (const uint8_t*)"x", 1, 0, 0, false};
     ArrayList* entries = arraylist_new(2); arraylist_append(entries, &file); arraylist_append(entries, &file);
