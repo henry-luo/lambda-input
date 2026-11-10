@@ -1093,7 +1093,6 @@ typedef enum PatternCharClass {
     PATTERN_ANY_STRING, // ... - any string
 } PatternCharClass;
 
-// SysFunc enum is now in lambda.h (C-compatible)
 
 typedef struct TypeBinary : Type {
     Type* left;
@@ -1209,10 +1208,6 @@ typedef struct TypeFunc : Type {
     uint16_t binder_count;
     TypeBinder** binders;       // canonical binder for each slot
 } TypeFunc;
-
-typedef struct TypeSysFunc : Type {
-    SysFunc* fn;
-} TypeSysFunc;
 
 typedef struct TypeType : Type {
     Type* type;  // full type defintion
@@ -1785,8 +1780,6 @@ TypeMap* type_tree_follow(Input* input, TypeMap* start, const TypeTreeStep* step
 // Borrowed scalar read: boxed int64/float/uint64 Items point into ArrayNum storage.
 // Use only while the source ArrayNum is alive and not being mutated.
 Item array_num_read_borrowed_item(ArrayNum* array, int64_t offset);
-Item array_num_read_item(ArrayNum* array, int64_t offset);
-double array_num_read_double(ArrayNum* arr, int64_t offset);
 int64_t array_num_read_int64_bits(ArrayNum* arr, int64_t offset);
 // shared rank validation for native consumers of strided numeric arrays.
 int array_num_get_shape_strides(ArrayNum* array, int64_t* shape, int64_t* strides);

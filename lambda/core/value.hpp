@@ -6,8 +6,8 @@
 #include "lib/byte_storage.h"
 
 // ============================================================================
-// Definitions moved from lambda.h to keep the JIT-embedded header slim.
-// The native data model shares these C++ definitions across input and runtime.
+// C++ value definitions shared by input and the runtime. Direct MIR emission
+// uses the value ABI without embedding or parsing lambda.h in generated code.
 // ============================================================================
 
 // TypeKind: sub-classification for LMD_TYPE_TYPE variants
@@ -259,7 +259,7 @@ typedef struct TypedItem TypedItem;
 
 // TypedItem storage owns its scalar payload inline. Defined in lambda-data.cpp
 // so maps and native Arrays encode the same persistent value representation.
-// C linkage explicitly: lambda-data.hpp includes this header inside its
+// C linkage explicitly: core/data.hpp includes this header inside its
 // `extern "C"` block (which is how lambda-data.cpp defines them), so a file
 // that includes lambda.hpp first declared C++ symbols the linker could not
 // resolve as soon as it called an inline lane reader.
@@ -637,8 +637,8 @@ static inline Item array_native_lane_read(const Array* array, int64_t index) {
             return ItemNull;
         }
         // The lane word itself is stable array-owned double storage. Use the
-        // existing pointer boxer here because lambda.hpp is also compiled by
-        // input-only targets that do not link the runtime push_d helper.
+        // existing pointer boxer so the shared value model does not depend on
+        // the runtime push_d helper.
         return lambda_float_ptr_to_item((const double*)&array->items[index]);
     case LANE_STORAGE_ITEM:
         return array->items[index];
@@ -1286,7 +1286,7 @@ static inline int64_t lambda_content_count(TypeId type_id, const void* container
     return content ? content->length : 0;
 }
 
-// TypeMap is defined in lambda-data.hpp, which some translation units include
+// TypeMap is defined in core/data.hpp, which some translation units include
 // after this header; only the pointer is needed here.
 struct TypeMap;
 

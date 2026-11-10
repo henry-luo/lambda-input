@@ -102,7 +102,6 @@ const char* type_alias_name(Type* type) {
 }
 
 // get_type_name: human-readable name for a TypeId (for error messages)
-// Moved from lambda.h static inline to reduce JIT-embedded header size (~30 lines saved).
 extern "C" const char* get_type_name(TypeId type_id) {
     switch (type_id) {
         case LMD_TYPE_RAW_POINTER: return "raw_pointer";
@@ -809,7 +808,10 @@ Item array_num_read_borrowed_item(ArrayNum* array, int64_t offset) {
 #ifdef LAMBDA_IO_STATIC_VALUES
             return {.item = l2it(&array->items[offset])};
 #else
-            return box_int64_value(array->items[offset]);
+            // Non-input profiles require a bound runtime scalar-home provider.
+            return scalar_storage_read_host
+                ? scalar_storage_read_host({.item = l2it(&array->items[offset])}, false)
+                : ItemError;
 #endif
         case ELEM_FLOAT64: return lambda_float_ptr_to_item(&array->float_items[offset]);
         case ELEM_INT8:    return (Item){.item = i8_to_item(((int8_t*)array->data)[offset])};
@@ -825,7 +827,9 @@ Item array_num_read_borrowed_item(ArrayNum* array, int64_t offset) {
 #ifdef LAMBDA_IO_STATIC_VALUES
             return {.item = u2it(&((uint64_t*)array->data)[offset])};
 #else
-            return box_uint64_value(((uint64_t*)array->data)[offset]);
+            return scalar_storage_read_host
+                ? scalar_storage_read_host({.item = u2it(&((uint64_t*)array->data)[offset])}, false)
+                : ItemError;
 #endif
         case ELEM_BOOL:    return (Item){.item = b2it(((uint8_t*)array->data)[offset] ? BOOL_TRUE : BOOL_FALSE)};
         default:           return ItemError;

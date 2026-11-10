@@ -1,7 +1,6 @@
 #pragma once
 // Path and PathMeta full struct definitions + path enums + macros + Path API.
-// Separated from lambda.h to keep the JIT-embedded header slim.
-// Include this from path.c (C) and lambda.hpp (C++).
+// Shared by C and C++ consumers that need the full path representation.
 //
 // Requires lambda.h to be included first (for TypeId, DateTime, Pool, Item, Bool, Path/PathMeta forward decls).
 

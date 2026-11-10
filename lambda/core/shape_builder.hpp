@@ -3,6 +3,7 @@
 #include "../lambda.h"
 
 struct Arena;
+struct TypeMap;
 
 /**
  * ShapeBuilder - the field list an editor rebuild lays out

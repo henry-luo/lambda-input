@@ -36,6 +36,29 @@ TEST(InputScalarStorage, RuntimeHostReceivesOnlyEscapingScalarReads) {
     EXPECT_EQ(scalar_host_calls, 2);
 }
 
+TEST(InputScalarStorage, WideArrayReadsKeepInputOwnedStorageWithHostBound) {
+    ScalarHostGuard host;
+    scalar_host_calls = 0;
+    ArrayNum array = {};
+    array.type_id = LMD_TYPE_ARRAY_NUM;
+    array.length = 1;
+
+    int64_t signed_value = INT64_MAX;
+    array.set_elem_type(ELEM_INT64);
+    array.items = &signed_value;
+    Item signed_read = array_num_read_borrowed_item(&array, 0);
+    EXPECT_EQ(signed_read.item, l2it(&signed_value));
+    EXPECT_EQ(signed_read.get_int64(), signed_value);
+
+    uint64_t unsigned_value = UINT64_MAX;
+    array.set_elem_type(ELEM_UINT64);
+    array.data = &unsigned_value;
+    Item unsigned_read = array_num_read_borrowed_item(&array, 0);
+    EXPECT_EQ(unsigned_read.item, u2it(&unsigned_value));
+    EXPECT_EQ(unsigned_read.get_uint64(), unsigned_value);
+    EXPECT_EQ(scalar_host_calls, 0);
+}
+
 static void* read_without_thread_host(void* argument) {
     Item* value = (Item*)argument;
     *value = scalar_storage_read(*value, false);

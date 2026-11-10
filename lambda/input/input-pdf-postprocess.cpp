@@ -57,7 +57,7 @@ static Pool* g_post_pool = nullptr;
 
 // Look up a string-keyed field in a Map. Uses MarkReader's MapReader, which
 // already implements name-based lookup against ShapeEntry without exposing
-// the internal map_get() runtime helper (gated out by LAMBDA_STATIC).
+// the internal map_get() runtime helper.
 static inline Item map_lookup(Map* m, const char* key) {
     if (!m) return {.item = ITEM_NULL};
     MapReader mr(m);

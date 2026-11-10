@@ -183,6 +183,23 @@ build/test/%: test/%.cpp build/lib/$(PROFILE)/liblambda-test-utils.a build/lib/$
 	@mkdir -p $(@D)
 	$(call LINK_NATIVE_TEST,$<,$@,$(CXXFLAGS),build/lib/$(PROFILE)/liblambda-test-utils.a build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a)
 
+# Exercise the runtime-profile scalar read without changing the input archive.
+RUNTIME_SCALAR_TEST_OBJECT = build/obj/test-runtime/$(PROFILE)/lambda-data.cpp.o
+RUNTIME_SCALAR_TEST_ARCHIVE = build/lib/$(PROFILE)/liblambda-input-runtime-scalar-test.a
+
+$(RUNTIME_SCALAR_TEST_OBJECT): lambda/core/lambda-data.cpp build/firstparty-$(PROFILE)-build.json | configure check-curl vendor-deps
+	@mkdir -p $(@D)
+	$(CXX) $(CPPFLAGS) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(filter-out -DLAMBDA_IO_STATIC_VALUES,$(DATA_DEFINES)) $(CXXFLAGS) -std=c++17 -MMD -MP -MF $@.d -c $< -o $@
+
+$(RUNTIME_SCALAR_TEST_ARCHIVE): build/lib/$(PROFILE)/liblambda-input.a $(RUNTIME_SCALAR_TEST_OBJECT)
+	@mkdir -p $(@D)
+	cp $< $@
+	$(AR) rcs $@ $(RUNTIME_SCALAR_TEST_OBJECT)
+
+build/test/test_runtime_scalar_storage_gtest: test/test_runtime_scalar_storage_gtest.cpp $(RUNTIME_SCALAR_TEST_ARCHIVE) build/lib/$(PROFILE)/liblambda-lib.a $(NATIVE_TEST_LIBS) $(CURL_PREFIX)/lib/libcurl.a | all check-native-test-deps
+	@mkdir -p $(@D)
+	$(call LINK_NATIVE_TEST,$<,$@,$(CXXFLAGS),$(RUNTIME_SCALAR_TEST_ARCHIVE) build/lib/$(PROFILE)/liblambda-lib.a)
+
 # YAML and Markdown corpora have independent upstream owners and pinned data.
 .PHONY: setup-test-data test-network-online
 setup-test-data:
@@ -200,12 +217,13 @@ test-perf:
 
 test-input-baseline: test-native
 
-test-native: setup-test-data check-native-test-deps all native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest
+test-native: setup-test-data check-native-test-deps all native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest build/test/test_runtime_scalar_storage_gtest
 	@mkdir -p build/test
 	$(call LINK_NATIVE_TEST,$(NATIVE_TEST_SOURCES),build/test/test_input_native)
 	$(call LINK_NATIVE_TEST,test/test_graph_parser_gtest.cpp,build/test/test_graph_parser_native)
 	$(call LINK_NATIVE_TEST,test/test_input_https_pull_gtest.cpp lib/https_pull.cpp,build/test/test_input_https_pull_native,-DLAMBDA_HTTPS_PULL_TESTING,build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a)
 	@rc=0; $(PYTHON) test/run_native_tests.py ./build/test/test_input_native || rc=1; \
+	  ./build/test/test_runtime_scalar_storage_gtest || rc=1; \
 	  $(PYTHON) test/run_native_tests.py ./build/test/test_input_https_pull_native || rc=1; \
 	  ./build/test/test_graph_parser_native || rc=1; \
 	  ./build/test/test_http_gtest --gtest_filter=HttpInputTest.SendsBrowserNavigationHeadersForDocumentDownloads:HttpInputTest.KeepsRedirectCookiesWithoutSessionJar:HttpInputTest.DecodesBrotliDocumentResponses:HttpInputTest.ErrorDocumentsRetainFinalResponseMetadataButResourcesReject:HttpInputTest.TruncatedErrorDocumentRemainsTransportFailure:HttpInputTest.TopLevelNavigationUsesPageLoadTimeout || rc=1; \
@@ -214,4 +232,4 @@ test-native: setup-test-data check-native-test-deps all native-deps $(MIGRATED_T
 clean:
 	rm -rf build
 
--include $(addsuffix .d,$(LIB_OBJECTS) $(DATA_OBJECTS))
+-include $(addsuffix .d,$(LIB_OBJECTS) $(DATA_OBJECTS) $(RUNTIME_SCALAR_TEST_OBJECT))
