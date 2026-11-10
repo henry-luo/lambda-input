@@ -1362,12 +1362,18 @@ static void do_usepackage(Engine* e, const Token& t, uint32_t code) {
     if (sub_of(e, t) == 1 && e->current_options) options = e->current_options;  // ...WithOptions
     lam::ArrayList<const char*> names(MEM_CAT_INPUT_OTHER, 8);
     split_list(e, list, &names);
-    // expl3 comes from the format: stop, and the caller reruns from it (once)
-    if (!e->expl3_format && !e->opts.expl3) {
+    // expl3 comes from the format: stop, and the caller reruns from it (once).
+    // If that format could not be built or loaded, the kernel's entry-point
+    // stubs would otherwise request expl3 recursively until the budget expires.
+    if (!e->expl3_format) {
         for (size_t i = 0; i < names.size(); i++) {
             if (strcmp(names[i], "expl3") != 0) continue;
             echo_cancel(e, em);
-            e->wants_expl3 = true;
+            if (e->opts.expl3) {
+                diag(e, "tex-expl3-unavailable", "expl3 format could not be loaded");
+            } else {
+                e->wants_expl3 = true;
+            }
             e->aborted = true;
             return;
         }

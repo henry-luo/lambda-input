@@ -49,7 +49,8 @@
           ]
         }
       ],
-      "link": "static"
+      "link": "static",
+      "build_owner": "lambda-input"
     },
     {
       "name": "lambda-archive-readers",
@@ -123,7 +124,8 @@
             "-UDEBUG"
           ]
         }
-      ]
+      ],
+      "build_owner": "lambda-input"
     },
     {
       "name": "lambda-image-codecs",
@@ -825,7 +827,8 @@
             "lib/image/libtiff/libtiff/tif_win32.c"
           ]
         }
-      ]
+      ],
+      "build_owner": "lambda-input"
     }
   ],
   "image_codecs": {
@@ -1838,52 +1841,6 @@
     "version": "8.10.1",
     "url": "https://curl.se/download/curl-8.10.1.tar.xz",
     "sha256": "73a4b0e99596a09fa5924a4fb7e4b995a85fda0d18a2c02ab9cf134bebce04ee",
-    "configure_options": [
-      "--enable-static",
-      "--disable-shared",
-      "--without-openssl",
-      "--without-gnutls",
-      "--without-wolfssl",
-      "--disable-ldap",
-      "--disable-ldaps",
-      "--disable-rtsp",
-      "--disable-proxy",
-      "--disable-dict",
-      "--disable-telnet",
-      "--disable-tftp",
-      "--disable-pop3",
-      "--disable-imap",
-      "--disable-smb",
-      "--disable-smtp",
-      "--disable-gopher",
-      "--disable-mqtt",
-      "--disable-manual",
-      "--disable-libcurl-option",
-      "--disable-sspi",
-      "--disable-ntlm",
-      "--disable-tls-srp",
-      "--disable-unix-sockets",
-      "--enable-cookies",
-      "--disable-socketpair",
-      "--disable-http-auth",
-      "--disable-doh",
-      "--disable-mime",
-      "--disable-dateparse",
-      "--disable-netrc",
-      "--disable-progress-meter",
-      "--disable-alt-svc",
-      "--disable-headers-api",
-      "--disable-hsts",
-      "--without-zstd",
-      "--without-librtmp",
-      "--without-libssh2",
-      "--without-libpsl",
-      "--without-ngtcp2",
-      "--without-nghttp3",
-      "--without-libidn2",
-      "--without-libgsasl",
-      "--without-quiche"
-    ],
     "required_features": [
       "AsynchDNS",
       "brotli",
@@ -1902,6 +1859,117 @@
       "HTTPS",
       "IPFS",
       "IPNS"
+    ],
+    "defines": [
+      "CURL_DISABLE_ALTSVC",
+      "CURL_DISABLE_DICT",
+      "CURL_DISABLE_DOH",
+      "CURL_DISABLE_FORM_API",
+      "CURL_DISABLE_GOPHER",
+      "CURL_DISABLE_HEADERS_API",
+      "CURL_DISABLE_HSTS",
+      "CURL_DISABLE_HTTP_AUTH",
+      "CURL_DISABLE_IMAP",
+      "CURL_DISABLE_LDAP",
+      "CURL_DISABLE_LDAPS",
+      "CURL_DISABLE_LIBCURL_OPTION",
+      "CURL_DISABLE_MIME",
+      "CURL_DISABLE_MQTT",
+      "CURL_DISABLE_NETRC",
+      "CURL_DISABLE_NTLM",
+      "CURL_DISABLE_PARSEDATE",
+      "CURL_DISABLE_POP3",
+      "CURL_DISABLE_PROGRESS_METER",
+      "CURL_DISABLE_PROXY",
+      "CURL_DISABLE_RTSP",
+      "CURL_DISABLE_SMB",
+      "CURL_DISABLE_SMTP",
+      "CURL_DISABLE_SOCKETPAIR",
+      "CURL_DISABLE_TELNET",
+      "CURL_DISABLE_TFTP"
+    ],
+    "probe_headers": [
+      "sys/types.h",
+      "sys/socket.h",
+      "time.h",
+      "stddef.h",
+      "stdint.h",
+      "stdio.h",
+      "stdlib.h",
+      "string.h",
+      "strings.h",
+      "unistd.h",
+      "netinet/in.h",
+      "netinet/tcp.h",
+      "netinet/udp.h",
+      "arpa/inet.h",
+      "netdb.h",
+      "ifaddrs.h",
+      "net/if.h",
+      "sys/time.h",
+      "sys/select.h",
+      "sys/ioctl.h",
+      "sys/resource.h",
+      "sys/stat.h",
+      "sys/un.h",
+      "sys/wait.h",
+      "sys/xattr.h",
+      "sys/param.h",
+      "sys/poll.h",
+      "sys/filio.h",
+      "sys/sockio.h",
+      "dirent.h",
+      "dlfcn.h",
+      "fcntl.h",
+      "fnmatch.h",
+      "libgen.h",
+      "locale.h",
+      "poll.h",
+      "pthread.h",
+      "pwd.h",
+      "sched.h",
+      "signal.h",
+      "setjmp.h",
+      "stdatomic.h",
+      "stdbool.h",
+      "inttypes.h",
+      "termios.h",
+      "utime.h",
+      "mach/mach_time.h",
+      "brotli/decode.h",
+      "nghttp2/nghttp2.h",
+      "zlib.h"
+    ],
+    "protocol_aliases": {
+      "HTTP": [
+        "IPFS",
+        "IPNS"
+      ]
+    },
+    "platform_link_flags": {
+      "macos": [
+        "-pthread",
+        "-framework",
+        "CoreFoundation",
+        "-framework",
+        "SystemConfiguration"
+      ],
+      "linux": [
+        "-pthread"
+      ],
+      "windows": [
+        "-lws2_32",
+        "-lbcrypt",
+        "-ladvapi32",
+        "-lcrypt32"
+      ]
+    },
+    "pkg_config_requires": [
+      "zlib",
+      "libbrotlidec",
+      "libbrotlicommon",
+      "mbedtls",
+      "libnghttp2"
     ]
   }
 }

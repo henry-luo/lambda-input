@@ -1155,6 +1155,24 @@ bool macro_call(Engine* e, const Token& call, const Meaning& m) {
         e->aborted = true;
         return false;
     }
+    // Macro definitions live in the engine arena, including after redefinition.
+    // A parameterless body can therefore be read directly without copying it
+    // to a temporary expansion buffer on every call.
+    bool no_params = !mac->params.count ||
+        (mac->params.count == 1 && mac->params.data[0].kind == TK_END_MATCH);
+    if (no_params && !mac->xspec && !(mac->flags & MF_LATEX_OPT)) {
+        bool has_param = false;
+        for (uint32_t k = 0; k < mac->body.count; k++) {
+            if (mac->body.data[k].kind == TK_PARAM) { has_param = true; break; }
+        }
+        if (!has_param) {
+            if (mac->body.count && list_fits(e, mac->body.count)) {
+                pop_exhausted_levels(e);
+                push_tokens(e, mac->body.data, mac->body.count, true);
+            }
+            return true;
+        }
+    }
     bool long_ok = (mac->flags & MF_LONG) != 0;
     lam::ArrayList<Token> args[9] = {
         lam::ArrayList<Token>(MEM_CAT_INPUT_OTHER, 0), lam::ArrayList<Token>(MEM_CAT_INPUT_OTHER, 0),
@@ -1203,25 +1221,38 @@ bool macro_call(Engine* e, const Token& call, const Meaning& m) {
         argi++;
         i = j;
     }
-    // substitute the arguments into the body
-    lam::ArrayList<Token> out(MEM_CAT_INPUT_OTHER, mac->body.count + 8);
+    // Size the substituted body first, then write it directly into the pooled
+    // input buffer instead of allocating and copying an intermediate list.
+    size_t count = 0;
     for (uint32_t k = 0; k < mac->body.count; k++) {
         const Token& b = mac->body.data[k];
+        size_t n = 1;
         if (b.kind == TK_PARAM) {
             uint32_t idx = b.value - 1;
-            if (idx < 9) {
-                for (size_t a = 0; a < args[idx].size(); a++) out.append(args[idx][a]);
-            }
-        } else {
-            out.append(b);
+            n = idx < 9 ? args[idx].size() : 0;
         }
+        if (n > SIZE_MAX - count) { list_fits(e, SIZE_MAX); return true; }
+        count += n;
     }
-    if (out.size() && list_fits(e, out.size())) {
+    if (count && list_fits(e, count)) {
         uint8_t cls = 0;
-        Token* data = pool_tokens(e, (uint32_t)out.size(), &cls);
-        memcpy(data, out.data(), sizeof(Token) * out.size());
+        Token* data = pool_tokens(e, (uint32_t)count, &cls);
+        size_t pos = 0;
+        for (uint32_t k = 0; k < mac->body.count; k++) {
+            const Token& b = mac->body.data[k];
+            if (b.kind == TK_PARAM) {
+                uint32_t idx = b.value - 1;
+                if (idx < 9 && args[idx].size()) {
+                    size_t n = args[idx].size();
+                    memcpy(data + pos, args[idx].data(), sizeof(Token) * n);
+                    pos += n;
+                }
+            } else {
+                data[pos++] = b;
+            }
+        }
         pop_exhausted_levels(e);
-        push_owned(e, data, cls, (uint32_t)out.size(), true);
+        push_owned(e, data, cls, (uint32_t)count, true);
     }
     return true;
 }

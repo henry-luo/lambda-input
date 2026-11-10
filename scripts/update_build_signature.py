@@ -18,13 +18,10 @@ elif kind == 'radiant':
     names = ('CXX', 'AR', 'CPPFLAGS', 'CXXFLAGS', 'PLATFORM_FLAGS', 'RADIANT_CPPFLAGS',
              'DEFINES', 'NATIVE_SOURCES', 'PROPERTY_SOURCES', 'OBJCXX_SOURCES')
     roots = ('build/obj/native', 'build/obj/properties')
-elif kind == 'native':
-    names = ('CC', 'CXX', 'AR', 'CPPFLAGS', 'PLATFORM_FLAGS', 'NATIVE_FLAGS', 'NATIVE_PROFILE')
-    roots = ('build/obj/native-deps',)
 else:
     raise SystemExit(f'input build: unknown signature kind {kind}')
 values = {name: os.environ.get(name, '') for name in names}
-profile = os.environ.get('NATIVE_PROFILE' if kind == 'native' else 'PROFILE', 'debug')
+profile = os.environ.get('PROFILE', 'debug')
 path = Path('build/' + kind + '-' + profile + '-build.json')
 content = json.dumps(values, sort_keys=True, indent=2) + '\n'
 if not path.exists() or path.read_text() != content:

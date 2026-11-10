@@ -12,6 +12,31 @@ owner-side fix and verification, and retain the ID when the issue is resolved.
 
 ## Open issues
 
+<a id="li-011"></a>
+
+### LI-011 — Input dependency build pipeline and cross-platform qualification
+
+**Status:** PARTIAL — macOS implementation verified; Linux and Windows need
+verification. **Observed:** 2026-11-10, macOS, Lambda `make build`.
+**Lambda blocker:** no on the verified macOS configuration. Authority:
+**D9.1.1v4 / D9.1.3v2** (project ownership), **D9.1.5** (build pipeline).
+
+Previously, input invoked CMake for utf8proc and Brotli, Meson/Ninja for
+ThorVG, and curl's upstream Autotools `configure`. Meson's backend detection
+produced the reported Ninja message. The owner now keeps the pre-split
+Lambda recipes in `build_vendor_deps_config.json`, with a shared JSON-driven
+Premake/Make builder for vendor and native archives. Curl uses compiler probes
+and the upstream source manifest and templates, without running configure.
+Pinned versions and the mbedTLS/HTTP2 profile remain in place.
+
+On macOS, `make vendor-deps curl-deps native-deps JOBS=8` passed with CMake,
+Meson, Ninja and Autotools programs blocked; `make test-build-dependencies`
+passed ten tests. The input-owned curl tests passed, including the correct CA, a wrong CA and
+a wrong hostname. The ThorVG manifest selects PNG and JPEG loaders on
+macOS, Linux and Windows; actual Linux and Windows builds are not verified.
+See `scripts/dependency_builder.py`, `scripts/build_vendor.py`,
+`scripts/build_curl.py`, and `scripts/generate_native_deps_premake.py`.
+
 <a id="li-007"></a>
 
 ### LI-007 — Shared header retains declarations from the second runtime retirement
@@ -109,6 +134,57 @@ D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
 
 ## Resolved issues
+
+<a id="li-010"></a>
+
+### LI-010 — TeX expl3 format startup exceeds Lambda's five-second debug test target
+
+**Status:** RESOLVED — denied-format recursion stopped and TeX macro expansion
+tuned. **Observed:** 2026-11-10,
+Lambda HEAD `5c0d7c68c5f5dde248d6d951ec85b6d62f928569`, macOS arm64, debug.
+**Lambda blocker:** no; both `AmbientExplThreeFormatIsNotAnAuthorityCache`
+cases now meet the five-second target in the measurements below. Authority: **D9.1.1v4 /
+D9.1.3v2** (ownership), **D10.2.2** (TeX expansion), **D11.2.1** (authority).
+
+After rebuilding Lambda against the input archive, reproduce from `../lambda` with
+`./test/test_security_runtime_gtest.exe --gtest_filter='InterpreterAndJit/SecurityRuntimeTest.AmbientExplThreeFormatIsNotAnAuthorityCache/*'`.
+Before the fix, both cases passed but took 13.883 s and 8.482 s consecutively
+in one process.
+The user's target is less than five seconds per case without weakening the
+trusted-format control or the scoped authority denial.
+
+A three-second CPU sample of case `/0` places all 1,559 main-thread samples in
+`tex::engine_create -> load_expl3_format -> build_expl3_image -> run_preload`,
+including macro expansion, token scanning and temporary token-array allocation.
+The test body calls the input-owned engine API directly; neither Lambda tier
+execution nor MIR codegen lies on this sampled path. Relevant owner symbols:
+`lambda/input/input-tex-main.cpp:927` (`engine_create`) and
+`lambda/input/input-tex-format.cpp:535,559` (`build_expl3_image`,
+`load_expl3_format`). The original warm `/1` cause was not sampled; expensive
+image load/kernel setup was an unconfirmed candidate. A scoped engine must
+build privately instead of trusting the ambient format.
+
+Evidence: `../lambda/temp/test-runtime-tuning/security-before.log`,
+`security-before.json`, `security-sample.txt`, and `security-profile.log`.
+
+**Resolution:** When a requested expl3 format could not be built or loaded, the
+kernel entry-point stubs retried `\RequirePackage{expl3}` until the
+20-million-expansion budget expired. The engine now stops at that request
+with `tex-expl3-unavailable`, after the scoped client has denied access.
+Macro calls also avoid a temporary output list: parameterless bodies are
+read from their arena-backed definitions, and substituted bodies are written
+directly to the existing pooled input buffer. Expansion limits and private
+format builds remain in force.
+
+**Verification:** The Lambda security test was rebuilt from current source
+against the modified input archive in this project's `temp/`. Three consecutive
+processes passed both cases in 4.036–4.304 s cold and 4 ms warm per process
+(`temp/li010-after.log`). The input TeX regression tests cover denied file
+classification and reads, authorized private loading, first-request restart,
+macro substitution, redefinition, and expansion budgets. All 151 recorded TeX
+conformance lines match, and the expl3 package fixture expands identically with
+ambient and authorized scoped resource access. The native fixture runners are
+`temp/li010-conformance.cpp` and `temp/li010-expl3.cpp`.
 
 <a id="li-009"></a>
 

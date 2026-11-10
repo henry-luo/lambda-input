@@ -86,7 +86,8 @@
       "defines": [
         "UTF8PROC_STATIC",
         "MEMPOOL_RUNTIME_VM_PROVIDER"
-      ]
+      ],
+      "build_owner": "lambda-input"
     },
     {
       "name": "lambda-data",
@@ -240,7 +241,8 @@
         "SQLITE_THREADSAFE=1",
         "SQLITE_OMIT_LOAD_EXTENSION"
       ],
-      "link": "static"
+      "link": "static",
+      "build_owner": "lambda-input"
     }
   ]
 }
