@@ -19,7 +19,16 @@ def load_build_config(path, ancestors=()):
                              if selected_root else path.parent / imported['path'])
         else:
             imported_path = path.parent / imported
-        _merge(merged, load_build_config(imported_path, (*ancestors, path)))
+        child = load_build_config(imported_path, (*ancestors, path))
+        if isinstance(imported, dict) and 'include_keys' in imported:
+            keys = imported['include_keys']
+            if not isinstance(keys, list) or any(not isinstance(key, str) for key in keys):
+                raise ValueError(f'invalid config import include_keys in {path}')
+            missing = set(keys) - child.keys()
+            if missing:
+                raise ValueError(f'missing config import keys in {imported_path}: {sorted(missing)}')
+            child = {key: child[key] for key in keys}
+        _merge(merged, child)
     _merge(merged, config)
     for key in ('targets', 'libraries', 'dev_libraries'):
         names = [item['name'] for item in merged.get(key, []) if isinstance(item, dict)]

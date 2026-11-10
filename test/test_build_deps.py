@@ -46,6 +46,22 @@ class DependencyBuildTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'cyclic'):
             load_build_config(main)
 
+    def test_import_can_select_owned_interfaces(self):
+        (self.work / 'owner.json').write_text(json.dumps({
+            'targets': [{'name': 'provider'}], 'private_build_recipe': {'sources': ['vendor.c']}}))
+        main = self.work / 'main.json'
+        main.write_text(json.dumps({'config_imports': [{'path': 'owner.json',
+                          'root_env': 'UNSET_SETUP_TEST_ROOT', 'root_path': 'owner.json',
+                          'include_keys': ['targets']}]}))
+        resolved = load_build_config(main)
+        self.assertEqual([target['name'] for target in resolved['targets']], ['provider'])
+        self.assertNotIn('private_build_recipe', resolved)
+        main.write_text(json.dumps({'config_imports': [{'path': 'owner.json',
+                          'root_env': 'UNSET_SETUP_TEST_ROOT', 'root_path': 'owner.json',
+                          'include_keys': ['missing']}]}))
+        with self.assertRaisesRegex(ValueError, 'missing config import keys'):
+            load_build_config(main)
+
     def test_import_can_select_a_sibling_root(self):
         default = self.work / 'default'
         selected = self.work / 'selected'
