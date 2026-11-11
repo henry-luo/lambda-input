@@ -12,6 +12,57 @@ owner-side fix and verification, and retain the ID when the issue is resolved.
 
 ## Open issues
 
+<a id="li-015"></a>
+
+### LI-015 — Cross-process SQLite scope contention lacks an admission/retry contract
+
+**Status:** OPEN — provider capability/diagnostic gap; no lost-update or SQLite
+corruption claim. **Observed:** 2026-11-11, macOS native debug, Lambda peer gate
+on interpreter/AUTO/JIT. **Lambda blocker:** yes for the additional simultaneous
+peer-credential administration acceptance case; no for sequential administration
+or independently owned peer repositories. D9.1.1v4 / D11.1.2 / S12.4.4v4 apply.
+
+Two Lambda processes concurrently run `invite` and `revoke` against one encrypted
+credential row. One reports E400 `io.sqlite: cannot open transaction`; on JIT one
+reports `commit outcome is uncertain; reopen before retrying`. Evidence in the
+Lambda checkout: `temp/sync-peer/final-process-{interp,auto,jit}.log`. These
+aggregate failure logs preserve the exact commands, errors and failing per-step
+filenames; per-step directories are reused by later process qualifications. The retained reproduction
+is `python3 test/sync_peer/test_peer.py --contention` (after building Lambda).
+The normal peer gate excludes this still-unqualified additional case explicitly.
+
+Source evidence: `lib/rdb_sqlite.c:sqlite_tx_wrap` configures synchronization and
+uses deferred `BEGIN`, not `BEGIN IMMEDIATE`; no busy timeout/handler is configured
+there. The Lambda wrapper collapses failed acquisition to E400; failed commit is
+conservatively uncertain under the documented contract. Deferred contention is an
+expected SQLite behavior, but an acquire-before-read writer admission mechanism
+and retryable/busy diagnostics are not exposed to this host integration. A common
+cause for all reported acquisition/commit failures is not yet established.
+
+The credential patch prevents stale-file overwrites by reading/modifying one
+transactional row; it does not establish successful concurrent writer admission.
+Do not add SQL lock tricks, retry uncertain commits, weaken the failed gate or
+modify sibling source from Lambda. The affected concurrency work is stopped;
+owner investigation should establish supported writer admission and outcome
+inspection before Lambda expands that qualification. No owner source changed.
+
+
+<a id="li-012"></a>
+
+### LI-012 — Native tar variants test rejects sample.tar.gz
+
+**Status:** OPEN — cause unconfirmed. **Observed:** 2026-11-11, macOS,
+`make test-input-baseline` (debug), including a rerun with local socket access.
+**Lambda blocker:** no known block to the independent TeX script port.
+
+`ZipTest.NativeTarVariantsCaptureExactBytesAndNames` in
+`test/test_zip_gtest.cpp` expects the archive input for `sample.tar.gz` to be
+non-null. It instead returns null with `tar: invalid or unsupported archive`.
+The other 34 cases in that test binary passed in the baseline. Reproduce with
+`./build/test/test_zip_gtest --gtest_filter=ZipTest.NativeTarVariantsCaptureExactBytesAndNames`
+after building the baseline. The cause has not been established; investigate
+the fixture and input-owned archive integration before changing behavior.
+
 <a id="li-011"></a>
 
 ### LI-011 — Input dependency build pipeline and cross-platform qualification
@@ -362,3 +413,41 @@ Historical owner declaration inventory (line numbers before removal):
 - `Item cow_path_borrow_home_keys` (line 3819)
 - `Item cow_place_leaf_fixed` (line 3830)
 - `Item cow_place_leaf_keys` (line 3834)
+
+<a id="li-013"></a>
+
+### LI-013 — Native TeX text-case expansion exhausts its budget on reference controls
+
+**Status:** OPEN — cause unconfirmed. **Observed:** 2026-11-11, macOS debug
+native TeX parser. **Script TeX-port blocker:** no; the experimental script
+case converter explicitly reports unsupported reference forms it cannot handle.
+
+Running `parse("\\ExplSyntaxOn\\text_uppercase:n{\\ref{aB}/\\pageref{aB}/\\eqref{aB}}\\ExplSyntaxOff", {type: "tex"})`
+returns empty text and a `tex-budget` diagnostic after 20,000,000 macro calls,
+followed by missing-number and missing-brace diagnostics. Evidence is in
+`temp/expl3-script/native-case-refs.out`; the same probe shows `\\label` and
+`\\cite` in a different case-conversion argument completing without a budget
+diagnostic. Which control or combination triggers the exhaustion, and its root
+cause, have not been established. Investigate the native expansion path before
+changing its behavior.
+
+<a id="li-014"></a>
+
+### LI-014 — Native counter value scanning crosses an implicit expression boundary
+
+**Status:** OPEN — root cause confirmed. **Observed:** 2026-11-11, macOS debug
+native TeX parser; independently compared with pdfLaTeX. **Script TeX-port
+blocker:** no for implementing the correct bounded evaluation, but native
+parity for this case is blocked until the native path is fixed.
+
+For `\begin{document}\newcounter{n}\setcounter{n}{\numexpr1+2}\arabic{n}\end{document}`,
+native `parse(..., {type:"tex"})` emits `0` for `\arabic{n}` and reports
+`latex-counter-value`, even though the counter eventually holds 3. The
+pdfLaTeX reference emits 3; see `temp/expl3-script/counter-numexpr-ref.log` and
+`counter-numexpr-debug.out`. In `input-tex-latex.cpp`, `eval_counter_value`
+appends one frozen `\relax`, calls `scan_int`, and then reads another expanded
+token to check for trailing material. An implicitly terminated `\numexpr`
+consumes the only sentinel; that trailing-token read expands the following
+`\arabic{n}` before `counter_command` stores the newly computed value. The
+counter-value scan must remain bounded to its argument, including nested
+expressions, without evaluating the following document tokens prematurely.
