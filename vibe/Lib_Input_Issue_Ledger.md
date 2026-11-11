@@ -12,6 +12,107 @@ owner-side fix and verification, and retain the ID when the issue is resolved.
 
 ## Open issues
 
+<a id="li-015"></a>
+
+### LI-015 — All-frame GIF decoding bypasses the process memory budget
+
+**Status:** RESOLVED, 2026-11-11. **Lambda task blocker:** cleared for Studio
+PNG capture. Ownership **D9.1.1v4 / D9.1.2v2 / D9.1.3v2**. Sibling updates
+were explicitly authorized by the user.
+
+`image_gif_load_from_memory` checked each container against its decoded-byte
+limit but allocated all composited frames without process admission. Several
+individually valid animations on `https://studio.design/` retained
+1,059,694,508 image-category bytes, preventing a viewport PNG allocation.
+An allocation stack identifies `image_gif_load_from_memory` during intrinsic
+image measurement. The existing preflight peak estimate is now returned and
+admitted through `memtrack_allow_allocation` before giflib expansion. Structured
+later-frame decoding reports `IMAGE_LIMIT_EXCEEDED` when admission fails.
+The process limit is unchanged; independent first-frame decoding remains
+available when the complete animation cannot fit.
+
+Full image I/O passes 35/35, including palette/disposal/loop behavior, budget
+rejection and still decoding; native Radiant GIF playback passes 23/23.
+Studio now exports with 711,756,076 image-category bytes. Its selected initial
+frame is mostly blank, so this is load/export qualification, not visual parity.
+Evidence: Lambda `temp/online-recovery/studio-image-trace3-output.log`,
+`studio-budget-fixed-output.log`, and canonical Studio capture; owner
+`temp/online-gif-tests.log`; Radiant `temp/online-gif-player-tests.log`.
+
+Coordinated Lambda **LR03-46** also reuses `map_put_heap` for private JS fields.
+The input builder now grows storage before publishing its new descriptor,
+preserving **D6.3** at its collecting growth callback. The callback sees the
+complete old field list until the added lane and value exist. Lambda's forced-GC private growth regression passes; its full core gate passes
+7,415/7,415 including 859 JS, 368 GC stress and 47 representation cases.
+Qualification is recorded under Lambda LR03-46 and its final test logs.
+
+<a id="li-014"></a>
+
+### LI-014 — Online document captures hit TLS/connect failures despite intermittent curl success
+
+**Status:** host-trust initialization repaired, 2026-11-11; residual public
+origin/network failures remain open. **Lambda task blocker:** cleared for
+verified Lua, Lua manual and Xiph captures; PIL and other transport failures
+remain explicit after repeated live attempts. Acquisition ownership **D9.1.2v2**, project boundaries
+**D9.1.1v4 / D9.1.3v2**. The user authorized sibling source updates.
+
+The host trust adapter previously selected/loaded platform roots inside the
+mbedTLS handshake callback, after TCP connection. Local first-record captures
+show about 91–94ms cold delay after connect versus about 2ms with roots already
+loaded. Cold Xiph probes failed 3/3; warmed probes succeeded 2/3, with an EOF
+also observed after warming. This supports a host-side initialization defect
+but does not explain every public request failure.
+
+`curl_use_host_trust_store` now resolves roots before transport and passes the
+captured chain through `CURLOPT_SSL_CTX_DATA`. The callback applies that chain;
+CA and hostname verification remain enabled. The deterministic regression
+`InputOwnedCurl.CapturesHostRootsBeforeStartingTransport` selects valid roots,
+changes the ambient override before perform, and proves selection occurred
+at configuration. It fails before the change (CURLcode60) and passes afterward.
+All three InputOwnedCurl cases pass, including rejection of an incorrect CA
+and hostname. No vendored libcurl/mbedTLS source was changed.
+
+Input HTTP diagnostics now use the backend error buffer and distinguish
+`CURLE_SSL_CONNECT_ERROR` from certificate-validation errors; handshake EOF
+is no longer incorrectly described as a certificate error. Same-host live
+Lua and Xiph renders succeeded with valid PNGs after the repair. PIL still
+hit the existing 60s downloader timeout in that check and remains a failure;
+no fallback/error page PNG is accepted as a loaded document. URLs, protocol
+policy, deadlines and TLS validation are unchanged.
+
+Evidence: owner `temp/li014-before.log`, `temp/li014-after.log`; Lambda
+`temp/online-recovery/trust-clienthello.json`, curl cold/warm probes, and
+`temp/online-recovery/li014-live/results.json` with per-page logs/PNGs.
+
+<a id="li-013"></a>
+
+### LI-013 — Gzip tar fixture is rejected by the native archive reader
+
+**Status:** OPEN, 2026-11-11. **Lambda blocker:** no; observed during broader
+verification of LI-012, outside the selected HTTP/login repair. Ownership:
+**D9.1.1v4 / D9.1.3v2**. Cause is **unconfirmed**.
+
+Input base `c5ca83e6d4d9793223117398cea5caea868d1040` plus the two-line
+HTTP POST repair fails `ZipTest.NativeTarVariantsCaptureExactBytesAndNames`
+at `test/test_zip_gtest.cpp:602`: opening `test/input/archive/sample.tar.gz`
+returns null with `tar: invalid or unsupported archive`. The test's first
+uncompressed tar fixture succeeds; the gzip variant is expected to preserve
+the same entries and bytes. The archive suite reports 34/35 passing. A
+separate focused rerun reproduces the failure in 2 ms. No archive source,
+fixture, expectation, or vendor dependency was edited for this task.
+
+Reproduce from input:
+
+```sh
+./build/test/test_zip_gtest --gtest_filter=ZipTest.NativeTarVariantsCaptureExactBytesAndNames
+```
+
+Evidence: `../../lambda/temp/kianhup-hang/input-baseline.log` and
+`tar-control.log`. Existing LI-001 / LI-002 also fail the input aggregate;
+all seven local HTTP cases and the Lambda viewer gate pass. No archive
+repair or confirmed regression attribution is claimed.
+
+
 <a id="li-011"></a>
 
 ### LI-011 — Input dependency build pipeline and cross-platform qualification
@@ -134,6 +235,55 @@ D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
 
 ## Resolved issues
+
+<a id="li-012"></a>
+
+### LI-012 — Empty POST reads terminal stdin and blocks page initialization
+
+**Status:** RESOLVED, 2026-11-11.
+**Lambda blocker:** removed; the plain terminal launch now renders the login form.
+Owner authority: **D9.1.2v2**, **D9.1.1v4 / D9.1.3v2**. The user explicitly
+authorized the owner-side fix on 2026-11-11 after the original boundary report.
+
+Confirmed on input `c5ca83e6d4d9793223117398cea5caea868d1040` and Lambda
+`456ba137dfe84a19eb59ef8c48f602fac7ffce28` plus its pending cookie-capability
+repair. Plain interactive startup hangs before first layout. The public page's
+Acro script performs synchronous template POST requests with no body.
+`http_fetch2()` sets `CURLOPT_POST=1`, but `http_set_request_body()` returns
+without setting a body or length when `FetchConfig.body` is null. Curl then
+uses its default stdin reader. The main-thread sample shows
+`js_xhr_send -> http_fetch2 -> curl_easy_perform -> Curl_client_read -> fread
+-> __read_nocancel`. The process remains idle, waiting for terminal input;
+the network timeout and CPU watchdog do not interrupt that blocking read.
+
+Earlier automated runs had EOF on stdin and completed, hiding this separate
+failure after Lambda's missing `navigator.cookieEnabled` was fixed. The
+[curl POSTFIELDS contract](https://curl.se/libcurl/c/CURLOPT_POSTFIELDS.html)
+requires an explicit empty buffer or zero POST length for an empty request.
+
+Evidence: `../../lambda/temp/kianhup-hang/user-hang.log` and
+`user-process.sample.txt`, captured from the user's process PID 53623 without
+changing or terminating it. Reproduction: run the exact `view` command in a
+terminal with stdin open. A regression must keep stdin open rather than rely
+on subprocess EOF. Repair: set POST's initial length to zero, then let the
+existing optional-body helper supply an explicit payload and length. No
+vendor curl patch or Lambda-side workaround is needed.
+
+**Repair and verification:** `lambda/input/input_http.cpp` `http_fetch2()`
+now sets POST's initial length to zero before `http_set_request_body()`
+applies any explicit payload. `test/test_http_gtest.cpp`
+`EmptyPostDoesNotReadStdin` covers null and empty bodies with a pipe whose
+writer remains open, and is selected by the owner offline baseline filter.
+All seven local HTTP tests pass. Lambda's rebuilt debug host reaches first
+render with live PTY stdin and the exact viewer argv, then a windowed PTY
+replay confirms the complete form (`plain-pty.out`, `plain-pty.log`,
+`login-window.png`, `login-window.log`). The viewer integration baseline
+passes: 8,161 passed, 299 partial, 20 skipped of 8,480, zero failures
+(`radiant-baseline.log`). The broader input baseline still fails LI-001,
+LI-002 and the separately recorded LI-013; its HTTP cases all pass. Evidence
+and the completion checkpoint are under `../../lambda/temp/kianhup-hang/`.
+No credentials were entered or login submitted.
+
 
 <a id="li-010"></a>
 

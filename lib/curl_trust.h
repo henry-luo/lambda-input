@@ -10,6 +10,9 @@ static inline CURLcode curl_trust_ssl_ctx(CURL* curl, void* ssl_config, void* us
     return CURLE_OK;
 }
 static inline void curl_use_host_trust_store(CURL* curl) {
+    // resolve host policy before transport starts; the handshake callback only applies the captured chain.
+    struct mbedtls_x509_crt* roots = trust_store_roots();
+    curl_easy_setopt(curl, CURLOPT_SSL_CTX_DATA, roots);
     curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_trust_ssl_ctx);
 }
 // Explicit roots avoid ambient CA paths and the ordinary profile's override.

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "lib/curl_runtime.h"
 #include "lib/curl_trust.h"
+#include "lib/windows_compat.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,7 +20,7 @@ static size_t input_curl_write(char* data, size_t size, size_t count, void* cont
 }
 
 static CURLcode input_curl_request(const char* url, const char* ca_path,
-        InputCurlResponse* response, long* http_status) {
+        InputCurlResponse* response, long* http_status, const char* late_root_override = nullptr) {
     mbedtls_x509_crt roots;
     mbedtls_x509_crt_init(&roots);
     if (ca_path && mbedtls_x509_crt_parse_file(&roots, ca_path) != 0) {
@@ -32,6 +33,11 @@ static CURLcode input_curl_request(const char* url, const char* ca_path,
     CURLcode result = CURLE_OK;
     if (ca_path) result = curl_use_explicit_trust_store(curl, &roots);
     else curl_use_host_trust_store(curl);
+    if (late_root_override && setenv("SSL_CERT_FILE", late_root_override, 1) != 0) {
+        curl_easy_cleanup(curl);
+        mbedtls_x509_crt_free(&roots);
+        return CURLE_FAILED_INIT;
+    }
     if (result == CURLE_OK) result = curl_easy_setopt(curl, CURLOPT_URL, url);
     if (result == CURLE_OK) result = curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
     if (result == CURLE_OK) result = curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000L);
@@ -42,6 +48,22 @@ static CURLcode input_curl_request(const char* url, const char* ca_path,
     curl_easy_cleanup(curl);
     mbedtls_x509_crt_free(&roots);
     return result;
+}
+
+TEST(InputOwnedCurl, CapturesHostRootsBeforeStartingTransport) {
+    ASSERT_TRUE(curl_runtime_initialize());
+    const char* url = getenv("INPUT_CURL_FIXTURE_URL");
+    const char* ca = getenv("INPUT_CURL_FIXTURE_CA");
+    const char* wrong_ca = getenv("INPUT_CURL_FIXTURE_WRONG_CA");
+    ASSERT_NE(url, nullptr); ASSERT_NE(ca, nullptr); ASSERT_NE(wrong_ca, nullptr);
+    InputCurlResponse response = {};
+    long status = 0;
+    // selecting host trust must resolve its roots before an in-flight handshake can observe a later override.
+    CURLcode result = input_curl_request(url, nullptr, &response, &status, wrong_ca);
+    ASSERT_EQ(setenv("SSL_CERT_FILE", ca, 1), 0);
+    EXPECT_EQ(result, CURLE_OK);
+    EXPECT_EQ(status, 200);
+    EXPECT_EQ(response.length, strlen("input-owned curl"));
 }
 
 TEST(InputOwnedCurl, UsesMbedTlsWithAsyncDnsAndHttp2) {

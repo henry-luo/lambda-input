@@ -1632,35 +1632,27 @@ void map_put_with_data_growth(Map* mp, String* key, Item value, Input *input,
         return;
     }
 
-    ShapeEntry* shape_entry = alloc_shape_entry(input->pool, key, type_id, map_type->last);
-    // Type-changing rebuilds can repack earlier fields, so `last + sizeof(last)`
-    // is not authoritative for appends; new fields must start at byte_size.
-    shape_entry->ns = ns;
-    shape_entry->byte_offset = map_type->byte_size;
-    if (!map_type->shape) { map_type->shape = shape_entry; }
-    map_type->last = shape_entry;
-    map_type->length++;
-    if (array_index_shape) map_type->has_array_index_shape = true;
-
-    // A1: populate/grow property hash table for O(1) property lookup
-    typemap_hash_insert_owned(map_type, shape_entry, input->pool);
-
-    // ensure data capacity
     int bsize = type_info[type_id].byte_size;
-    int64_t byte_offset64 = shape_entry->byte_offset + bsize;
+    int64_t byte_offset64 = map_type->byte_size + bsize;
     if (byte_offset64 > INT_MAX) return;
     int byte_offset = (int)byte_offset64;
+    // growth may collect: publish the new descriptor only after its data lane exists (D6.3).
+    ShapeEntry* shape_entry = alloc_shape_entry(input->pool, key, type_id, NULL);
+    if (!shape_entry) return;
+    shape_entry->ns = ns;
+    shape_entry->byte_offset = map_type->byte_size;
     String* keys[1] = {key};
     Item values[1] = {value};
     if (!map_ensure_data_capacity_for_end(&mp, input->pool, byte_offset,
-            byte_offset - bsize, grow, grow_context, keys, 1, values, 1)) return;
-    key = keys[0];
-    value = values[0];
+            map_type->byte_size, grow, grow_context, keys, 1, values, 1)) return;
+    map_store_field_value((char*)mp->data + shape_entry->byte_offset, type_id, values[0]);
+    if (map_type->last) map_type->last->chain_next = shape_entry;
+    else map_type->shape = shape_entry;
+    map_type->last = shape_entry;
+    map_type->length++;
     map_type->byte_size = byte_offset;
-
-    // store the value
-    void* field_ptr = (char*)mp->data + byte_offset - bsize;
-    map_store_field_value(field_ptr, type_id, value);
+    if (array_index_shape) map_type->has_array_index_shape = true;
+    typemap_hash_insert_owned(map_type, shape_entry, input->pool);
 }
 
 void map_put(Map* mp, String* key, Item value, Input *input) {

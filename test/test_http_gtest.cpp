@@ -127,6 +127,53 @@ protected:
     }
 };
 
+TEST_F(HttpInputTest, EmptyPostDoesNotReadStdin) {
+    const char* bodies[] = {nullptr, ""};
+    for (const char* body : bodies) {
+        SCOPED_TRACE(body ? "explicit empty body" : "omitted body");
+        HttpHeaderCaptureServer server;
+        ASSERT_TRUE(http_header_capture_server_start(&server));
+        char url[128];
+        int length = snprintf(url, sizeof(url), "http://127.0.0.1:%d/empty-post", server.port);
+        ASSERT_GT(length, 0);
+        ASSERT_LT((size_t)length, sizeof(url));
+
+        int input_pipe[2];
+        ASSERT_EQ(pipe(input_pipe), 0);
+        pid_t client = fork();
+        ASSERT_GE(client, 0);
+        if (client == 0) {
+            // keep the writer open: an accidental stdin read must fail this test, not see EOF.
+            alarm(3);
+            if (dup2(input_pipe[0], STDIN_FILENO) < 0) _exit(2);
+            close(input_pipe[0]);
+            FetchConfig config = {};
+            config.method = "POST";
+            config.body = body;
+            config.timeout_seconds = 2;
+            config.user_agent = "Lambda HTTP regression";
+            FetchResponse* response = http_fetch(url, &config);
+            bool valid = response && response->status_code == 200 &&
+                response->size == 2 && memcmp(response->data, "ok", 2) == 0;
+            free_fetch_response(response);
+            close(input_pipe[1]);
+            _exit(valid ? 0 : 1);
+        }
+        close(input_pipe[0]);
+        close(input_pipe[1]);
+        int status = 0;
+        ASSERT_EQ(waitpid(client, &status, 0), client);
+        EXPECT_TRUE(WIFEXITED(status)) << "empty POST blocked on stdin";
+        if (WIFEXITED(status)) EXPECT_EQ(WEXITSTATUS(status), 0);
+
+        char request[8192] = {};
+        http_header_capture_server_finish(&server, request, sizeof(request));
+        EXPECT_NE(strstr(request, "POST /empty-post HTTP/1.1\r\n"), nullptr);
+        EXPECT_NE(strstr(request, "Content-Length: 0\r\n"), nullptr);
+        EXPECT_EQ(strstr(request, "Transfer-Encoding: chunked"), nullptr);
+    }
+}
+
 TEST_F(HttpInputTest, SendsBrowserNavigationHeadersForDocumentDownloads) {
     HttpHeaderCaptureServer server;
     ASSERT_TRUE(http_header_capture_server_start(&server));

@@ -256,7 +256,7 @@ test-native: test-api-headers setup-test-data check-native-test-deps all native-
 	  ./build/test/test_runtime_scalar_storage_gtest || rc=1; \
 	  $(PYTHON) test/run_native_tests.py ./build/test/test_input_https_pull_native || rc=1; \
 	  ./build/test/test_graph_parser_native || rc=1; \
-	  ./build/test/test_http_gtest --gtest_filter=HttpInputTest.SendsBrowserNavigationHeadersForDocumentDownloads:HttpInputTest.KeepsRedirectCookiesWithoutSessionJar:HttpInputTest.DecodesBrotliDocumentResponses:HttpInputTest.ErrorDocumentsRetainFinalResponseMetadataButResourcesReject:HttpInputTest.TruncatedErrorDocumentRemainsTransportFailure:HttpInputTest.TopLevelNavigationUsesPageLoadTimeout || rc=1; \
+	  ./build/test/test_http_gtest --gtest_filter=HttpInputTest.EmptyPostDoesNotReadStdin:HttpInputTest.SendsBrowserNavigationHeadersForDocumentDownloads:HttpInputTest.KeepsRedirectCookiesWithoutSessionJar:HttpInputTest.DecodesBrotliDocumentResponses:HttpInputTest.ErrorDocumentsRetainFinalResponseMetadataButResourcesReject:HttpInputTest.TruncatedErrorDocumentRemainsTransportFailure:HttpInputTest.TopLevelNavigationUsesPageLoadTimeout || rc=1; \
 	  for test_bin in $(MIGRATED_TEST_BINS); do ./$$test_bin || rc=1; done; exit $$rc
 
 clean:
