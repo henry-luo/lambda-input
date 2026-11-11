@@ -63,8 +63,12 @@ LIB_DEFINES = $(PROFILE_DEFINES) -DUTF8PROC_STATIC -DMEMPOOL_RUNTIME_VM_PROVIDER
 DATA_DEFINES = $(PROFILE_DEFINES) -DSIMPLE_SCHEMA_PARSER -DPATH_NO_ITERATION -DLAMBDA_IO_STATIC_VALUES \
   -DUTF8PROC_STATIC -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION
 
-.PHONY: all clean vendor-deps check-boundary check-curl check-native-test-deps configure curl-deps native-deps test-native test-input-baseline test-build-dependencies force-build-signature
-all: vendor-deps curl-deps native-deps build/lib/$(PROFILE)/liblambda-lib.a build/lib/$(PROFILE)/liblambda-input.a
+.PHONY: all build-all-internal clean vendor-deps check-boundary check-curl check-native-test-deps configure curl-deps native-deps test-native test-input-baseline test-build-dependencies force-build-signature
+# keep compiler output in one log and show only diagnostics plus the final status.
+all:
+	@$(PYTHON) scripts/quiet_build.py --label "lambda-input ($(PROFILE))" --log "temp/build-$(PROFILE).log" -- $(MAKE) --no-print-directory build-all-internal
+
+build-all-internal: vendor-deps curl-deps native-deps build/lib/$(PROFILE)/liblambda-lib.a build/lib/$(PROFILE)/liblambda-input.a
 
 # The input owner generates the pinned vendor configuration before compilation.
 temp:
