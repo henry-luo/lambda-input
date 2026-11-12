@@ -121,6 +121,47 @@ Evidence: Lambda `temp/online-visual-round3/` reduced pages, `color-tests.log`
 and Nuxt captures. The report must retain unrelated icon/mask limitations.
 Spec: https://www.w3.org/TR/css-color-4/#missing
 
+<a id="li-021"></a>
+
+### LI-021 — Shared libuv loop spins during concurrent context scheduler teardown
+
+**Status:** OPEN — process-global provider state confirmed; the exact intrusive-list
+corruption/race is unconfirmed. **Observed:** 2026-11-12, macOS native debug,
+Lambda checkout `85cc95ad4` plus the existing-ruling follow-up. **Lambda task
+blocker:** yes for claiming the complete standalone shared-module concurrency
+gate; no for the selected ledger repairs, whose Lambda and Test262 baselines pass.
+Ownership: **D9.1.1v4 / D6.4.4 / D7.5.1** require a loop owned by each context.
+
+Reproduction from `../Lambda-opus` after linking the current native host:
+`./test/test_lambda_concurrency_gtest.exe --gtest_death_test_style=threadsafe`.
+The preceding 97 native checks pass, and
+`RuntimeGlobalsConcurrency.SharedChartAndPdfModulesStayStableAcrossEvalThreads`
+passes its full 20-second concurrent phase. The next
+`ModuleStateSlabsArePrivateToEachEvalContext` test spins during worker cleanup.
+A one-second `sample` places its surviving worker in
+`lambda_scheduler_destroy` (`lambda/runtime/concurrency.cpp:872`) ->
+`lambda_uv_run_loop` (`lib/uv_loop.c:143`) -> `uv_run` -> `uv__run_prepare`.
+The main thread waits in `pthread_join`; CPU is about one core and peak native
+footprint is 3.5 GB. The unbounded run was stopped after capturing evidence.
+
+`lib/uv_loop.c` still owns one process-global `g_loop`, `g_prepare`, `g_check`,
+drain callback pair and active flags. Lambda's scheduler creates/closes each
+context's wake handle on that shared loop. Four independent evaluator workers
+can therefore enter its provider during teardown. A shared prepare/check-list
+race is consistent with the sample, but an exact corruption-producing operation
+has not been established. The existing Lambda Runtime Globals RG8 record
+explicitly requires an instance-based `lambda_uv_*` API; moving only the loop
+pointer or adding a Lambda-side serialization workaround does not implement it.
+
+Evidence in `../Lambda-opus/temp/ledger-ruled-fixes/`:
+`concurrency-complete.log`, `concurrency-hang.sample.txt`, and
+`concurrency-sample.log`; implementation/checkpoint:
+`../Lambda-opus/vibe/impl/Lambda_Impl_Ledger_Ruled_Followup (done).md`.
+The test setup sources only add explicit acknowledgement of now-inferred chart
+and PDF error outcomes; no workload, check, deadline or scheduler path is removed.
+The affected additional qualification is stopped. No sibling implementation,
+header, test or build source is changed by this report.
+
 <a id="li-016"></a>
 
 ### LI-016 — Cross-process SQLite scope contention lacks an admission/retry contract
