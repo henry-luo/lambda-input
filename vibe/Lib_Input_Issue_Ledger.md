@@ -534,3 +534,67 @@ consumes the only sentinel; that trailing-token read expands the following
 `\arabic{n}` before `counter_command` stores the newly computed value. The
 counter-value scan must remain bounded to its argument, including nested
 expressions, without evaluating the following document tokens prematurely.
+
+<a id="li-017"></a>
+
+### LI-017 — Native TeX leaks an environment end marker inside constructor arguments
+
+**Status:** OPEN — cause confirmed for the observed path. **Observed:**
+2026-11-12, macOS debug native TeX parser. **Script TeX-port blocker:** yes for
+native-compatible handling of custom environments inside constructor arguments.
+
+For `\newenvironment{foo}{B}{E}\begin{document}\textbf{A\begin{foo}X\end{foo}Z}\end{document}`,
+native TeX output contains `\textbf{ABXE\.nvendZ}`. The reproduction and
+native output are in `temp/expl3-script/constructor-env-probe.ls` and `.out`;
+the staged Script result explicitly fails reconstruction for this case. In
+`lambda/input/input-tex-latex.cpp`, `latex_arg_mode_env` pushes the end macro
+and the internal environment-end primitive for a custom environment.
+`arg_mode` in `lambda/input/input-tex-main.cpp` emits that unexpandable
+primitive instead of executing it, leaking its internal control sequence into
+the output and leaving the environment group unclosed. The internal name uses
+`"\x02envend"`, whose C++ hexadecimal escape includes the `e` and produces
+the observed leading dot. The native argument-mode handling and group lifetime
+need correction before this case can be used as a parity reference.
+
+<a id="li-018"></a>
+
+### LI-018 — Native LaTeX environment scanning interprets raw inline verbatim
+
+**Status:** OPEN — cause confirmed for the observed examples. **Observed:**
+2026-11-12, macOS debug native LaTeX parser. **Script TeX-port blocker:** yes
+for native AST comparison of affected valid verbatim content.
+
+Native TeX preserves both `\begin{document}A\verb|x_%|B\end{document}` and
+`\begin{document}A\verb|\end{document}|B\end{document}` without diagnostics,
+but native LaTeX parsing reports an error for each; the same parser builds a
+`verb` node for `\verb|xyz|`. Reproduction and output are
+`temp/expl3-script/verb-native-digest-probe.ls` and `.out`. The document
+`find_environment_end` scan in `lambda/input/input-latex-c.cpp` skips the
+control word but does not skip its verbatim payload, so it treats `%` inside
+that payload as a comment and `\end{document}` inside it as an environment
+terminator. The scan needs to recognize raw inline spans before looking for
+comments and environment boundaries.
+
+<a id="li-019"></a>
+
+### LI-019 — Native TeX discard boundaries become stale after cross-boundary unskip
+
+**Status:** OPEN — root cause confirmed. **Observed:** 2026-11-12, macOS debug
+native TeX parser. **Script TeX-port blocker:** yes for native-compatible
+cross-boundary removal in discarded and nested box material.
+
+For `\begin{document}A \insert0{\vadjust{\unskip}X}B\end{document}`, native
+TeX emits `AXB`: the inner `\unskip` removes the preceding space, but `X`
+leaks from the outer discarded insert. A similar case leaks an echoed global
+macro definition. Reproduction and native output are
+`temp/expl3-script/discard-unskip-detail.ls` and `.out`. The native log also
+shows `arraylist_remove_oob` with a length of 4294967295; evidence is
+`temp/expl3-script/discard-unskip-detail.log`.
+
+`unskip` in `lambda/input/input-tex-main.cpp` removes the last output item
+without adjusting open groups' `out_start` values. `finish_box` in
+`lambda/input/input-tex-prims.cpp` subtracts those stale unsigned boundaries
+from the shorter output length; it can either leave subsequent items outside
+the intended discard slice or underflow. The array-list bounds check rejects
+the invalid removal. Update the native boundary accounting and qualify nested
+discarded groups before using these cases as port parity references.
