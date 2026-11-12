@@ -200,6 +200,42 @@ static void check_backing_alive(void* allocator) {
     probe->alive = false;
 }
 
+TEST_F(MemContextTest, ArbitrarySiblingRemovalPreservesRemainingContextOwnership) {
+    MemContext* parent = mem_context_create(nullptr, MEM_ROLE_INPUT, "inputs");
+    ASSERT_NE(parent, nullptr);
+    MemContext* siblings[6] = {};
+    DependencyTeardownProbe probes[7] = {};
+    for (size_t i = 0; i < 6; i++) {
+        probes[i].alive = true;
+        siblings[i] = mem_context_create(parent, MEM_ROLE_INPUT, "input");
+        ASSERT_NE(siblings[i], nullptr);
+        ASSERT_NE(mem_register(siblings[i], MEM_KIND_ARENA, MEM_ROLE_INPUT,
+            "input.arena", &probes[i], nullptr, nullptr, check_backing_alive), nullptr);
+    }
+
+    // cover oldest, middle and newest removal before inserting another sibling.
+    const size_t order[] = {0, 3, 5, 2};
+    for (size_t i = 0; i < 4; i++) {
+        mem_context_destroy(siblings[order[i]]);
+        EXPECT_FALSE(probes[order[i]].alive);
+        MemSnapshot* snapshot = mem_snapshot_capture(parent);
+        ASSERT_NE(snapshot, nullptr);
+        EXPECT_EQ(snapshot->count, 5u - i);
+        mem_snapshot_free(snapshot);
+    }
+    EXPECT_TRUE(probes[1].alive);
+    EXPECT_TRUE(probes[4].alive);
+
+    probes[6].alive = true;
+    MemContext* newest = mem_context_create(parent, MEM_ROLE_INPUT, "replacement");
+    ASSERT_NE(newest, nullptr);
+    ASSERT_NE(mem_register(newest, MEM_KIND_ARENA, MEM_ROLE_INPUT,
+        "replacement.arena", &probes[6], nullptr, nullptr, check_backing_alive), nullptr);
+    mem_context_destroy(parent);
+    for (size_t i = 0; i < 7; i++) EXPECT_FALSE(probes[i].alive);
+    EXPECT_EQ(mem_context_live_count(mem_context_root()), 0u);
+}
+
 TEST_F(MemContextTest, CascadeDestroysDependentsAcrossContextBoundaries) {
     MemContext* root = mem_context_root();
     MemContext* doc = mem_context_create(root, MEM_ROLE_VIEW, "document");

@@ -48,6 +48,7 @@ struct MemContext {
     MemContext*  parent;
     MemContext*  children;      // child-context list head
     MemContext*  sibling_next;  // next sibling under the same parent
+    MemContext*  sibling_prev;  // previous sibling for constant-time removal
     uint32_t     live_count;    // nodes owned directly by this context
     uint32_t     doc_id;        // document this context represents (0 = none)
     bool         enabled;
@@ -153,6 +154,7 @@ MemContext* mem_context_create(MemContext* parent, MemRole role, const char* lab
     ctx->parent = p;
     ctx->doc_id = p ? p->doc_id : 0;
     ctx->sibling_next = p->children;
+    if (p->children) p->children->sibling_prev = ctx;
     p->children = ctx;
     UNLOCK();
     return ctx;
@@ -178,13 +180,12 @@ MemContext* mem_context_process(MemRole role) {
 static void detach_from_parent_locked(MemContext* ctx) {
     MemContext* p = ctx->parent;
     if (!p) return;
-    MemContext** link = &p->children;
-    while (*link) {
-        if (*link == ctx) { *link = ctx->sibling_next; break; }
-        link = &(*link)->sibling_next;
-    }
+    // inputs retire oldest-first; scanning newer siblings makes shutdown quadratic.
+    if (ctx->sibling_prev) ctx->sibling_prev->sibling_next = ctx->sibling_next;
+    else p->children = ctx->sibling_next;
+    if (ctx->sibling_next) ctx->sibling_next->sibling_prev = ctx->sibling_prev;
     ctx->parent = NULL;
-    ctx->sibling_next = NULL;
+    ctx->sibling_next = ctx->sibling_prev = NULL;
 }
 
 static void unlink_node_locked(MemNode* node);

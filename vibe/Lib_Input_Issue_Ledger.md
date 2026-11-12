@@ -12,6 +12,8 @@ owner-side fix and verification, and retain the ID when the issue is resolved.
 
 ## Open issues
 
+LI-016 is [resolved below](#li-016).
+
 <a id="li-015"></a>
 
 ### LI-015 — Cross-process SQLite scope contention lacks an admission/retry contract
@@ -185,6 +187,87 @@ D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
 
 ## Resolved issues
+
+<a id="li-016"></a>
+
+### LI-016 — Combined cloud/peer agent stalls during input/lib teardown
+
+**Status:** RESOLVED — owner fix and combined-agent qualification complete (2026-11-12).
+The user explicitly authorized `lambda-input` source changes for this issue.
+
+**Confirmed cause:** InputManager releases retained Inputs in creation order.
+Each Input's context was pushed onto a singly linked newest-first sibling list;
+`detach_from_parent_locked` scanned that list to remove each oldest context.
+The resulting quadratic pointer traversal dominated process exit. The stall was
+not evidence of a graph cycle or skipped allocator destruction.
+
+`MemContext` now retains a private previous-sibling link. Creation and removal
+maintain both links under the existing registry lock, making arbitrary detach
+constant time. Cleanup order and backing dependency teardown remain unchanged
+(D5.2.1, D5.2.5). A mixed-order lifecycle test checks survivors, head/middle/tail
+removal, reinsertion and final cascade destruction.
+
+Release reproduction (`-O3 -DNDEBUG -std=c17`) compiles the exact before/after
+source and exercises the same input-order topology. For 80,000 contexts, full
+creation/destruction changed from about 3.03 seconds to a median 0.0097 seconds;
+this is an isolated lifecycle measurement, not application-throughput evidence.
+Owner focused suites pass **18 memory-context + 7 factory + 62 pool = 87 tests**.
+Lambda's rebuilt native host passes **17/17 real-S3 cloud/combined-agent checks
+on interpreter, AUTO and JIT**, with the original 180-second deadline unchanged.
+The combined case is now mandatory in the default gate. Focused sync GC/poison
+checks pass **9/9 per tier**; the ordinary sync sweep passes **51/51**.
+
+Full input baseline: **5,220 passed, 3 failed, 1 skipped** across 106 executables
+(5,224 tests). Only the already recorded LI-001 parser budget, LI-002 external-parent
+expectation and LI-012 tar fixture fail; the font-dependent emoji test skips.
+Full Lambda baseline: **7,493/7,494**, with only the existing TeX/expl3 golden
+mismatch. These results do not mark those unrelated issues resolved.
+
+Evidence: input `temp/li016/{before-source.json,after.json,mem_context.log,
+mem_factory.log,mempool.log,input-baseline.log}`, Lambda
+`temp/li016/{final-matrix.json,final-combined-*.log,final-stress-*.log,
+lambda-baseline.log}` and the
+[cloud implementation record](<../../lambda/vibe/impl/Lambda_Impl_Sync_Cloud (done).md>).
+The former Lambda blocker is removed. LI-015 concurrent administration remains
+separate and open.
+
+<details><summary>Original observation and investigation — 2026-11-11</summary>
+
+**Status:** OPEN — ownership cause unconfirmed; stack observation is in input/lib
+cleanup, not proof of a provider defect. **Observed:** 2026-11-11, copied macOS
+native host in Lambda's isolated `temp/sync-cloud/worktree`, interpreter and AUTO.
+**Lambda blocker:** yes for the additional combined cloud-poll/peer-listener agent
+acceptance case; ordinary one-shot cloud exchange/recovery passes independently.
+D9.1.1v4, D6.3.3 and D11.1.2 apply. No sibling source was changed.
+
+Run `test/sync_cloud/test_cloud.py` against the real local S3 test store. The final
+combined case starts `cloud_cli.ls` action `run`, with four iterations and a
+60-second cloud interval, and completes a peer transfer into that repository.
+The peer client exits successfully and file bytes are installed, but the combined
+agent does not finish within the existing 180-second test deadline. Both
+interpreter and AUTO cases time out; no timeout was raised or harness patched.
+
+The interpreter process reports completion (`executed=1`, about 172M nodes and
+2334.50 MiB peak RSS) in its diagnostics before the driver timeout. A one-second
+macOS stack sample finds the main thread in `lambda_main_finish` ->
+`InputManager::destroy_global` -> `InputManager::reset_inputs` ->
+`input_release_document_resources` -> `mem_context_destroy` ->
+`destroy_ctx_locked` (`lib/mem_context.c:238`). Process inspection shows a CPU-bound
+exit with a large memory footprint. Determine whether this is input/lib graph
+teardown, an upstream Lambda ownership error, or pathological accumulated cleanup;
+no cycle, allocator corruption or exact shared cause is confirmed.
+
+Evidence relative to the Lambda checkout:
+`temp/sync-cloud/worktree/temp/sync-cloud/combined-failure-{interp,auto}.log`,
+`combined-evidence/{interp,auto}/31-run.err`, and
+`agent-sample.txt`. The full process gate preserves this failure under
+`--combined`; its ordinary cloud checks must not be represented as passing the
+blocked combined gate. Combined-agent qualification work is stopped. Do not
+change sibling sources, suppress teardown, extend timeouts, or add a process-exit
+workaround from Lambda. Owner investigation is needed before advertising this
+additional combined command as qualified.
+
+</details>
 
 <a id="li-010"></a>
 
