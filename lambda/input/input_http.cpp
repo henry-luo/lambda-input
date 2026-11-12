@@ -203,11 +203,8 @@ static size_t write_document_header_callback(char* buffer, size_t size, size_t n
     char* curl_url = NULL;
     if (response->curl) curl_easy_getinfo(response->curl, CURLINFO_EFFECTIVE_URL, &curl_url);
     if (curl_url && curl_url[0]) effective_url = curl_url;
-    char* header = mem_dup_n(buffer, header_size, MEM_CAT_NETWORK);
-    if (!header) return 0;
-    cookie_jar_store(response->cookie_jar, effective_url, header);
-    mem_free(header);
-    return header_size;
+    return cookie_jar_store_response_header(response->cookie_jar, effective_url,
+        buffer, header_size) ? header_size : 0;
 }
 
 // Map HTTP Content-Type to file extension for routing

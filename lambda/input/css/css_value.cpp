@@ -194,7 +194,8 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
         CssMathType type;
         bool hue = ((hsl || hwb) && i == 0) || (oklch && i == 2);
         if (!css_color_component(channels[i], hue, !modern && !rgb && i > 0 && i < 3,
-            modern && !perceptual, perceptual ? i == 0 || i == 3 : !predefined || i == 3,
+            // modern color syntax preserves missing channels; used-color conversion treats them as zero.
+            modern, perceptual ? i == 0 || i == 3 : !predefined || i == 3,
             perceptual && i > 0 && i < 3 ? 0.004 : 0.01,
             rgb && i < 3 ? 1.0 / 255.0 : (hsl || hwb) && i > 0 && i < 3 ? 0.01 : 1.0,
             &result->components[i], &missing, &type)) return false;

@@ -188,9 +188,12 @@ static char* host_from_url(const char* url) {
     Url* parsed = parse_url(NULL, url);
     if (!parsed) return nullptr;
     char* host = nullptr;
-    if (parsed->host) {
-        host = mem_strdup(parsed->host->chars, MEM_CAT_NETWORK);
-    }
+    // cookie domains exclude ports; the same hostname shares cookies across
+    // ports and must import into curl's domain-keyed cookie engine unchanged.
+    const char* hostname = url_get_hostname(parsed);
+    // hostless URLs carry an empty authority rather than a hostname component.
+    if (!hostname && parsed->host && parsed->host->len == 0) hostname = "";
+    if (hostname) host = mem_strdup(hostname, MEM_CAT_NETWORK);
     url_destroy(parsed);
     return host;
 }
@@ -488,6 +491,20 @@ void cookie_jar_import_curl(CookieJar* jar, void* curl_handle) {
         mem_free(line);
     }
     pthread_mutex_unlock(&jar->lock);
+}
+
+bool cookie_jar_store_response_header(CookieJar* jar, const char* request_url,
+                                      const char* header, size_t length) {
+    if (!jar || !request_url || !header ||
+        !str_istarts_with(header, length, "Set-Cookie:", 11)) return true;
+    // curl spans include CRLF; leaving it in the last attribute corrupts Path
+    // and makes terminal HttpOnly/Secure flags unrecognizable.
+    while (length && (header[length - 1] == '\r' || header[length - 1] == '\n')) length--;
+    char* value = mem_dup_n(header, length, MEM_CAT_NETWORK);
+    if (!value) return false;
+    cookie_jar_store(jar, request_url, value);
+    mem_free(value);
+    return true;
 }
 
 void cookie_jar_store(CookieJar* jar, const char* request_url,

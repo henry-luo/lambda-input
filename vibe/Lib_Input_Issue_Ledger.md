@@ -12,6 +12,115 @@ owner-side fix and verification, and retain the ID when the issue is resolved.
 
 ## Open issues
 
+<a id="li-020"></a>
+
+### LI-020 — Calmind CDN rejects a valid compressed resource request profile
+
+**Status:** OPEN external interoperability limitation; native transport defect
+unconfirmed, 2026-11-12. **Lambda blocker:** no; capture completes, but missing
+first-party CSS and images leave a major visual difference. Network ownership
+follows **D9.1.1v4 / D9.1.3v2**.
+
+The current native capture of https://calmind.com/ receives HTTP403 HTML browser
+checks for first-party CSS, scripts and images. Fresh headless Chromium receives
+200 CSS for all three stylesheets. The resource manager already forwards the
+owning document's Referer through CURLOPT_REFERER; adding the same Referer or
+copying the current native User-Agent in system curl still receives 200 CSS.
+
+Independent system-curl controls isolate an origin response variation:
+`--compressed` advertises the available `deflate, gzip` codecs and receives
+HTTP403, 5768 bytes of an HCDN browser-check page, with Vary:Accept-Encoding.
+IPv4 gives the same result. Explicit gzip-only, identity, no encoding header or
+Chromium's `gzip, deflate, br, zstd` header receives HTTP200 text/css. The valid
+native compressed request is not proven malformed; no cookie, TLS, resource
+scheduling or script-startup root cause is established by these controls.
+
+Do not disable compression, spoof unsupported codecs, reorder headers for this
+host or substitute its CSS solely to match the reference. Broader CDN/browser
+challenge interoperability is outside this existing-bug milestone. Evidence:
+Lambda `temp/online-visual-round13/calmind-corrected-controls.json`,
+`calmind-encoding-controls.json`, saved response headers/bodies,
+`calmind-native-probe.png` and `calmind-browser-current.json/png`. An early
+User-Agent extraction concatenated following macros; those native/css-accept
+controls are superseded by corrected-controls and are not evidence.
+
+
+<a id="li-018"></a>
+
+### LI-018 — Document response cookies retain HTTP line terminators
+
+**Status:** FIXED, 2026-11-12. **Lambda blocker:** cleared for the reduced
+export-session case. Ownership **D9.1.1v4 / D9.1.3v2**. The synchronous document
+header callback copies the full curl span into cookie_jar_store. Unlike the
+other network frontends, it leaves CRLF intact. A final Path=/ then contains
+line endings and fails matching; a terminal HttpOnly/Secure name fails the
+attribute comparison. The two-cookie local response exposes the private cookie
+to document.cookie while omitting the ordinary visible cookie.
+[libcurl HEADERFUNCTION](https://curl.se/libcurl/c/CURLOPT_HEADERFUNCTION.html)
+delivers bounded, non-NUL-terminated header lines including their terminator.
+
+Use one cookie_jar_store_response_header helper to normalize the bounded span
+and store the copied value. The document, synchronous-resource and curl-multi
+callbacks reuse it, replacing duplicate normalization code. Allocation failure
+aborts the transport. No vendored curl implementation is changed.
+DocumentCookiesKeepFinalPathAndHttpOnlyAttributes fails before and passes after;
+script-visible cookies exclude HttpOnly while request cookies include it.
+All ten local HTTP cases and six real-renderer session tests pass. Evidence:
+Lambda temp/online-visual-round8/{http-before.log,http-after.log,http-hostless.log,
+session-qualified.log}. The full input gate retains the independent LI-001,
+LI-002 and LI-013 failures; expectations and filters were not weakened.
+
+<a id="li-019"></a>
+
+### LI-019 — Cookie domains include URL ports
+
+**Status:** FIXED, 2026-11-12. **Lambda blocker:** cleared for cookie transport.
+Ownership **D9.1.1v4 / D9.1.3v2**. Cookie host extraction reads Url.host, which
+contains a nondefault port, instead of the canonical hostname. Cookies then
+fail matching on another port of the same host, and curl rejects their imported
+port-bearing domain for subresource requests. [RFC6265 §8.5](https://www.rfc-editor.org/info/rfc6265/#section-8.5)
+does not isolate cookies by port.
+
+Use url_get_hostname, retaining the established empty-authority behavior for
+hostless file documents. CookiesShareAHostnameAcrossPorts fails before and
+passes after; a distinct hostname still receives no cookie. The added
+FileDocumentCookiesRetainTheirEmptyHostname and existing JS dom_document_cookie
+golden protect file compatibility. Initial and script-created image requests
+in the real HTTP export tests now carry the shared response/DOM cookies.
+The three new input cases are included in the local baseline filter.
+
+Final input aggregate:5224 passes,1 skip, with the same independent graph LOC
+budget, transition-tree external-parent and sample.tar.gz failures (LI-001 /
+LI-002 / LI-013). No affected source or fixture for those failures changed.
+Full AST574 and real HTTP/session6 checks pass with native services available.
+Evidence in Lambda temp/online-visual-round8/: http-before.log,
+http-hostless.log, input-baseline-final.log, session-qualified.log,
+js-baseline-ast-qualified.log. Capture qualification is in Lambda
+ test/online/README.md; native RI-045 provides the missing export profile.
+
+<a id="li-017"></a>
+
+### LI-017 — Missing Oklab/OkLCh components invalidate neutral theme colors
+
+**Status:** FIXED, 2026-11-12. Input color computation ownership follows
+**D9.1.1v4 / D9.1.2v2**. **Lambda blocker:** cleared for the reduced theme case.
+Nuxt uses `oklch(14.5% 0 none)` in its neutral palette. The shared color helper
+already retains a missing-channel bit and a zero used value, but the caller
+explicitly disallowed missing components for perceptual functions. This
+invalidated the palette fallback, leaving the dark page background transparent
+and white headings invisible. CSS Color 4 §4.4 permits `none` in modern color
+syntax and treats missing components as zero outside interpolation.
+
+The caller now admits missing channels through the existing helper. Six
+regression cases cover lightness/chroma/hue/alpha, stored missing bits,
+serialization, round trips and RGB consumers. Two formerly-invalid assertions
+were corrected to test actually invalid identifiers instead. The Nuxt hue
+case fails before the change; all 112 CSS parser tests pass after. This does
+not implement missing-component interpolation in color-mix or new color spaces.
+Evidence: Lambda `temp/online-visual-round3/` reduced pages, `color-tests.log`
+and Nuxt captures. The report must retain unrelated icon/mask limitations.
+Spec: https://www.w3.org/TR/css-color-4/#missing
+
 <a id="li-016"></a>
 
 ### LI-016 — Cross-process SQLite scope contention lacks an admission/retry contract
@@ -118,6 +227,40 @@ policy, deadlines and TLS validation are unchanged.
 Evidence: owner `temp/li014-before.log`, `temp/li014-after.log`; Lambda
 `temp/online-recovery/trust-clienthello.json`, curl cold/warm probes, and
 `temp/online-recovery/li014-live/results.json` with per-page logs/PNGs.
+
+**Acquisition follow-up, 2026-11-12:** reran the remaining corpus using the
+verified Lambda host. Exact PIL URL `https://www.lua.org/pil/contents.html`
+loads in Chromium, and an input-owned curl probe also completed with HTTP200.
+Three isolated Lambda captures still failed: two connection resets during
+TLS handshake and one 60s timeout. System curl also timed out on that exact
+URL in another attempt. The discrepancy remains intermittent; a new local
+TLS defect or an origin/provider cause is **unconfirmed**. No error-page PNG
+is accepted and no protocol, certificate or redirect limit was weakened.
+
+**PIL follow-up, 2026-11-12:** The unchanged qualified Lambda host and the
+official snapshot retry both loaded the page, so a valid 1200 × 800 capture is
+now available. Three additional Lambda renders produced two TLS connection
+resets and one HTTP 200; four alternating system-curl requests returned HTTP
+200, while the standalone input-owned curl probe had one reset and three
+HTTP 200 responses. A separate input-owned curl probe reproduced resets with
+both default TLS and TLS 1.2, and also observed a connect timeout and an empty
+reply. These observations locate failures in transport but do not establish
+whether the remote peer, network path, or client TLS behavior causes them.
+No reliable source-level repair is established. Evidence is in Lambda
+`temp/pil-investigation/`; the original failed capture logs and manifest were
+preserved there before the successful retry. Ownership remains **D9.1.2v2**.
+
+Independent system-curl probes reproduce TCP connect timeouts for GNU and Qt,
+connection refusal for Eigen, the Onfolk hostname mismatch (a Squarespace
+certificate), and the expired ObservIQ certificate. The OS resolver cannot
+produce addresses for `www.narrative.bi` or `empower.me`; local DNS queries
+return NOERROR with no A answers. These are acquisition blockers in the
+current environment, not evidence of a native rendering failure. Ownership
+remains **D9.1.2v2**; attribution of the transport/DNS causes is not established.
+Evidence: Lambda `temp/online-recovery-20261112/transport/`, `pil-render/`,
+`pil-owned.log`, `pil-system.log`; per-case browser diagnostics live beside
+`test/online/snapshots/capture_results.csv`. The capture helper now retains
+selected origin headers, lifecycle events and failed/pending resources.
 
 <a id="li-013"></a>
 
