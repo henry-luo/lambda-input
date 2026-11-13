@@ -2178,7 +2178,6 @@ static const MimeParserMapping MIME_PARSER_MAPPINGS[] = {
     {"text/markdown", "markdown"},
     {"text/mdx", "mdx"},
     {"text/x-rst", "rst"},
-    {"application/rtf", "rtf"},
     {"application/pdf", "pdf"},
     {"application/x-tex", "latex"},
     {"application/x-latex", "latex"},
@@ -2236,7 +2235,6 @@ static const InputParserMapping INPUT_PARSER_MAPPINGS[] = {
 #ifndef LAMBDA_NO_LATEX
     {"tikz", parse_tikz_input},
 #endif
-    {"rtf", parse_rtf},
     {"wiki", parse_wiki_input},
     {"asciidoc", parse_asciidoc_input},
     {"adoc", parse_asciidoc_input},

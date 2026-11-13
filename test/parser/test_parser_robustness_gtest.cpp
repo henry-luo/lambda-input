@@ -572,44 +572,6 @@ TEST_F(MarkParserRobustnessTest, Utf8Content) {
 }
 
 // ============================================================================
-// RTF Parser Robustness Tests
-// ============================================================================
-
-class RtfParserRobustnessTest : public ParserTestBase {};
-
-TEST_F(RtfParserRobustnessTest, EmptyInput) {
-    TestEmptyInput("rtf");
-}
-
-TEST_F(RtfParserRobustnessTest, MinimalValidInputs) {
-    EXPECT_TRUE(parse_succeeded(parse("{\\rtf1}", "rtf")));
-    EXPECT_TRUE(parse_succeeded(parse("{\\rtf1 Hello}", "rtf")));
-    EXPECT_TRUE(parse_succeeded(parse("{\\rtf1\\ansi}", "rtf")));
-}
-
-TEST_F(RtfParserRobustnessTest, DeepNesting) {
-    auto nested_rtf = [](int depth) {
-        std::string rtf = "{\\rtf1";
-        for (int i = 0; i < depth; i++) rtf += "{";
-        rtf += "text";
-        for (int i = 0; i < depth; i++) rtf += "}";
-        rtf += "}";
-        return rtf;
-    };
-    
-    for (int depth : {10, 100, 200, 256}) {
-        TestDoesNotCrash(nested_rtf(depth).c_str(), "rtf");
-    }
-}
-
-TEST_F(RtfParserRobustnessTest, MalformedRtf) {
-    // Unclosed braces
-    TestDoesNotCrash("{\\rtf1 {text", "rtf");
-    // Missing rtf header
-    TestDoesNotCrash("{some text}", "rtf");
-}
-
-// ============================================================================
 // JSX Parser Robustness Tests
 // ============================================================================
 

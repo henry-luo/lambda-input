@@ -77,7 +77,6 @@ bool xml_namespace_uses_html_names(const char* namespace_uri);
 bool xml_document_element_matches(Pool* pool, Element* element, const char* local_name,
                                  const char* namespace_uri, bool allow_missing_namespace = false);
 
-void parse_rtf(Input* input, const char* rtf_string);
 void parse_pdf(Input* input, const char* pdf_string, size_t pdf_length);
 void parse_eps(Input* input, const char* bytes, size_t length);
 void parse_psd(Input* input, const char* bytes, size_t length);
