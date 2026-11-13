@@ -214,6 +214,37 @@ TEST(NetworkResourceManager, PrefetchAndTypedConsumerShareOneCachedResource) {
     enhanced_cache_destroy(cache);
 }
 
+TEST(NetworkResourceManager, CapacityKeepsExistingConsumersAndRejectsNewResources) {
+    const char* directory = "./temp/test_cache_manager_capacity";
+    ASSERT_TRUE(create_dir(directory));
+    EnhancedFileCache* cache = enhanced_cache_create(directory, 1024 * 1024, 1000);
+    ASSERT_NE(cache, nullptr);
+    DomDocument document = {};
+    document.url = lam::own(url_parse("https://example.test/page"));
+    NetworkResourceManager* manager = resource_manager_create(&document, NULL, cache);
+    ASSERT_NE(manager, nullptr);
+    NetworkResource* first = nullptr;
+    for (unsigned index = 0; index < 500; index++) {
+        char url[128];
+        snprintf(url, sizeof(url), "https://example.test/assets/%u.svg", index);
+        char* stored = enhanced_cache_store(cache, url, "x", 1, NULL);
+        ASSERT_NE(stored, nullptr);
+        mem_free(stored);
+        NetworkResource* resource = resource_manager_prefetch(manager, url, PRIORITY_LOW);
+        ASSERT_NE(resource, nullptr) << index;
+        if (!index) first = resource;
+    }
+    EXPECT_EQ(manager->total_resources, 500);
+    EXPECT_EQ(resource_manager_load(manager, "https://example.test/assets/0.svg",
+        RESOURCE_IMAGE, PRIORITY_HIGH, NULL), first);
+    EXPECT_EQ(resource_manager_load(manager, "https://example.test/assets/new.svg",
+        RESOURCE_IMAGE, PRIORITY_HIGH, NULL), nullptr);
+    EXPECT_EQ(manager->total_resources, 500);
+    resource_manager_destroy(manager);
+    url_destroy(document.url);
+    enhanced_cache_destroy(cache);
+}
+
 TEST(NetworkResourceManager, DecoderFileSurvivesCacheReplacementAndEviction) {
     const char* url = "https://example.com/media.mp4";
     const char* original = "immutable-media-body";

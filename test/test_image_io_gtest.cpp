@@ -898,6 +898,106 @@ TEST(ImageIO, AllocationFailuresReleaseOperationOwnedBuffers) {
     }
     memtrack_shutdown();
 }
+// wrap ordinary encoded pixels in a two-frame container; no animation encoder is needed.
+static size_t animated_webp_fixture(const ImageEncoded *still, uint8_t *bytes, size_t capacity,
+                                    bool offset) {
+    size_t fragment = still->length - 12, frame_size = 24 + fragment;
+    size_t size = 44 + 2 * frame_size;
+    if (size > capacity) return 0;
+    memset(bytes, 0, size);
+    memcpy(bytes, "RIFF", 4); write_le32(bytes + 4, (uint32_t)size - 8);
+    memcpy(bytes + 8, "WEBPVP8X", 8); write_le32(bytes + 16, 10);
+    bytes[20] = 0x12; // animation and alpha; dimensions here fit in one byte.
+    bytes[24] = offset ? 39 : 31; bytes[27] = offset ? 31 : 23;
+    memcpy(bytes + 30, "ANIM", 4); write_le32(bytes + 34, 6);
+    write_le32(bytes + 38, 0xffff00ff); // animation background must not fill the initial canvas.
+    write_le16(bytes + 42, 3);
+    for (unsigned i = 0; i < 2; i++) {
+        uint8_t *frame = bytes + 44 + i * frame_size;
+        memcpy(frame, "ANMF", 4); write_le32(frame + 4, (uint32_t)fragment + 16);
+        frame[8] = offset ? 1 : 0; frame[11] = offset ? 2 : 0;
+        frame[14] = 31; frame[17] = 23; frame[20] = 37;
+        memcpy(frame + 24, still->data + 12, fragment);
+    }
+    return size;
+}
+
+TEST(ImageIO, AnimatedWebpFirstFramePreservesCanvasAndAlpha) {
+    ImageFixture fixture;
+    fixture.pixels[3] = 128;
+    ImageEncoded still = {};
+    ImageError error = {};
+    ASSERT_EQ(encode_fixture(&fixture, IMAGE_CODEC_WEBP, &still, &error), IMAGE_OK);
+    for (bool offset : {false, true}) {
+        SCOPED_TRACE(offset);
+        uint8_t bytes[8192];
+        size_t size = animated_webp_fixture(&still, bytes, sizeof(bytes), offset);
+        ASSERT_GT(size, 0u);
+        ImageSource source = image_source_memory(bytes, size);
+        ImageInfo info = {};
+        ASSERT_EQ(image_probe(NULL, &source, &info, &error), IMAGE_OK) << error.message;
+        EXPECT_TRUE(info.frames_known); EXPECT_EQ(info.frame_count, 2u);
+        ImageDecoded image = {};
+        ASSERT_EQ(image_decode(NULL, &source, NULL, &image, &error), IMAGE_OK) << error.message;
+        EXPECT_EQ(image.width, offset ? 40u : 32u);
+        EXPECT_EQ(image.height, offset ? 32u : 24u);
+        EXPECT_EQ(image.source_delay_ms, 37u); EXPECT_EQ(image.delay_ms, 37u);
+        EXPECT_EQ(image.loop_count, 3u); EXPECT_TRUE(image.has_loop_extension);
+        unsigned left = offset ? 2 : 0, top = offset ? 4 : 0;
+        for (unsigned y = 0; y < 24; y++)
+            EXPECT_EQ(memcmp(image.pixels + (y + top) * image.stride + left * 4,
+                             fixture.pixels + y * 32 * 4, 32 * 4), 0);
+        if (offset) {
+            EXPECT_EQ(image.pixels[3], 0);
+            EXPECT_EQ(image.pixels[image.size - 1], 0);
+        }
+        image_decoded_dispose(&image);
+    }
+    image_free(still.data);
+}
+
+TEST(ImageIO, AnimatedWebpFirstFrameHonorsLimitsAndThumbnailPolicy) {
+    ImageFixture fixture;
+    ImageEncoded still = {};
+    ImageError error = {};
+    ASSERT_EQ(encode_fixture(&fixture, IMAGE_CODEC_WEBP, &still, &error), IMAGE_OK);
+    uint8_t bytes[8192];
+    size_t size = animated_webp_fixture(&still, bytes, sizeof(bytes), true);
+    ASSERT_GT(size, 0u);
+    ImageSource source = image_source_memory(bytes, size);
+    ImageContext context;
+    ImageDecoded image = {};
+    for (unsigned limit = 0; limit < 3; limit++) {
+        SCOPED_TRACE(limit);
+        image_context_init(&context);
+        if (limit == 0) context.limits.max_frames = 1;
+        if (limit == 1) context.limits.max_decoded_bytes = 64;
+        if (limit == 2) context.limits.max_scratch_bytes = 1;
+        EXPECT_EQ(image_decode(&context, &source, NULL, &image, &error), IMAGE_LIMIT_EXCEEDED);
+        EXPECT_EQ(image.pixels, nullptr);
+    }
+    ImageDecodeOptions options;
+    image_decode_options_init(&options);
+    options.mode = IMAGE_DECODE_THUMBNAIL;
+    options.target_width = options.target_height = 8;
+    options.allow_full_decode = false;
+    EXPECT_EQ(image_decode(NULL, &source, &options, &image, &error), IMAGE_FAST_PATH_UNAVAILABLE);
+    EXPECT_EQ(image.pixels, nullptr);
+    options.allow_full_decode = true;
+    ASSERT_EQ(image_decode(NULL, &source, &options, &image, &error), IMAGE_OK) << error.message;
+    EXPECT_LE(image.width, 8u); EXPECT_LE(image.height, 8u);
+    EXPECT_EQ(image.strategy, IMAGE_STRATEGY_FULL_RESIZE);
+    EXPECT_TRUE(image.full_decode_fallback);
+    image_decoded_dispose(&image);
+    image_decode_options_init(&options); options.frame_index = 1;
+    EXPECT_EQ(image_decode(NULL, &source, &options, &image, &error), IMAGE_UNSUPPORTED_FEATURE);
+    EXPECT_EQ(image.pixels, nullptr);
+    source.length--;
+    EXPECT_NE(image_decode(NULL, &source, NULL, &image, &error), IMAGE_OK);
+    EXPECT_EQ(image.pixels, nullptr);
+    image_free(still.data);
+}
+
 TEST(ImageIO, OpaqueLossyWebpSupportsStrictScaledDecode) {
     ImageFixture fixture;
     ImageEncodeOptions encoding;

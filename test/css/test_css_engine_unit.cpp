@@ -1104,6 +1104,56 @@ TEST_F(CssEngineTest, MediaQueryRangeBooleanAndOrUseFeatureValues) {
         commented->rules[0]->data.conditional_rule.condition));
 }
 
+TEST_F(CssEngineTest, SupportsGridAutoFlowRetainsPendingSubstitution) {
+    CssEngine* engine = CreateEngine();
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(css_evaluate_supports_condition(engine, "(grid-auto-flow: var(--flow))"));
+    EXPECT_TRUE(css_evaluate_supports_condition(engine, "(grid-auto-flow: var(--flow, column))"));
+    EXPECT_TRUE(css_evaluate_supports_condition(engine, "(grid-auto-flow: var(--direction) dense)"));
+    EXPECT_FALSE(css_evaluate_supports_condition(engine, "(grid-auto-flow: row column)"));
+    EXPECT_FALSE(css_evaluate_supports_condition(engine, "(grid-auto-flow: dense dense)"));
+}
+
+TEST_F(CssEngineTest, MediaLogicalKeywordsCanFollowClosingParentheses) {
+    CssEngine* engine = CreateEngine();
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(css_evaluate_media_query(engine,
+        "(min-width: 768px)and (max-width: 2000px)"));
+    EXPECT_FALSE(css_evaluate_media_query(engine,
+        "(min-width: 768px)and (max-width: 1279px)"));
+    EXPECT_TRUE(css_evaluate_media_query(engine,
+        "(max-width: 767px)or (min-width: 1280px)"));
+    EXPECT_TRUE(css_evaluate_media_query(engine,
+        "((min-width: 768px)and (color))AND (orientation: landscape)"));
+    EXPECT_FALSE(css_evaluate_media_query(engine,
+        "(min-width: 768px)and(max-width: 2000px)"));
+    EXPECT_FALSE(css_evaluate_media_query(engine,
+        "(color)candy (width)"));
+    CssStylesheet* sheet = css_parse_stylesheet(engine,
+        "@media(min-width:768px)and/**/(max-width:2000px){div{color:green}}", nullptr);
+    ASSERT_NE(sheet, nullptr);
+    ASSERT_EQ(sheet->rule_count, 1);
+    ASSERT_EQ(sheet->rules[0]->type, CSS_RULE_MEDIA);
+    EXPECT_TRUE(css_evaluate_media_query(engine,
+        sheet->rules[0]->data.conditional_rule.condition));
+    css_engine_set_viewport(engine, 600, 800);
+    EXPECT_FALSE(css_evaluate_media_query(engine,
+        "(min-width: 768px)and (max-width: 2000px)"));
+}
+
+TEST_F(CssEngineTest, SupportsLogicalKeywordsCanFollowClosingParentheses) {
+    CssEngine* engine = CreateEngine();
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(css_evaluate_supports_condition(engine,
+        "(display: grid)and (color: red)"));
+    EXPECT_FALSE(css_evaluate_supports_condition(engine,
+        "(display: grid)and (display: bogus)"));
+    EXPECT_TRUE(css_evaluate_supports_condition(engine,
+        "(display: bogus)or (display: grid)"));
+    EXPECT_TRUE(css_evaluate_supports_condition(engine,
+        "((display: grid)and (color: red))or (display: bogus)"));
+}
+
 TEST_F(CssEngineTest, MediaRatioAndResolutionUseTypedRangeValues) {
     auto engine = CreateEngine();
     ASSERT_NE(engine, nullptr);

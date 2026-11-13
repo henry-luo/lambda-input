@@ -21,6 +21,80 @@ historical prefixes.
 
 ## Open issues
 
+<a id="li-036"></a>
+
+### LI-036 — Resource capacity rejects already-admitted consumers
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns the resource manager under D9.1.1v4 / D9.1.3v2.
+
+At 500 retained resources, `resource_manager_load` rejected every request before
+checking the URL map. CSS, script and image consumers could no longer reuse
+already-cached or pending bytes. Conductor's capture exposed this after unrelated
+CSS icon prefetch exhausted the budget (Radiant RI-079).
+
+The existing capacity check now follows existing-resource reuse and still
+precedes acquisition of every new identity. Document admission still precedes
+both paths; the cap remains 500. No caller reference, retry or ownership rule is
+changed. The new offline unit actually stores and admits 500 cached identities,
+reuses the first as an image consumer, rejects a new 501st URL and checks the
+unchanged total. It and two neighboring cache/lifetime units pass.
+
+Evidence: Lambda's `temp/online-visual-round31/input-focused.log`; test
+`NetworkResourceManager.CapacityKeepsExistingConsumersAndRejectsNewResources`
+in `test/test_network_scheduler_gtest.cpp`. Full input baseline deferred under
+the user's focused-verification instruction.
+
+
+<a id="li-035"></a>
+
+### LI-035 — Grid auto-flow discards pending custom properties
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns declaration validation under D9.1.1v4 / D9.1.3v2.
+
+Ahrefs' saved tablet promotion used `grid-auto-flow:var(--directionTablet-12pdsr3)`
+with `column`, but laid out vertically. The `CSS_PROPERTY_GRID_AUTO_FLOW`
+validator rejected pending values before the existing Radiant substitution pass.
+`css_properties.cpp` now admits pending substitution, as neighboring keyword
+properties already do. Substituted values still pass ordinary grammar validation;
+an invalid winning variable resets at computed-value time rather than reviving
+an older declaration. No page selectors or replacement values are introduced.
+
+Qualification: the new `SupportsGridAutoFlowRetainsPendingSubstitution` case
+passes within 32 selected media/supports units. Five exported PNG controls cover
+whole-value/list variables, fallback, dense packing and invalid computed values;
+all five fail before and pass after, and independently pass Chromium. Evidence:
+Lambda's `temp/online-visual-round30/`; tracked reductions are
+`test/online/grid_flow_variable_fixtures.cjs` in Lambda. Full input baseline was
+deferred under the user's focused-verification instruction.
+
+<a id="li-034"></a>
+
+### LI-034 — Compact logical conditions lose valid token boundaries
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns CSS condition evaluation under D9.1.1v4 / D9.1.3v2.
+
+Ahrefs' minified tablet queries use `(min-width:768px)and (max-width:1279px)`.
+`css_condition_find_operator` incorrectly required whitespace before `and`/`or`,
+so both device variants painted and the hero lost its tablet width. A closing
+parenthesis now supplies that token boundary. Whitespace after the keyword
+remains required; `and(` stays a function token rather than a logical operator,
+as specified by [Media Queries 4](https://www.w3.org/TR/mediaqueries-4/#mq-syntax).
+The related supports evaluator now unwraps enclosing groups before scanning
+operators, fixing nested supported declarations previously sent to the atom parser.
+
+Qualification: two new native cases exercise compact and/or, nesting, case,
+comment-separated stylesheet parsing, viewport invalidation and invalid controls.
+All 32 selected media/supports cases pass. Six PNG controls improve from 1/6 to
+6/6 and independently pass Chromium. The exact saved Ahrefs source removes the
+duplicate promotion and restores the hero width. Lambda's
+`temp/online-visual-round30/` pins sources/binaries and before/after evidence;
+tracked reductions are `test/online/compact_condition_fixtures.cjs` in Lambda.
+No admission, URL, stylesheet, viewport or snapshot-time workaround is used.
+
+
 <a id="li-033"></a>
 
 ### LI-033 — Escaped dollar ends native inline math prematurely
@@ -97,32 +171,34 @@ or reference result is modified by this report.
 
 ### LI-030 — Animated WebP cannot supply even the initial export frame
 
-**Status:** OPEN capability gap, confirmed 2026-11-13. **Lambda blocker:** yes
-for Maple 082's hero title; independent native sizing work continues as RI-069.
-Codec ownership **D9.1.1v4 / D9.1.3v2**, selected-frame policy **D10.1.7**.
+**Status:** FIXED for initial-frame image decoding, 2026-11-14. Playback and
+later-frame selection remain unsupported. **Lambda blocker:** cleared for
+Maple 082's missing title. Native ownership **D9.1.1v4 / D9.1.3v2**;
+selected-frame contract **D10.1.7**, allocation ownership **D5.5.1**.
 
-`https://www.getmaple.ca/` serves its title from a `.gif?fm=webp...` URL, but the
-actual response is `image/webp`: 1200x628, 30496 bytes, with ANIM and 32 ANMF
-chunks. Chromium and the platform image decoder display its first frame. The
-same saved script-free page and a local one-image reduction leave the native
-title blank. Dimensions and selected URL agree; no image resource admission or
-transport failure is involved.
+The saved Maple title response is animated WebP despite its `.gif` URL.
+The shared decoder explicitly rejected every animated container, including
+ordinary image consumers asking only for frame zero. The existing WebP decoder
+now decodes the first demuxed subframe directly into a transparent, full-size
+canvas, retaining its offset and alpha. ANIM background and later frames are
+not composited. The manifest adds the pinned demux source; vendor code is
+unchanged. Existing scratch estimates, decoded-pixel and frame limits apply.
+Strict thumbnails refuse full-canvas fallback; permitted thumbnails use the
+shared reducer. Nonzero frame selection remains explicitly unsupported.
 
-`lib/image/image_webp.cpp` probes the animated container successfully, then
-`image_webp_decode` explicitly returns `IMAGE_UNSUPPORTED_FEATURE` when
-`config.input.has_animation` is true. The minimal native log confirms
-"animated WebP decoding is not enabled". This is distinct from the existing GIF
-player and memory-budget diagnostics. The image remains a placeholder despite
-known natural dimensions. Animation demux/compositing/playback and a bounded
-initial-frame export profile require a separate codec milestone; no URL or
-format substitution is applied to this page.
+Two new native cases fail before and pass after. They cover full/offset frames,
+alpha, transparent canvas, delay/loop metadata, frame/pixel/scratch limits,
+truncation, thumbnail policy and unsupported later selection. All five focused
+image cases pass, including static scaled WebP, format round trips and GIF.
+The unchanged saved Maple page now visibly displays its large Health Yeah title.
+Its original Chromium reference shows another animation phase and a cookie
+panel; neither page-wide parity nor playback is claimed. Aggregate suites are
+deferred under the user's focused-verification instruction.
 
-Evidence: Lambda `temp/online-visual-round24/maple-title.headers`,
-`maple-title.gif` (actual WebP bytes), `maple-title-first.png`,
-`webp-only.html`, its native/browser PNGs and `webp-only-lambda.log`;
-`maple-static-*` preserves the full same-source comparison. No codec source or
-vendor dependency change is made in this online bug-fix round.
-
+Evidence: Lambda `temp/online-visual-round26/webp-before.log`, `webp-after.log`,
+`maple-before.png` / `maple-after.png`; input `test/test_image_io_gtest.cpp`.
+Original source/headers and independent first-frame image remain in Lambda
+`temp/online-visual-round24/maple-title*` and `maple-static.html`.
 
 <a id="li-029"></a>
 
