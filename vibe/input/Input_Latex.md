@@ -2,6 +2,8 @@
 
 ## 2026-11-11: requested full script port
 
+The Lambda-owned [script TeX engine implementation plan](../../../lambda/vibe/impl/Lambda_Impl_Latex_Script_Engine.md) tracks package-specific progress and issues. General Lambda language and runtime issues remain in the Lambda issue ledger.
+
 The requested direction supersedes the partial expl3 port below: move the TeX
 engine and LaTeX document processing to Lambda Script, with no C++ TeX/LaTeX
 implementation on the migrated path. The reason is to keep execution and
@@ -99,9 +101,31 @@ qualified (S1.8, D10.2.2).
 
 The experimental profile also accepts `script_expl3: true`. This selects the
 hand-ported Lambda Script expl3 core: syntax-category transitions; local,
-global, and protected control-sequence definitions; and token-list declaration,
-assignment, expansion, use, clearing, integer expressions, and sequence
-construction, scoped updates, use and comparator-based sorting. ASCII text case
+global, and protected control-sequence definitions; tested `N`- and `c`-argument
+control-sequence existence and free-name conditionals and predicates; `NN`,
+`cN`, `Nc` and `cc` meaning-comparison conditionals and predicates; and
+existence aliases for token lists, sequences, integers, booleans, comma lists,
+property lists, strings and dimensions. It includes token-list declaration
+and clearing through tested `N` and `c` forms; assignment; local/global
+meaning-copy with `NN`, `cN`, `Nc` and `cc` arguments; append and prepend with
+tested `Nn`, `Nx` and `cn` forms; tested `N`/`c` use and counting; `N`/`c`
+emptiness conditionals; `n`/`V` blankness, `NN`/`nn` equality conditionals,
+`n`/`V` stringification, `n`/`N` item counting, and standard scratch token lists. The
+integer subset includes non-allocating zero and one constants, integer
+expressions, tested absolute-value, minimum and maximum helpers, `nNnTF`/`nNnT`/
+`nNnF` comparisons with direct relation tokens or zero-argument macros
+expanding to a single relation, chained `nTF`/`nT`/`nF` comparisons with
+short-circuiting, and tested zero, odd and even conditionals. The sequence
+subset includes construction and clearing through tested `N` and `c` forms,
+scoped updates with tested `Nn` and `cn` insertion, local/global meaning-copy with `NN`, `cN`, `Nc` and `cc` arguments,
+tested `Nn`/`cn` use, `N`/`c` counting and `Nn`/`cn` indexing, the standard
+empty-sequence meaning and `NTF`/`NT`/`NF` and `cTF`/`cT`/`cF` emptiness
+conditionals, tested `NnTF`/`NnT`/`NnF` membership, local/global reversal,
+tested positive and negative indices, sequence bodies constructed by ordinary
+TeX macros, and comparator-based sorting. Tested `Nn` and `cn` forms of local
+and global sequence and token-list insertion use protected TeX macros,
+preserving argument timing and introspection; their AST mapping remains guarded
+(S1.8, D10.2.2). ASCII text case
 conversion expands ordinary macros while preserving math and reference keys; it
 reports unsupported Unicode and reference-option cases. Values remain
 TeX tokens with their category codes and follow TeX group scope, including
@@ -109,7 +133,10 @@ TeX tokens with their category codes and follow TeX group scope, including
 profile supports script-backed `expl3` package selection, `\ProvidesExplPackage`
 files, nested package syntax restoration, and document commands with mandatory
 and one leading defaulted optional argument. Unsupported operations and other
-document-command signatures report an issue. The project expl3 fixture loads and
+document-command signatures report an issue. Exact self-recursive package
+bootstraps now stop with an unsupported issue after the package has already been
+attempted, rather than repeatedly emitting a missing-package declaration. The
+project expl3 fixture loads and
 its greeting, macro, integer, sorting and token-list commands match pdfLaTeX;
 its ASCII text case-conversion and floating-point commands also match pdfLaTeX.
 The expandable `\fp_eval:n` subset handles decimal arithmetic, parentheses,
@@ -130,8 +157,8 @@ delimited TeX parameters, multiline definitions, simple or starred robust
 commands, and supported document-command definitions. Control-sequence delimiters remain unsupported. The digester also builds document,
 paragraph, heading, nested environment, list, basic preamble declaration and
 selected inline-formatting AST nodes including text underline, literal escapes,
-common spacing and row separators, as well as basic math with fractions, radicals,
-underline and overline accents,
+common spacing, row separators and supported text accent nodes, as well as basic
+math with fractions, radicals, underline and overline accents,
 subscripts and superscripts. Its supported examples are compared with the native parser in
 both execution backends. Lambda's computed element tags (S16.8.10) now let the
 digester construct arbitrary generic command and environment names from the
@@ -145,6 +172,63 @@ commands still need reconstructed output spans and explicitly report issues.
 Direct and macro-expanded spacing commands follow the native reconstruction
 rule for control-word separators; other special commands and specialized
 environment bodies remain unsupported (S1.8, D10.2.2).
+The expansion layer scans font-relative `em`/`ex` and `px` dimensions and
+handles explicit glue, kern and rule commands and moves inline `\hbox`, `\vbox`
+and `\vtop` material with `\raise`, `\lower`, `\moveleft` and `\moveright`.
+It also handles `\shipout` of inline boxes using the native input engine's
+discard model, including assignment and message effects. Registered boxes,
+cross-boundary `\unskip`, and movement or shipout AST source mapping remain
+unsupported; native discard-boundary parity is blocked by
+[LI-019](../Lib_Input_Issue_Ledger.md#li-019).
+`\vcenter` scans its box specification and executes its body with the tested
+grouping behavior; its math and document AST source mapping remains guarded.
+For numeric `\mathchar`, `\delimiter`, `\radical`, and `\mathaccent`, the
+Script engine scans tested operands, reports the native unsupported-math
+character diagnostic, and continues; numeric math rendering, malformed operand
+recovery, and AST source mapping remain unsupported (S1.8, D10.2.2).
+Tested `\show` and `\showbox` inspection messages and the native input model's
+`\showlists`, `\showgroups`, and `\showifs` no-ops are supported. `\showthe`
+scans tested quantities and token lists without expanding the list contents.
+Inspection AST source mapping and registered boxes remain guarded. The digester
+also guards generated `\meaning` and `\string` text requiring escaped-output
+source mapping, while retaining ordinary text digestion (S1.8, D10.2.2).
+Characters emitted by `\chardef` retain a main-source position for tested
+reconstruction cases, including character code zero. Emitted math-character
+control names that the native scanner would split remain guarded.
+For tested direct rule commands, the Script engine retains the original source
+span; for expanded rules it emits the native formatted command. Supported
+generated rules and simple inline boxes also produce AST nodes
+and HTML. The script also scans well-formed hyphenation patterns, paragraph
+shapes and penalty-list assignments, reads shape and penalty quantities, and
+tracks font hyphen and skew characters and letter-spaced aliases on shared font
+identities, resolves math font-family assignments and font identifiers, and
+expands font-valued `\the` to the original font control token. Page and interaction primitives
+follow the native input engine's fixed results; neither currently builds pages.
+The script expands `\fontname`, `\jobname` and `\pdftexrevision`. The profile's
+optional `base_path` supplies the document path used for `\jobname`; when it is
+absent, the engine uses `texput`. Missing font identifiers recover to `nullfont`
+with a diagnostic, while downstream malformed numeric and dimension scans still
+need recovery work. The pdfTeX random and timer primitives follow the native
+input engine's deterministic model: a seeded 32-bit sequence, a zero normal
+deviate and a zero elapsed timer (S12.1.1v2). Numeric, dimension, glue and token
+register `\the` values retain definition echoes for the tested cases.
+Input streams can open and close captured resources, test EOF, and read lines
+with `\readline` or tokenize them with `\read` for tested valid UTF-8 inputs.
+Invalid UTF-8, surrogate endline characters and malformed read headers remain
+unsupported. Direct-source `\verb` captures terminated raw text with an ASCII
+delimiter in main and included files; malformed input, macro-sourced commands,
+other verbatim forms and raw-inline AST mapping remain unsupported. Native AST
+comparison for some valid raw content is blocked by
+[LI-018](../Lib_Input_Issue_Ledger.md#li-018). An experimental Script
+reconstructor preserves source spans and native token
+serialization for tested text cases; it is not yet wired into the production
+path. AST source mapping for some
+assignments and font tokens, malformed-input recovery, full-corpus parity and
+release performance remain open (S1.8, D10.2.2).
+The installed engine also executes assignments inside some constructor and
+unknown-command arguments that native TeX passes through. A corrected argument
+mode remains staged because existing reference results expect the old behavior;
+custom environments inside arguments additionally expose [LI-017](../Lib_Input_Issue_Ledger.md#li-017).
 The digester reports `complete: false`, and the remaining definition-echo parity gap remains visible
 in its test. It does not yet cover the full LaTeX grammar or source reconstruction.
 

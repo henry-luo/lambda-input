@@ -10,120 +10,18 @@ and whether it blocks work in Lambda. Cite the applicable `S#` or `D#` ruling
 when one covers the issue. Record uncertain causes as unconfirmed, link any
 owner-side fix and verification, and retain the ID when the issue is resolved.
 
+Merge note (2026-11-13): parallel reports reused IDs already assigned in this
+ledger, so the incoming records use unique IDs: Empty POST is LI-020; GIF
+memory admission LI-021; online captures LI-022; Oklab/OkLCh colors LI-023;
+cookie header terminators LI-024; cookie domains LI-025; Calmind CDN LI-026;
+and the shared libuv loop LI-027. The tar follow-up remains consolidated
+under LI-012. Existing evidence filenames keep their historical prefixes.
+
 ## Open issues
 
-<a id="li-020"></a>
+<a id="li-027"></a>
 
-### LI-020 — Calmind CDN rejects a valid compressed resource request profile
-
-**Status:** OPEN external interoperability limitation; native transport defect
-unconfirmed, 2026-11-12. **Lambda blocker:** no; capture completes, but missing
-first-party CSS and images leave a major visual difference. Network ownership
-follows **D9.1.1v4 / D9.1.3v2**.
-
-The current native capture of https://calmind.com/ receives HTTP403 HTML browser
-checks for first-party CSS, scripts and images. Fresh headless Chromium receives
-200 CSS for all three stylesheets. The resource manager already forwards the
-owning document's Referer through CURLOPT_REFERER; adding the same Referer or
-copying the current native User-Agent in system curl still receives 200 CSS.
-
-Independent system-curl controls isolate an origin response variation:
-`--compressed` advertises the available `deflate, gzip` codecs and receives
-HTTP403, 5768 bytes of an HCDN browser-check page, with Vary:Accept-Encoding.
-IPv4 gives the same result. Explicit gzip-only, identity, no encoding header or
-Chromium's `gzip, deflate, br, zstd` header receives HTTP200 text/css. The valid
-native compressed request is not proven malformed; no cookie, TLS, resource
-scheduling or script-startup root cause is established by these controls.
-
-Do not disable compression, spoof unsupported codecs, reorder headers for this
-host or substitute its CSS solely to match the reference. Broader CDN/browser
-challenge interoperability is outside this existing-bug milestone. Evidence:
-Lambda `temp/online-visual-round13/calmind-corrected-controls.json`,
-`calmind-encoding-controls.json`, saved response headers/bodies,
-`calmind-native-probe.png` and `calmind-browser-current.json/png`. An early
-User-Agent extraction concatenated following macros; those native/css-accept
-controls are superseded by corrected-controls and are not evidence.
-
-
-<a id="li-018"></a>
-
-### LI-018 — Document response cookies retain HTTP line terminators
-
-**Status:** FIXED, 2026-11-12. **Lambda blocker:** cleared for the reduced
-export-session case. Ownership **D9.1.1v4 / D9.1.3v2**. The synchronous document
-header callback copies the full curl span into cookie_jar_store. Unlike the
-other network frontends, it leaves CRLF intact. A final Path=/ then contains
-line endings and fails matching; a terminal HttpOnly/Secure name fails the
-attribute comparison. The two-cookie local response exposes the private cookie
-to document.cookie while omitting the ordinary visible cookie.
-[libcurl HEADERFUNCTION](https://curl.se/libcurl/c/CURLOPT_HEADERFUNCTION.html)
-delivers bounded, non-NUL-terminated header lines including their terminator.
-
-Use one cookie_jar_store_response_header helper to normalize the bounded span
-and store the copied value. The document, synchronous-resource and curl-multi
-callbacks reuse it, replacing duplicate normalization code. Allocation failure
-aborts the transport. No vendored curl implementation is changed.
-DocumentCookiesKeepFinalPathAndHttpOnlyAttributes fails before and passes after;
-script-visible cookies exclude HttpOnly while request cookies include it.
-All ten local HTTP cases and six real-renderer session tests pass. Evidence:
-Lambda temp/online-visual-round8/{http-before.log,http-after.log,http-hostless.log,
-session-qualified.log}. The full input gate retains the independent LI-001,
-LI-002 and LI-013 failures; expectations and filters were not weakened.
-
-<a id="li-019"></a>
-
-### LI-019 — Cookie domains include URL ports
-
-**Status:** FIXED, 2026-11-12. **Lambda blocker:** cleared for cookie transport.
-Ownership **D9.1.1v4 / D9.1.3v2**. Cookie host extraction reads Url.host, which
-contains a nondefault port, instead of the canonical hostname. Cookies then
-fail matching on another port of the same host, and curl rejects their imported
-port-bearing domain for subresource requests. [RFC6265 §8.5](https://www.rfc-editor.org/info/rfc6265/#section-8.5)
-does not isolate cookies by port.
-
-Use url_get_hostname, retaining the established empty-authority behavior for
-hostless file documents. CookiesShareAHostnameAcrossPorts fails before and
-passes after; a distinct hostname still receives no cookie. The added
-FileDocumentCookiesRetainTheirEmptyHostname and existing JS dom_document_cookie
-golden protect file compatibility. Initial and script-created image requests
-in the real HTTP export tests now carry the shared response/DOM cookies.
-The three new input cases are included in the local baseline filter.
-
-Final input aggregate:5224 passes,1 skip, with the same independent graph LOC
-budget, transition-tree external-parent and sample.tar.gz failures (LI-001 /
-LI-002 / LI-013). No affected source or fixture for those failures changed.
-Full AST574 and real HTTP/session6 checks pass with native services available.
-Evidence in Lambda temp/online-visual-round8/: http-before.log,
-http-hostless.log, input-baseline-final.log, session-qualified.log,
-js-baseline-ast-qualified.log. Capture qualification is in Lambda
- test/online/README.md; native RI-045 provides the missing export profile.
-
-<a id="li-017"></a>
-
-### LI-017 — Missing Oklab/OkLCh components invalidate neutral theme colors
-
-**Status:** FIXED, 2026-11-12. Input color computation ownership follows
-**D9.1.1v4 / D9.1.2v2**. **Lambda blocker:** cleared for the reduced theme case.
-Nuxt uses `oklch(14.5% 0 none)` in its neutral palette. The shared color helper
-already retains a missing-channel bit and a zero used value, but the caller
-explicitly disallowed missing components for perceptual functions. This
-invalidated the palette fallback, leaving the dark page background transparent
-and white headings invisible. CSS Color 4 §4.4 permits `none` in modern color
-syntax and treats missing components as zero outside interpolation.
-
-The caller now admits missing channels through the existing helper. Six
-regression cases cover lightness/chroma/hue/alpha, stored missing bits,
-serialization, round trips and RGB consumers. Two formerly-invalid assertions
-were corrected to test actually invalid identifiers instead. The Nuxt hue
-case fails before the change; all 112 CSS parser tests pass after. This does
-not implement missing-component interpolation in color-mix or new color spaces.
-Evidence: Lambda `temp/online-visual-round3/` reduced pages, `color-tests.log`
-and Nuxt captures. The report must retain unrelated icon/mask limitations.
-Spec: https://www.w3.org/TR/css-color-4/#missing
-
-<a id="li-021"></a>
-
-### LI-021 — Shared libuv loop spins during concurrent context scheduler teardown
+### LI-027 — Shared libuv loop spins during concurrent context scheduler teardown
 
 **Status:** OPEN — process-global provider state confirmed; the exact intrusive-list
 corruption/race is unconfirmed. **Observed:** 2026-11-12, macOS native debug,
@@ -162,78 +60,41 @@ and PDF error outcomes; no workload, check, deadline or scheduler path is remove
 The affected additional qualification is stopped. No sibling implementation,
 header, test or build source is changed by this report.
 
-<a id="li-016"></a>
+<a id="li-026"></a>
 
-### LI-016 — Cross-process SQLite scope contention lacks an admission/retry contract
+### LI-026 — Calmind CDN rejects a valid compressed resource request profile
 
-**Status:** OPEN — provider capability/diagnostic gap; no lost-update or SQLite
-corruption claim. **Observed:** 2026-11-11, macOS native debug, Lambda peer gate
-on interpreter/AUTO/JIT. **Lambda blocker:** yes for the additional simultaneous
-peer-credential administration acceptance case; no for sequential administration
-or independently owned peer repositories. D9.1.1v4 / D11.1.2 / S12.4.4v4 apply.
+**Status:** OPEN external interoperability limitation; native transport defect
+unconfirmed, 2026-11-12. **Lambda blocker:** no; capture completes, but missing
+first-party CSS and images leave a major visual difference. Network ownership
+follows **D9.1.1v4 / D9.1.3v2**.
 
-Two Lambda processes concurrently run `invite` and `revoke` against one encrypted
-credential row. One reports E400 `io.sqlite: cannot open transaction`; on JIT one
-reports `commit outcome is uncertain; reopen before retrying`. Evidence in the
-Lambda checkout: `temp/sync-peer/final-process-{interp,auto,jit}.log`. These
-aggregate failure logs preserve the exact commands, errors and failing per-step
-filenames; per-step directories are reused by later process qualifications. The
-retained reproduction is `python3 test/sync_peer/test_peer.py --contention`
-(after building Lambda). The normal peer gate excludes this still-unqualified
-additional case explicitly.
+The current native capture of https://calmind.com/ receives HTTP403 HTML browser
+checks for first-party CSS, scripts and images. Fresh headless Chromium receives
+200 CSS for all three stylesheets. The resource manager already forwards the
+owning document's Referer through CURLOPT_REFERER; adding the same Referer or
+copying the current native User-Agent in system curl still receives 200 CSS.
 
-Source evidence: `lib/rdb_sqlite.c:sqlite_tx_wrap` configures synchronization and
-uses deferred `BEGIN`, not `BEGIN IMMEDIATE`; no busy timeout/handler is configured
-there. The Lambda wrapper collapses failed acquisition to E400; failed commit is
-conservatively uncertain under the documented contract. Deferred contention is an
-expected SQLite behavior, but an acquire-before-read writer admission mechanism
-and retryable/busy diagnostics are not exposed to this host integration. A common
-cause for all reported acquisition/commit failures is not yet established.
+Independent system-curl controls isolate an origin response variation:
+`--compressed` advertises the available `deflate, gzip` codecs and receives
+HTTP403, 5768 bytes of an HCDN browser-check page, with Vary:Accept-Encoding.
+IPv4 gives the same result. Explicit gzip-only, identity, no encoding header or
+Chromium's `gzip, deflate, br, zstd` header receives HTTP200 text/css. The valid
+native compressed request is not proven malformed; no cookie, TLS, resource
+scheduling or script-startup root cause is established by these controls.
 
-The credential patch prevents stale-file overwrites by reading/modifying one
-transactional row; it does not establish successful concurrent writer admission.
-Do not add SQL lock tricks, retry uncertain commits, weaken the failed gate or
-modify sibling source from Lambda. The affected concurrency work is stopped;
-owner investigation should establish supported writer admission and outcome
-inspection before Lambda expands that qualification. No owner source changed.
+Do not disable compression, spoof unsupported codecs, reorder headers for this
+host or substitute its CSS solely to match the reference. Broader CDN/browser
+challenge interoperability is outside this existing-bug milestone. Evidence:
+Lambda `temp/online-visual-round13/calmind-corrected-controls.json`,
+`calmind-encoding-controls.json`, saved response headers/bodies,
+`calmind-native-probe.png` and `calmind-browser-current.json/png`. An early
+User-Agent extraction concatenated following macros; those native/css-accept
+controls are superseded by corrected-controls and are not evidence.
 
-<a id="li-015"></a>
+<a id="li-022"></a>
 
-### LI-015 — All-frame GIF decoding bypasses the process memory budget
-
-**Status:** RESOLVED, 2026-11-11. **Lambda task blocker:** cleared for Studio
-PNG capture. Ownership **D9.1.1v4 / D9.1.2v2 / D9.1.3v2**. Sibling updates
-were explicitly authorized by the user.
-
-`image_gif_load_from_memory` checked each container against its decoded-byte
-limit but allocated all composited frames without process admission. Several
-individually valid animations on `https://studio.design/` retained
-1,059,694,508 image-category bytes, preventing a viewport PNG allocation.
-An allocation stack identifies `image_gif_load_from_memory` during intrinsic
-image measurement. The existing preflight peak estimate is now returned and
-admitted through `memtrack_allow_allocation` before giflib expansion. Structured
-later-frame decoding reports `IMAGE_LIMIT_EXCEEDED` when admission fails.
-The process limit is unchanged; independent first-frame decoding remains
-available when the complete animation cannot fit.
-
-Full image I/O passes 35/35, including palette/disposal/loop behavior, budget
-rejection and still decoding; native Radiant GIF playback passes 23/23.
-Studio now exports with 711,756,076 image-category bytes. Its selected initial
-frame is mostly blank, so this is load/export qualification, not visual parity.
-Evidence: Lambda `temp/online-recovery/studio-image-trace3-output.log`,
-`studio-budget-fixed-output.log`, and canonical Studio capture; owner
-`temp/online-gif-tests.log`; Radiant `temp/online-gif-player-tests.log`.
-
-Coordinated Lambda **LR03-46** also reuses `map_put_heap` for private JS fields.
-The input builder now grows storage before publishing its new descriptor,
-preserving **D6.3** at its collecting growth callback. The callback sees the
-complete old field list until the added lane and value exist. Lambda's forced-GC private growth regression passes; its full core gate passes
-7,415/7,415 including 859 JS, 368 GC stress and 47 representation cases.
-Qualification is recorded under Lambda LR03-46 and its final test logs.
-
-<a id="li-014"></a>
-
-### LI-014 — Online document captures hit TLS/connect failures despite intermittent curl success
+### LI-022 — Online document captures hit TLS/connect failures despite intermittent curl success
 
 **Status:** host-trust initialization repaired, 2026-11-11; residual public
 origin/network failures remain open. **Lambda task blocker:** cleared for
@@ -303,9 +164,46 @@ Evidence: Lambda `temp/online-recovery-20261112/transport/`, `pil-render/`,
 `test/online/snapshots/capture_results.csv`. The capture helper now retains
 selected origin headers, lifecycle events and failed/pending resources.
 
-<a id="li-013"></a>
+LI-016 is [resolved below](#li-016).
 
-### LI-013 — Gzip tar fixture is rejected by the native archive reader
+<a id="li-015"></a>
+
+### LI-015 — Cross-process SQLite scope contention lacks an admission/retry contract
+
+**Status:** OPEN — provider capability/diagnostic gap; no lost-update or SQLite
+corruption claim. **Observed:** 2026-11-11, macOS native debug, Lambda peer gate
+on interpreter/AUTO/JIT. **Lambda blocker:** yes for the additional simultaneous
+peer-credential administration acceptance case; no for sequential administration
+or independently owned peer repositories. D9.1.1v4 / D11.1.2 / S12.4.4v4 apply.
+
+Two Lambda processes concurrently run `invite` and `revoke` against one encrypted
+credential row. One reports E400 `io.sqlite: cannot open transaction`; on JIT one
+reports `commit outcome is uncertain; reopen before retrying`. Evidence in the
+Lambda checkout: `temp/sync-peer/final-process-{interp,auto,jit}.log`. These
+aggregate failure logs preserve the exact commands, errors and failing per-step
+filenames; per-step directories are reused by later process qualifications. The retained reproduction
+is `python3 test/sync_peer/test_peer.py --contention` (after building Lambda).
+The normal peer gate excludes this still-unqualified additional case explicitly.
+
+Source evidence: `lib/rdb_sqlite.c:sqlite_tx_wrap` configures synchronization and
+uses deferred `BEGIN`, not `BEGIN IMMEDIATE`; no busy timeout/handler is configured
+there. The Lambda wrapper collapses failed acquisition to E400; failed commit is
+conservatively uncertain under the documented contract. Deferred contention is an
+expected SQLite behavior, but an acquire-before-read writer admission mechanism
+and retryable/busy diagnostics are not exposed to this host integration. A common
+cause for all reported acquisition/commit failures is not yet established.
+
+The credential patch prevents stale-file overwrites by reading/modifying one
+transactional row; it does not establish successful concurrent writer admission.
+Do not add SQL lock tricks, retry uncertain commits, weaken the failed gate or
+modify sibling source from Lambda. The affected concurrency work is stopped;
+owner investigation should establish supported writer admission and outcome
+inspection before Lambda expands that qualification. No owner source changed.
+
+
+<a id="li-012"></a>
+
+### LI-012 — Native tar variants test rejects sample.tar.gz
 
 **Status:** OPEN — cause unconfirmed. **Observed:** 2026-11-11, macOS,
 `make test-input-baseline` (debug), including a rerun with local socket access.
@@ -332,14 +230,6 @@ Evidence: `../../lambda/temp/kianhup-hang/input-baseline.log` and
 `tar-control.log`. Existing LI-001 / LI-002 also fail the input aggregate;
 all seven local HTTP cases and the Lambda viewer gate pass. No archive repair
 or confirmed regression attribution is claimed.
-
-<a id="li-012"></a>
-
-### LI-012 — Initial report of the `sample.tar.gz` archive failure
-
-**Status:** CONSOLIDATED into LI-013; the original ID is retained for references.
-The repeated baseline and focused reproduction, cause status, blocker assessment,
-and evidence are recorded under LI-013.
 
 <a id="li-011"></a>
 
@@ -464,9 +354,119 @@ has been reproduced in this review.
 
 ## Resolved issues
 
-<a id="li-012"></a>
+<a id="li-025"></a>
 
-### LI-012 — Empty POST reads terminal stdin and blocks page initialization
+### LI-025 — Cookie domains include URL ports
+
+**Status:** FIXED, 2026-11-12. **Lambda blocker:** cleared for cookie transport.
+Ownership **D9.1.1v4 / D9.1.3v2**. Cookie host extraction reads Url.host, which
+contains a nondefault port, instead of the canonical hostname. Cookies then
+fail matching on another port of the same host, and curl rejects their imported
+port-bearing domain for subresource requests. [RFC6265 §8.5](https://www.rfc-editor.org/info/rfc6265/#section-8.5)
+does not isolate cookies by port.
+
+Use url_get_hostname, retaining the established empty-authority behavior for
+hostless file documents. CookiesShareAHostnameAcrossPorts fails before and
+passes after; a distinct hostname still receives no cookie. The added
+FileDocumentCookiesRetainTheirEmptyHostname and existing JS dom_document_cookie
+golden protect file compatibility. Initial and script-created image requests
+in the real HTTP export tests now carry the shared response/DOM cookies.
+The three new input cases are included in the local baseline filter.
+
+Final input aggregate:5224 passes,1 skip, with the same independent graph LOC
+budget, transition-tree external-parent and sample.tar.gz failures (LI-001 /
+LI-002 / LI-012). No affected source or fixture for those failures changed.
+Full AST574 and real HTTP/session6 checks pass with native services available.
+Evidence in Lambda temp/online-visual-round8/: http-before.log,
+http-hostless.log, input-baseline-final.log, session-qualified.log,
+js-baseline-ast-qualified.log. Capture qualification is in Lambda
+ test/online/README.md; native RI-045 provides the missing export profile.
+
+<a id="li-024"></a>
+
+### LI-024 — Document response cookies retain HTTP line terminators
+
+**Status:** FIXED, 2026-11-12. **Lambda blocker:** cleared for the reduced
+export-session case. Ownership **D9.1.1v4 / D9.1.3v2**. The synchronous document
+header callback copies the full curl span into cookie_jar_store. Unlike the
+other network frontends, it leaves CRLF intact. A final Path=/ then contains
+line endings and fails matching; a terminal HttpOnly/Secure name fails the
+attribute comparison. The two-cookie local response exposes the private cookie
+to document.cookie while omitting the ordinary visible cookie.
+[libcurl HEADERFUNCTION](https://curl.se/libcurl/c/CURLOPT_HEADERFUNCTION.html)
+delivers bounded, non-NUL-terminated header lines including their terminator.
+
+Use one cookie_jar_store_response_header helper to normalize the bounded span
+and store the copied value. The document, synchronous-resource and curl-multi
+callbacks reuse it, replacing duplicate normalization code. Allocation failure
+aborts the transport. No vendored curl implementation is changed.
+DocumentCookiesKeepFinalPathAndHttpOnlyAttributes fails before and passes after;
+script-visible cookies exclude HttpOnly while request cookies include it.
+All ten local HTTP cases and six real-renderer session tests pass. Evidence:
+Lambda temp/online-visual-round8/{http-before.log,http-after.log,http-hostless.log,
+session-qualified.log}. The full input gate retains the independent LI-001,
+LI-002 and LI-012 failures; expectations and filters were not weakened.
+
+<a id="li-023"></a>
+
+### LI-023 — Missing Oklab/OkLCh components invalidate neutral theme colors
+
+**Status:** FIXED, 2026-11-12. Input color computation ownership follows
+**D9.1.1v4 / D9.1.2v2**. **Lambda blocker:** cleared for the reduced theme case.
+Nuxt uses `oklch(14.5% 0 none)` in its neutral palette. The shared color helper
+already retains a missing-channel bit and a zero used value, but the caller
+explicitly disallowed missing components for perceptual functions. This
+invalidated the palette fallback, leaving the dark page background transparent
+and white headings invisible. CSS Color 4 §4.4 permits `none` in modern color
+syntax and treats missing components as zero outside interpolation.
+
+The caller now admits missing channels through the existing helper. Six
+regression cases cover lightness/chroma/hue/alpha, stored missing bits,
+serialization, round trips and RGB consumers. Two formerly-invalid assertions
+were corrected to test actually invalid identifiers instead. The Nuxt hue
+case fails before the change; all 112 CSS parser tests pass after. This does
+not implement missing-component interpolation in color-mix or new color spaces.
+Evidence: Lambda `temp/online-visual-round3/` reduced pages, `color-tests.log`
+and Nuxt captures. The report must retain unrelated icon/mask limitations.
+Spec: https://www.w3.org/TR/css-color-4/#missing
+
+<a id="li-021"></a>
+
+### LI-021 — All-frame GIF decoding bypasses the process memory budget
+
+**Status:** RESOLVED, 2026-11-11. **Lambda task blocker:** cleared for Studio
+PNG capture. Ownership **D9.1.1v4 / D9.1.2v2 / D9.1.3v2**. Sibling updates
+were explicitly authorized by the user.
+
+`image_gif_load_from_memory` checked each container against its decoded-byte
+limit but allocated all composited frames without process admission. Several
+individually valid animations on `https://studio.design/` retained
+1,059,694,508 image-category bytes, preventing a viewport PNG allocation.
+An allocation stack identifies `image_gif_load_from_memory` during intrinsic
+image measurement. The existing preflight peak estimate is now returned and
+admitted through `memtrack_allow_allocation` before giflib expansion. Structured
+later-frame decoding reports `IMAGE_LIMIT_EXCEEDED` when admission fails.
+The process limit is unchanged; independent first-frame decoding remains
+available when the complete animation cannot fit.
+
+Full image I/O passes 35/35, including palette/disposal/loop behavior, budget
+rejection and still decoding; native Radiant GIF playback passes 23/23.
+Studio now exports with 711,756,076 image-category bytes. Its selected initial
+frame is mostly blank, so this is load/export qualification, not visual parity.
+Evidence: Lambda `temp/online-recovery/studio-image-trace3-output.log`,
+`studio-budget-fixed-output.log`, and canonical Studio capture; owner
+`temp/online-gif-tests.log`; Radiant `temp/online-gif-player-tests.log`.
+
+Coordinated Lambda **LR03-46** also reuses `map_put_heap` for private JS fields.
+The input builder now grows storage before publishing its new descriptor,
+preserving **D6.3** at its collecting growth callback. The callback sees the
+complete old field list until the added lane and value exist. Lambda's forced-GC private growth regression passes; its full core gate passes
+7,415/7,415 including 859 JS, 368 GC stress and 47 representation cases.
+Qualification is recorded under Lambda LR03-46 and its final test logs.
+
+<a id="li-020"></a>
+
+### LI-020 — Empty POST reads terminal stdin and blocks page initialization
 
 **Status:** RESOLVED, 2026-11-11.
 **Lambda blocker:** removed; the plain terminal launch now renders the login form.
@@ -508,10 +508,90 @@ replay confirms the complete form (`plain-pty.out`, `plain-pty.log`,
 `login-window.png`, `login-window.log`). The viewer integration baseline
 passes: 8,161 passed, 299 partial, 20 skipped of 8,480, zero failures
 (`radiant-baseline.log`). The broader input baseline still fails LI-001,
-LI-002 and the separately recorded LI-013; its HTTP cases all pass. Evidence
+LI-002 and the separately recorded LI-012; its HTTP cases all pass. Evidence
 and the completion checkpoint are under `../../lambda/temp/kianhup-hang/`.
 No credentials were entered or login submitted.
 
+<a id="li-016"></a>
+
+### LI-016 — Combined cloud/peer agent stalls during input/lib teardown
+
+**Status:** RESOLVED — owner fix and combined-agent qualification complete (2026-11-12).
+The user explicitly authorized `lambda-input` source changes for this issue.
+
+**Confirmed cause:** InputManager releases retained Inputs in creation order.
+Each Input's context was pushed onto a singly linked newest-first sibling list;
+`detach_from_parent_locked` scanned that list to remove each oldest context.
+The resulting quadratic pointer traversal dominated process exit. The stall was
+not evidence of a graph cycle or skipped allocator destruction.
+
+`MemContext` now retains a private previous-sibling link. Creation and removal
+maintain both links under the existing registry lock, making arbitrary detach
+constant time. Cleanup order and backing dependency teardown remain unchanged
+(D5.2.1, D5.2.5). A mixed-order lifecycle test checks survivors, head/middle/tail
+removal, reinsertion and final cascade destruction.
+
+Release reproduction (`-O3 -DNDEBUG -std=c17`) compiles the exact before/after
+source and exercises the same input-order topology. For 80,000 contexts, full
+creation/destruction changed from about 3.03 seconds to a median 0.0097 seconds;
+this is an isolated lifecycle measurement, not application-throughput evidence.
+Owner focused suites pass **18 memory-context + 7 factory + 62 pool = 87 tests**.
+Lambda's rebuilt native host passes **17/17 real-S3 cloud/combined-agent checks
+on interpreter, AUTO and JIT**, with the original 180-second deadline unchanged.
+The combined case is now mandatory in the default gate. Focused sync GC/poison
+checks pass **9/9 per tier**; the ordinary sync sweep passes **51/51**.
+
+Full input baseline: **5,220 passed, 3 failed, 1 skipped** across 106 executables
+(5,224 tests). Only the already recorded LI-001 parser budget, LI-002 external-parent
+expectation and LI-012 tar fixture fail; the font-dependent emoji test skips.
+Full Lambda baseline: **7,493/7,494**, with only the existing TeX/expl3 golden
+mismatch. These results do not mark those unrelated issues resolved.
+
+Evidence: input `temp/li016/{before-source.json,after.json,mem_context.log,
+mem_factory.log,mempool.log,input-baseline.log}`, Lambda
+`temp/li016/{final-matrix.json,final-combined-*.log,final-stress-*.log,
+lambda-baseline.log}` and the
+[cloud implementation record](<../../lambda/vibe/impl/Lambda_Impl_Sync_Cloud (done).md>).
+The former Lambda blocker is removed. LI-015 concurrent administration remains
+separate and open.
+
+<details><summary>Original observation and investigation — 2026-11-11</summary>
+
+**Status:** OPEN — ownership cause unconfirmed; stack observation is in input/lib
+cleanup, not proof of a provider defect. **Observed:** 2026-11-11, copied macOS
+native host in Lambda's isolated `temp/sync-cloud/worktree`, interpreter and AUTO.
+**Lambda blocker:** yes for the additional combined cloud-poll/peer-listener agent
+acceptance case; ordinary one-shot cloud exchange/recovery passes independently.
+D9.1.1v4, D6.3.3 and D11.1.2 apply. No sibling source was changed.
+
+Run `test/sync_cloud/test_cloud.py` against the real local S3 test store. The final
+combined case starts `cloud_cli.ls` action `run`, with four iterations and a
+60-second cloud interval, and completes a peer transfer into that repository.
+The peer client exits successfully and file bytes are installed, but the combined
+agent does not finish within the existing 180-second test deadline. Both
+interpreter and AUTO cases time out; no timeout was raised or harness patched.
+
+The interpreter process reports completion (`executed=1`, about 172M nodes and
+2334.50 MiB peak RSS) in its diagnostics before the driver timeout. A one-second
+macOS stack sample finds the main thread in `lambda_main_finish` ->
+`InputManager::destroy_global` -> `InputManager::reset_inputs` ->
+`input_release_document_resources` -> `mem_context_destroy` ->
+`destroy_ctx_locked` (`lib/mem_context.c:238`). Process inspection shows a CPU-bound
+exit with a large memory footprint. Determine whether this is input/lib graph
+teardown, an upstream Lambda ownership error, or pathological accumulated cleanup;
+no cycle, allocator corruption or exact shared cause is confirmed.
+
+Evidence relative to the Lambda checkout:
+`temp/sync-cloud/worktree/temp/sync-cloud/combined-failure-{interp,auto}.log`,
+`combined-evidence/{interp,auto}/31-run.err`, and
+`agent-sample.txt`. The full process gate preserves this failure under
+`--combined`; its ordinary cloud checks must not be represented as passing the
+blocked combined gate. Combined-agent qualification work is stopped. Do not
+change sibling sources, suppress teardown, extend timeouts, or add a process-exit
+workaround from Lambda. Owner investigation is needed before advertising this
+additional combined command as qualified.
+
+</details>
 
 <a id="li-010"></a>
 
@@ -778,3 +858,67 @@ consumes the only sentinel; that trailing-token read expands the following
 `\arabic{n}` before `counter_command` stores the newly computed value. The
 counter-value scan must remain bounded to its argument, including nested
 expressions, without evaluating the following document tokens prematurely.
+
+<a id="li-017"></a>
+
+### LI-017 — Native TeX leaks an environment end marker inside constructor arguments
+
+**Status:** OPEN — cause confirmed for the observed path. **Observed:**
+2026-11-12, macOS debug native TeX parser. **Script TeX-port blocker:** yes for
+native-compatible handling of custom environments inside constructor arguments.
+
+For `\newenvironment{foo}{B}{E}\begin{document}\textbf{A\begin{foo}X\end{foo}Z}\end{document}`,
+native TeX output contains `\textbf{ABXE\.nvendZ}`. The reproduction and
+native output are in `temp/expl3-script/constructor-env-probe.ls` and `.out`;
+the staged Script result explicitly fails reconstruction for this case. In
+`lambda/input/input-tex-latex.cpp`, `latex_arg_mode_env` pushes the end macro
+and the internal environment-end primitive for a custom environment.
+`arg_mode` in `lambda/input/input-tex-main.cpp` emits that unexpandable
+primitive instead of executing it, leaking its internal control sequence into
+the output and leaving the environment group unclosed. The internal name uses
+`"\x02envend"`, whose C++ hexadecimal escape includes the `e` and produces
+the observed leading dot. The native argument-mode handling and group lifetime
+need correction before this case can be used as a parity reference.
+
+<a id="li-018"></a>
+
+### LI-018 — Native LaTeX environment scanning interprets raw inline verbatim
+
+**Status:** OPEN — cause confirmed for the observed examples. **Observed:**
+2026-11-12, macOS debug native LaTeX parser. **Script TeX-port blocker:** yes
+for native AST comparison of affected valid verbatim content.
+
+Native TeX preserves both `\begin{document}A\verb|x_%|B\end{document}` and
+`\begin{document}A\verb|\end{document}|B\end{document}` without diagnostics,
+but native LaTeX parsing reports an error for each; the same parser builds a
+`verb` node for `\verb|xyz|`. Reproduction and output are
+`temp/expl3-script/verb-native-digest-probe.ls` and `.out`. The document
+`find_environment_end` scan in `lambda/input/input-latex-c.cpp` skips the
+control word but does not skip its verbatim payload, so it treats `%` inside
+that payload as a comment and `\end{document}` inside it as an environment
+terminator. The scan needs to recognize raw inline spans before looking for
+comments and environment boundaries.
+
+<a id="li-019"></a>
+
+### LI-019 — Native TeX discard boundaries become stale after cross-boundary unskip
+
+**Status:** OPEN — root cause confirmed. **Observed:** 2026-11-12, macOS debug
+native TeX parser. **Script TeX-port blocker:** yes for native-compatible
+cross-boundary removal in discarded and nested box material.
+
+For `\begin{document}A \insert0{\vadjust{\unskip}X}B\end{document}`, native
+TeX emits `AXB`: the inner `\unskip` removes the preceding space, but `X`
+leaks from the outer discarded insert. A similar case leaks an echoed global
+macro definition. Reproduction and native output are
+`temp/expl3-script/discard-unskip-detail.ls` and `.out`. The native log also
+shows `arraylist_remove_oob` with a length of 4294967295; evidence is
+`temp/expl3-script/discard-unskip-detail.log`.
+
+`unskip` in `lambda/input/input-tex-main.cpp` removes the last output item
+without adjusting open groups' `out_start` values. `finish_box` in
+`lambda/input/input-tex-prims.cpp` subtracts those stale unsigned boundaries
+from the shorter output length; it can either leave subsequent items outside
+the intended discard slice or underflow. The array-list bounds check rejects
+the invalid removal. Update the native boundary accounting and qualify nested
+discarded groups before using these cases as port parity references.
