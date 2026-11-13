@@ -19,6 +19,27 @@ under LI-012. Existing evidence filenames keep their historical prefixes.
 
 ## Open issues
 
+<a id="li-028"></a>
+
+### LI-028 — Unclosed optional math argument stalls native LaTeX parsing
+
+**Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
+**Lambda task blocker:** yes for malformed-input parity and safe full script
+port qualification. D10.2.2 governs the current LaTeX input boundary.
+
+Parsing `\begin{document}$\downarrow[unclosed$\end{document}` with
+`parse(..., {type: "latex"})` did not return within five seconds; the timed
+process was stopped. The fallback loop in `lambda/input/input-latex-c.cpp`
+sees `[`, calls `parse_brack_group`, and repeats without advancing when the
+bracket is unclosed: `consume_group_span` returns false for that form.
+Parsing should terminate with a recoverable result or a diagnostic.
+
+Reproduce with `python3 temp/expl3-script/verify-native-unclosed-math-bracket.py`;
+the script and `native-unclosed-math-bracket-result.txt` are in the same
+temporary directory. The behavior was discovered while qualifying the Lambda
+Script TeX engine. Native input ownership is unchanged, and no input source
+or reference result is modified by this report.
+
 <a id="li-027"></a>
 
 ### LI-027 — Shared libuv loop spins during concurrent context scheduler teardown
