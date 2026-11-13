@@ -19,6 +19,27 @@ under LI-012. Existing evidence filenames keep their historical prefixes.
 
 ## Open issues
 
+<a id="li-030"></a>
+
+### LI-030 — Escaped dollar ends native inline math prematurely
+
+**Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
+**Lambda task blocker:** yes for native-reference comparison of dollar-delimited
+math containing an escaped dollar; other math cases can proceed. D10.2.2
+governs the current LaTeX input boundary.
+
+Parsing `\begin{document}$\$\%\#$\end{document}` with
+`parse(..., {type: "latex"})` reports a missing dollar delimiter, although
+the escaped dollar belongs to the math content. The dollar-math delimiter
+scan in `lambda/input/input-latex-c.cpp` stops at the first `$` byte without
+checking whether it is escaped. The expected result is one closed math node
+containing the escaped symbols.
+
+Reproduction and error evidence are in
+`temp/expl3-script/math-raw-probe.ls` and `math-raw-v4-interp.log`. The issue
+was found while qualifying the Lambda Script TeX engine. Native input source
+and existing reference results have not been modified for this report.
+
 <a id="li-029"></a>
 
 ### LI-029 — Shared signature verifier requires OpenSSL during mbedCrypto-only migration
