@@ -139,7 +139,7 @@ check-boundary: all
 	$(PYTHON) scripts/check_boundary.py
 
 # Link all input providers so unused objects cannot conceal missing dependencies.
-NATIVE_TEST_PACKAGES = gtest_main libutf8proc thorvg libuv libbrotlidec libmpdec libopenjp2 liblzma libzstd openssl
+NATIVE_TEST_PACKAGES = gtest_main libutf8proc thorvg libuv libbrotlidec libmpdec libopenjp2 liblzma libzstd mbedtls mbedx509 mbedcrypto
 NATIVE_TEST_SOURCES = test/test_input_blob_url_gtest.cpp test/test_input_dom_native_gtest.cpp \
   test/test_input_math_gtest.cpp test/test_input_test_helpers.cpp test/test_input_curl_gtest.cpp test/test_input_scalar_storage_gtest.cpp test/test_image_io_gtest.cpp
 NATIVE_TEST_LIBS = build/lib/native/$(NATIVE_PROFILE)/libre2.a \
@@ -161,7 +161,7 @@ $(CXX) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(shell PKG_CONFIG_PATH="$(PKG_CONFIG
 endef
 
 # Owner-specific unit tests use the same input archives as downstream clients.
-MIGRATED_LIB_TESTS = atomic base64 binsearch color datetime digest endian hash hex lru_cache \
+MIGRATED_LIB_TESTS = atomic base64 binsearch color datetime digest signature endian hash hex lru_cache \
   math_utils sort str str_scan strbuf strview stringbuf time_util uuid url url_extra arraylist \
   arena hashmap_helpers byte_storage checked_alloc file_module font_config font_context fts grep mail_imap mail_mime mem_context \
   mem_factory mem_vm mempool memtrack mime_detect scratch_arena shell span thread_pool woff2

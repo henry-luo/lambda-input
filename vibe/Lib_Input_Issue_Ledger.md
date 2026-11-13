@@ -19,6 +19,33 @@ under LI-012. Existing evidence filenames keep their historical prefixes.
 
 ## Open issues
 
+<a id="li-029"></a>
+
+### LI-029 — Shared signature verifier requires OpenSSL during mbedCrypto-only migration
+
+**Status:** RESOLVED, 2026-11-13. The user explicitly authorized scoped
+input-owned source, header, tests and build/setup changes for this migration.
+**Lambda task blocker:** no; native provider migration and verification complete.
+Ownership: D9.1.1v4 / D9.1.3v2; native crypto boundary: D11.1.2.
+
+The previous `lib/signature.c` used OpenSSL EVP/provider APIs and the `lambda-lib`
+target required `openssl-crypto`. Replaced the provider with mbedCrypto RSA-PSS/
+SHA-256 and P-256/SHA-256 verification. Ed25519 remains an unsupported reserved
+ABI value. Raw SEC1 keys require canonical low-S P1363 signatures; SPKI keys use
+standard DER ECDSA. PEM/DER parsing rejects trailing data and extra key blocks.
+OpenSSL package/link requirements are removed from input build/setup configuration.
+
+Verification: input signature 4/4, digest 9/9, dependency configuration 11/11;
+Lambda baseline 7,473/7,473; 85 sync goldens per AUTO/interpreter/JIT; 42 focused
+ordinary/forced-GC crypto, identity, TUF and admission checks. Peer, DataChannel
+and LAN demo native process gates pass. Native Lambda host and input archive
+symbol/linkage audit finds no OpenSSL dependency. Tests retain the external
+OpenSSL CLI only as an independent fixture/certificate oracle. Runtime and setup
+need no OpenSSL provider. Evidence: Lambda's `temp/mbedcrypto-only/` and its
+`vibe/impl/Lambda_Impl_MbedCrypto_Only (done).md` completion record. The user
+subsequently authorized the Lambda-owned optional Node provider removal; that
+module is also mbedCrypto-only.
+
 <a id="li-028"></a>
 
 ### LI-028 — Unclosed optional math argument stalls native LaTeX parsing

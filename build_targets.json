@@ -52,8 +52,7 @@
         "pthread",
         "image-codecs",
         "zlib",
-        "archive-iconv",
-        "openssl-crypto"
+        "archive-iconv"
       ],
       "linux": {
         "additional_libraries": [
@@ -178,15 +177,7 @@
         "utf8proc",
         "nghttp2",
         "curl",
-        "ngtcp2_crypto_ossl",
-        "ngtcp2",
-        "nghttp3",
         "zstd",
-        "ssh2",
-        "idn2",
-        "ssl",
-        "crypto",
-        "unistring",
         "iconv",
         "brotlidec",
         "brotlicommon",
@@ -209,27 +200,11 @@
       ],
       "macos": {
         "exclude_libraries": [
-          "ngtcp2_crypto_ossl",
-          "ngtcp2",
-          "nghttp3",
-          "ssh2",
-          "idn2",
-          "ssl",
-          "crypto",
-          "unistring",
           "iconv"
         ]
       },
       "linux": {
         "exclude_libraries": [
-          "ngtcp2_crypto_ossl",
-          "ngtcp2",
-          "nghttp3",
-          "ssh2",
-          "idn2",
-          "ssl",
-          "crypto",
-          "unistring",
           "iconv"
         ]
       },
