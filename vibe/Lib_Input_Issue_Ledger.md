@@ -14,10 +14,84 @@ Merge note (2026-11-13): parallel reports reused IDs already assigned in this
 ledger, so the incoming records use unique IDs: Empty POST is LI-020; GIF
 memory admission LI-021; online captures LI-022; Oklab/OkLCh colors LI-023;
 cookie header terminators LI-024; cookie domains LI-025; Calmind CDN LI-026;
-and the shared libuv loop LI-027. The tar follow-up remains consolidated
-under LI-012. Existing evidence filenames keep their historical prefixes.
+the shared libuv loop LI-027; unclosed math arguments LI-031; the shared
+signature verifier LI-032; and escaped-dollar math LI-033. The tar follow-up
+remains consolidated under LI-012. Existing evidence filenames keep their
+historical prefixes.
 
 ## Open issues
+
+<a id="li-033"></a>
+
+### LI-033 — Escaped dollar ends native inline math prematurely
+
+**Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
+**Lambda task blocker:** yes for native-reference comparison of dollar-delimited
+math containing an escaped dollar; other math cases can proceed. D10.2.2
+governs the current LaTeX input boundary.
+
+Parsing `\begin{document}$\$\%\#$\end{document}` with
+`parse(..., {type: "latex"})` reports a missing dollar delimiter, although
+the escaped dollar belongs to the math content. The dollar-math delimiter
+scan in `lambda/input/input-latex-c.cpp` stops at the first `$` byte without
+checking whether it is escaped. The expected result is one closed math node
+containing the escaped symbols.
+
+Reproduction and error evidence are in
+`temp/expl3-script/math-raw-probe.ls` and `math-raw-v4-interp.log`. The issue
+was found while qualifying the Lambda Script TeX engine. Native input source
+and existing reference results have not been modified for this report.
+
+
+<a id="li-032"></a>
+
+### LI-032 — Shared signature verifier requires OpenSSL during mbedCrypto-only migration
+
+**Status:** RESOLVED, 2026-11-13. The user explicitly authorized scoped
+input-owned source, header, tests and build/setup changes for this migration.
+**Lambda task blocker:** no; native provider migration and verification complete.
+Ownership: D9.1.1v4 / D9.1.3v2; native crypto boundary: D11.1.2.
+
+The previous `lib/signature.c` used OpenSSL EVP/provider APIs and the `lambda-lib`
+target required `openssl-crypto`. Replaced the provider with mbedCrypto RSA-PSS/
+SHA-256 and P-256/SHA-256 verification. Ed25519 remains an unsupported reserved
+ABI value. Raw SEC1 keys require canonical low-S P1363 signatures; SPKI keys use
+standard DER ECDSA. PEM/DER parsing rejects trailing data and extra key blocks.
+OpenSSL package/link requirements are removed from input build/setup configuration.
+
+Verification: input signature 4/4, digest 9/9, dependency configuration 11/11;
+Lambda baseline 7,473/7,473; 85 sync goldens per AUTO/interpreter/JIT; 42 focused
+ordinary/forced-GC crypto, identity, TUF and admission checks. Peer, DataChannel
+and LAN demo native process gates pass. Native Lambda host and input archive
+symbol/linkage audit finds no OpenSSL dependency. Tests retain the external
+OpenSSL CLI only as an independent fixture/certificate oracle. Runtime and setup
+need no OpenSSL provider. Evidence: Lambda's `temp/mbedcrypto-only/` and its
+`vibe/impl/Lambda_Impl_MbedCrypto_Only (done).md` completion record. The user
+subsequently authorized the Lambda-owned optional Node provider removal; that
+module is also mbedCrypto-only.
+
+
+<a id="li-031"></a>
+
+### LI-031 — Unclosed optional math argument stalls native LaTeX parsing
+
+**Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
+**Lambda task blocker:** yes for malformed-input parity and safe full script
+port qualification. D10.2.2 governs the current LaTeX input boundary.
+
+Parsing `\begin{document}$\downarrow[unclosed$\end{document}` with
+`parse(..., {type: "latex"})` did not return within five seconds; the timed
+process was stopped. The fallback loop in `lambda/input/input-latex-c.cpp`
+sees `[`, calls `parse_brack_group`, and repeats without advancing when the
+bracket is unclosed: `consume_group_span` returns false for that form.
+Parsing should terminate with a recoverable result or a diagnostic.
+
+Reproduce with `python3 temp/expl3-script/verify-native-unclosed-math-bracket.py`;
+the script and `native-unclosed-math-bracket-result.txt` are in the same
+temporary directory. The behavior was discovered while qualifying the Lambda
+Script TeX engine. Native input ownership is unchanged, and no input source
+or reference result is modified by this report.
+
 
 <a id="li-030"></a>
 
@@ -54,7 +128,7 @@ vendor dependency change is made in this online bug-fix round.
 
 ### LI-029 — Deferred single-block width is omitted from a parsed style rule
 
-**Status:** OPEN observed discrepancy; source cause **unconfirmed**,2026-11-13.
+**Status:** OPEN observed discrepancy; source cause **unconfirmed**, 2026-11-13.
 **Lambda blocker:** no for LI-028's nested-selector repair. Ownership
 **D9.1.1v4 / D9.1.3v2**, parsed declaration ownership **D5.5.1**.
 
@@ -68,7 +142,6 @@ No blanket acceptance or test masking is added. LI-028's custom-block control
 uses a supported definite width to test its selected nesting contract.
 Evidence: Lambda `temp/online-visual-round18/parser-before.log` and
 `browser-controls.json`/`.log`; no current-source resolution claim is made.
-
 
 <a id="li-027"></a>
 
