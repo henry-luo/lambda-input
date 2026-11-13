@@ -19,6 +19,146 @@ under LI-012. Existing evidence filenames keep their historical prefixes.
 
 ## Open issues
 
+<a id="li-034"></a>
+
+### LI-035 — Man parser renders the zero-width `\&` escape as text
+
+**Status:** Open. **Blocks:** rich editing of man pages in `lambda edit`.
+
+Reproduction from the Lambda checkout: run a Lambda script evaluating
+`parse(".SH NAME\n\\&test\n", 'man')` and
+`parse(".SH NAME\ntest\n", 'man')`. The first result contains a span with
+text `&test`; the second contains text `test`. The roff `\&` escape is
+zero-width, so these inputs should have the same visible paragraph text.
+The checked output is in `Lambda-opus/temp/edit-viewer/man-input-probe.log`.
+The parser's treatment of this escape is unconfirmed; this report identifies
+observable behavior rather than an implementation cause. The Lambda man writer
+uses `\&` to protect text, so its output cannot currently round-trip through
+the input parser. The editor retains source mode until the input owner fixes it.
+
+### LI-034 — CSV separator detection counts tabs inside quoted fields
+
+**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+property editing CSV files whose first quoted record contains more tabs than
+commas. Input ownership follows **D9.1.1v4**; **D9.3.4** covers document
+processing.
+
+`parse("\"a\t\tb\",c\n1,2\n", 'csv')` treats tabs inside the
+quoted first field as separators and returns one field named `a\t\tb`
+with value `1,2`, instead of the two CSV columns `a\t\tb` and `c`
+with values `1` and `2`. The viewer uses this input parser. The editor's
+matching delimiter choice cannot safely build the property tree for this
+source and currently falls back to source editing.
+
+Reproduce from the Lambda checkout with
+`./lambda.exe temp/edit-viewer/csv-separator-probe.ls`. In
+`lambda/input/input-csv.cpp`, `detect_csv_separator` counts every tab and
+comma on the first physical line without tracking quoted fields. Detection
+should ignore delimiters inside quoted fields, including escaped quotes and
+multiline quoted records. No input implementation or reference was changed
+by this report.
+
+<a id="li-033"></a>
+
+### LI-033 — Markdown footnote definitions lack source ranges
+
+**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+showing and editing surrounding Markdown while retaining footnote definitions
+as individually rendered view-only blocks. Input ownership follows **D9.1.1v4**;
+source-backed document editing is covered by **D9.3.4**.
+
+`parse(source, {type: 'markdown', sourcepos: true})` gives authored paragraph,
+HTML and math blocks `sourcepos`, but moves footnote definitions into a generated
+`<footnotes>` element whose individual `<footnote>` nodes have no original
+source positions. The original source may contain multiple definitions and
+unrelated link definitions in the same gap. Consequently the Lambda editor
+cannot reliably associate each footnote with its exact authored lines, and
+shows the combined gap as raw source instead of rendering the footnote. The
+existing `edit_md_view_only` and `edit_md_view_only_keys` UI replays reproduce
+this with the original editor as well as the current changes.
+
+Reproduce from the Lambda checkout with
+`./lambda.exe temp/edit-viewer/md-footnote-probe.ls` using
+`test/ui/edit/kept.md`; its output shows the source-positioned body nodes,
+the generated footnote without a `sourcepos`, and the combined source gap.
+`lambda/input/markup/block/block_document.cpp` records source positions for
+ordinary blocks but `parseFootnoteDefinition` constructs the note separately.
+The input owner should retain each definition's original span when source
+positions are requested, including multiline, duplicate and unused definitions.
+No input implementation or reference was changed by this report.
+
+<a id="li-032"></a>
+
+### LI-032 — iCalendar and vCard parsers silently drop malformed content lines
+
+**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+safe property editing of the affected format. Input ownership follows
+**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
+
+Both `parse("BEGIN:VCALENDAR\nBROKEN\nEND:VCALENDAR\n", 'ics')` and `parse("BEGIN:VCARD\nBROKEN\nEND:VCARD\n", 'vcf')` succeed with empty entries, instead of reporting the line without a colon. The editor cannot rely on these results to validate a complete contact or calendar file. Relevant owner code is `lambda/input/input-ics.cpp` and `lambda/input/input-vcf.cpp`; the exact causes have not been confirmed. This is consistent with the older I-F10 observation in `vibe/impl/Lambda_Impl_Code_Review.md`.
+
+Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
+A malformed document must produce an error rather than a successful partial
+value. No input implementation or reference was changed by this report.
+
+<a id="li-031"></a>
+
+### LI-031 — YAML parser accepts an unterminated flow sequence
+
+**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+safe property editing of the affected format. Input ownership follows
+**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
+
+`parse("a: [1,\n", 'yaml')` returns a map containing `a: [1]` rather than an error for the unclosed sequence. The editor cannot rely on this parser to validate the complete YAML document. Relevant owner code is `lambda/input/input-yaml.cpp`; the exact cause has not been confirmed.
+
+Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
+A malformed document must produce an error rather than a successful partial
+value. No input implementation or reference was changed by this report.
+
+<a id="li-030"></a>
+
+### LI-030 — TOML parser accepts a numeric prefix followed by invalid text
+
+**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+safe property editing of the affected format. Input ownership follows
+**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
+
+`parse("x = 1junk\n", 'toml')` returns `{x: 1}` instead of rejecting the invalid numeric value. The editor cannot use that result to validate property edits or saved data. Relevant owner code is `lambda/input/input-toml.cpp`; the exact cause has not been confirmed.
+
+Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
+A malformed document must produce an error rather than a successful partial
+value. No input implementation or reference was changed by this report.
+
+<a id="li-029"></a>
+
+### LI-029 — JSON top-level parser accepts trailing non-whitespace
+
+**Status:** OPEN, reproduced 2026-11-13 on macOS with Lambda-opus debug
+`8b5ebe56e` plus the editor work. **Lambda task blocker:** yes for safely
+admitting JSON property editing. Input ownership follows **D9.1.1v4**;
+**S7.5.1v6** governs acknowledgement of an ordinary parse error.
+
+From the Lambda checkout, run `./lambda.exe temp/edit-viewer/invalid.ls`
+(the script evaluates `parse` on malformed JSON). In particular,
+`parse("1abc", 'json')` and `parse("1 2", 'json')` both return `1`
+instead of reporting the non-whitespace content after the top-level value;
+`parse("", 'json')` returns null. Malformed JSON must report an error rather
+than admit a prefix as the complete document. The editor cannot trust the
+script-facing result when checking whether a JSON file or edited value is
+safe to save.
+
+In `lambda/input/input-json.cpp`, `parse_json` calls `parse_value` once and
+returns without checking the remaining cursor; the existing native
+`parse_json_to_item_strict` has a trailing-content check. The script-facing
+`parse(..., 'json')` dispatch and the intended strictness policy should be
+confirmed by the input owner. This report does not change input sources or
+reference results.
+
 <a id="li-028"></a>
 
 ### LI-028 — Unclosed optional math argument stalls native LaTeX parsing
