@@ -6,6 +6,7 @@
 #define COOKIE_JAR_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <time.h>
 #include <pthread.h>
 
@@ -60,6 +61,9 @@ void        cookie_jar_release(CookieJar* jar);
 // request_url is the URL that returned the Set-Cookie headers.
 void cookie_jar_store(CookieJar* jar, const char* request_url,
                       const char* set_cookie_header);
+// consumes one raw HTTP header span; false reports allocation failure.
+bool cookie_jar_store_response_header(CookieJar* jar, const char* request_url,
+                                      const char* header, size_t length);
 
 // Commits queued worker-side cookie mutations on the profile owner thread.
 bool cookie_jar_flush(CookieJar* jar);

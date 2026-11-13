@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "lambda/input/input.hpp"
 #include "lambda/network/http_client.h"
+#include "lambda/network/cookie_jar.h"
 #include "lib/url.h"
 #include "lib/string.h"
 #include "lib/mempool.h"
@@ -126,6 +127,53 @@ protected:
         }
     }
 };
+
+TEST_F(HttpInputTest, EmptyPostDoesNotReadStdin) {
+    const char* bodies[] = {nullptr, ""};
+    for (const char* body : bodies) {
+        SCOPED_TRACE(body ? "explicit empty body" : "omitted body");
+        HttpHeaderCaptureServer server;
+        ASSERT_TRUE(http_header_capture_server_start(&server));
+        char url[128];
+        int length = snprintf(url, sizeof(url), "http://127.0.0.1:%d/empty-post", server.port);
+        ASSERT_GT(length, 0);
+        ASSERT_LT((size_t)length, sizeof(url));
+
+        int input_pipe[2];
+        ASSERT_EQ(pipe(input_pipe), 0);
+        pid_t client = fork();
+        ASSERT_GE(client, 0);
+        if (client == 0) {
+            // keep the writer open: an accidental stdin read must fail this test, not see EOF.
+            alarm(3);
+            if (dup2(input_pipe[0], STDIN_FILENO) < 0) _exit(2);
+            close(input_pipe[0]);
+            FetchConfig config = {};
+            config.method = "POST";
+            config.body = body;
+            config.timeout_seconds = 2;
+            config.user_agent = "Lambda HTTP regression";
+            FetchResponse* response = http_fetch(url, &config);
+            bool valid = response && response->status_code == 200 &&
+                response->size == 2 && memcmp(response->data, "ok", 2) == 0;
+            free_fetch_response(response);
+            close(input_pipe[1]);
+            _exit(valid ? 0 : 1);
+        }
+        close(input_pipe[0]);
+        close(input_pipe[1]);
+        int status = 0;
+        ASSERT_EQ(waitpid(client, &status, 0), client);
+        EXPECT_TRUE(WIFEXITED(status)) << "empty POST blocked on stdin";
+        if (WIFEXITED(status)) EXPECT_EQ(WEXITSTATUS(status), 0);
+
+        char request[8192] = {};
+        http_header_capture_server_finish(&server, request, sizeof(request));
+        EXPECT_NE(strstr(request, "POST /empty-post HTTP/1.1\r\n"), nullptr);
+        EXPECT_NE(strstr(request, "Content-Length: 0\r\n"), nullptr);
+        EXPECT_EQ(strstr(request, "Transfer-Encoding: chunked"), nullptr);
+    }
+}
 
 TEST_F(HttpInputTest, SendsBrowserNavigationHeadersForDocumentDownloads) {
     HttpHeaderCaptureServer server;
@@ -381,4 +429,58 @@ TEST_F(HttpInputTest, test_http_error_handling) {
     ASSERT_EQ(content, nullptr) << "404 URL should return null";
 
     printf("HTTP error handling test completed successfully\n");
+}
+
+TEST_F(HttpInputTest, DocumentCookiesKeepFinalPathAndHttpOnlyAttributes) {
+    CookieJar* jar = cookie_jar_create(nullptr);
+    ASSERT_NE(jar, nullptr);
+    const char response[] = "HTTP/1.1 200 OK\r\n"
+        "Set-Cookie: visible=allowed; Path=/\r\n"
+        "Set-Cookie: private=secret; Path=/; HttpOnly\r\n"
+        "Content-Length: 2\r\nConnection: close\r\n\r\nok";
+    HttpHeaderCaptureServer server;
+    ASSERT_TRUE(http_header_capture_server_start(&server, 0, response, sizeof(response) - 1));
+    char url[128];
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/document", server.port);
+    size_t size = 0;
+    char* body = download_http_document_with_cookie_jar(url, &size, jar, nullptr, nullptr);
+    char request[8192] = {};
+    http_header_capture_server_finish(&server, request, sizeof(request));
+    EXPECT_STREQ(body, "ok");
+    mem_free(body);
+    char* visible = cookie_jar_build_document_cookie(jar, url);
+    EXPECT_STREQ(visible, "visible=allowed");
+    mem_free(visible);
+    char* transport = cookie_jar_build_request_cookie(jar, url);
+    ASSERT_NE(transport, nullptr);
+    EXPECT_NE(strstr(transport, "visible=allowed"), nullptr);
+    EXPECT_NE(strstr(transport, "private=secret"), nullptr);
+    mem_free(transport);
+    cookie_jar_destroy(jar);
+}
+
+TEST_F(HttpInputTest, CookiesShareAHostnameAcrossPorts) {
+    CookieJar* jar = cookie_jar_create(nullptr);
+    ASSERT_NE(jar, nullptr);
+    cookie_jar_store(jar, "http://127.0.0.1:8080/source", "shared=allowed; Path=/");
+    char* same_host = cookie_jar_build_document_cookie(jar, "http://127.0.0.1:8081/target");
+    EXPECT_STREQ(same_host, "shared=allowed");
+    mem_free(same_host);
+    char* other_host = cookie_jar_build_document_cookie(jar, "http://example.test:8080/target");
+    EXPECT_EQ(other_host, nullptr);
+    mem_free(other_host);
+    cookie_jar_destroy(jar);
+}
+
+TEST_F(HttpInputTest, FileDocumentCookiesRetainTheirEmptyHostname) {
+    CookieJar* jar = cookie_jar_create(nullptr);
+    ASSERT_NE(jar, nullptr);
+    cookie_jar_store(jar, "file:///source.html", "theme=dark; Path=/");
+    char* value = cookie_jar_build_document_cookie(jar, "file:///target.html");
+    EXPECT_STREQ(value, "theme=dark");
+    mem_free(value);
+    char* remote = cookie_jar_build_document_cookie(jar, "https://example.test/target.html");
+    EXPECT_EQ(remote, nullptr);
+    mem_free(remote);
+    cookie_jar_destroy(jar);
 }

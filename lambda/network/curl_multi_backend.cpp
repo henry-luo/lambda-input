@@ -99,18 +99,11 @@ static size_t header_callback(char* buffer, size_t size, size_t nitems, void* us
     if (!ctx || !ctx->jar) return total;
 
     if (total > 12 && str_istarts_with(buffer, total, "Set-Cookie:", 11)) {
-        size_t len = total;
-        while (len > 0 && (buffer[len - 1] == '\r' || buffer[len - 1] == '\n')) {
-            len--;
-        }
-        char* header_str = mem_dup_n(buffer, len, MEM_CAT_NETWORK);
-        if (!header_str) return total;
         const char* effective_url = ctx->request_url;
         char* curl_url = NULL;
         if (ctx->easy) curl_easy_getinfo(ctx->easy, CURLINFO_EFFECTIVE_URL, &curl_url);
         if (curl_url && curl_url[0]) effective_url = curl_url;
-        cookie_jar_store(ctx->jar, effective_url, header_str);
-        mem_free(header_str);
+        if (!cookie_jar_store_response_header(ctx->jar, effective_url, buffer, total)) return 0;
     }
     return total;
 }

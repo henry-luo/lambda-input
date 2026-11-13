@@ -2341,7 +2341,7 @@ TEST_F(CssEngineParserTest, SharedColorComputationValidatesChannelsAndKeepsPreci
 }
 
 TEST_F(CssEngineParserTest, AbsoluteOklabAndOklchKeepComponentsAndReachSrgbConsumers) {
-    struct Case {const char* source; const char* computed; uint8_t r, g, b, a;};
+    struct Case {const char* source; const char* computed; uint8_t r, g, b, a, missing = 0;};
     // opaque samples were independently captured with Chromium's sRGB canvas.
     const Case cases[] = {
         {"oklab(0 0 0)", "oklab(0 0 0)", 0, 0, 0, 255},
@@ -2357,6 +2357,12 @@ TEST_F(CssEngineParserTest, AbsoluteOklabAndOklchKeepComponentsAndReachSrgbConsu
         {"oklch(.6 -1 120)", "oklch(0.6 0 120)", 128, 128, 128, 255},
         {"oklab(-1 0 0 / -1)", "oklab(0 0 0 / 0)", 0, 0, 0, 0},
         {"oklab(2 0 0 / 200%)", "oklab(1 0 0)", 255, 255, 255, 255},
+        {"oklch(14.5% 0 none)", "oklch(0.145 0 none)", 10, 10, 10, 255, 4},
+        {"oklab(none 0 0)", "oklab(none 0 0)", 0, 0, 0, 255, 1},
+        {"oklab(.6 none none)", "oklab(0.6 none none)", 128, 128, 128, 255, 6},
+        {"oklch(.6 none 30)", "oklch(0.6 none 30)", 128, 128, 128, 255, 2},
+        {"oklch(.6 0 none / none)", "oklch(0.6 0 none / none)", 128, 128, 128, 0, 12},
+        {"oklab(none none none / none)", "oklab(none none none / none)", 0, 0, 0, 0, 15},
     };
     for (const Case& entry : cases) {
         SCOPED_TRACE(entry.source);
@@ -2365,6 +2371,7 @@ TEST_F(CssEngineParserTest, AbsoluteOklabAndOklchKeepComponentsAndReachSrgbConsu
         ASSERT_NE(declaration, nullptr);
         CssComputedColor color;
         ASSERT_TRUE(css_color_compute(declaration->value, &color));
+        EXPECT_EQ(color.missing, entry.missing);
         uint8_t r, g, b, a;
         ASSERT_TRUE(css_color_to_rgba(&color, &r, &g, &b, &a));
         EXPECT_EQ(r, entry.r); EXPECT_EQ(g, entry.g); EXPECT_EQ(b, entry.b); EXPECT_EQ(a, entry.a);
@@ -2377,6 +2384,7 @@ TEST_F(CssEngineParserTest, AbsoluteOklabAndOklchKeepComponentsAndReachSrgbConsu
         CssComputedColor round_trip;
         ASSERT_TRUE(css_color_compute(retained, &round_trip));
         EXPECT_EQ(color.type, round_trip.type);
+        EXPECT_EQ(color.missing, round_trip.missing);
         for (int i = 0; i < 4; i++) EXPECT_DOUBLE_EQ(color.components[i], round_trip.components[i]);
     }
 }
@@ -2384,8 +2392,8 @@ TEST_F(CssEngineParserTest, AbsoluteOklabAndOklchKeepComponentsAndReachSrgbConsu
 TEST_F(CssEngineParserTest, InvalidPerceptualColorsCannotReplaceAnEarlierDeclaration) {
     const char* invalid[] = {"oklab(.6 .1)", "oklab(.6 .1 .05 .5)", "oklab(.6,.1,.05)",
         "oklab(.6 1px .05)", "oklab(.6 .1 30deg)", "oklch(.6 .1 30%)", "oklch(1px .1 30)",
-        "oklch(.6 .1 30 / 1s)", "oklab(.6 .1 .05 / .5 .2)", "oklab(none .1 .05)",
-        "oklab(from red l a b)", "oklch(.6 none 30)"};
+        "oklch(.6 .1 30 / 1s)", "oklab(.6 .1 .05 / .5 .2)", "oklab(invalid .1 .05)",
+        "oklab(from red l a b)", "oklch(.6 inherit 30)"};
     for (const char* source : invalid) {
         SCOPED_TRACE(source);
         EXPECT_EQ(css_parse_property_declaration("color", 5, source, strlen(source), pool), nullptr);

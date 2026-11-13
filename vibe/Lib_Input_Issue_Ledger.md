@@ -10,7 +10,159 @@ and whether it blocks work in Lambda. Cite the applicable `S#` or `D#` ruling
 when one covers the issue. Record uncertain causes as unconfirmed, link any
 owner-side fix and verification, and retain the ID when the issue is resolved.
 
+Merge note (2026-11-13): parallel reports reused IDs already assigned in this
+ledger, so the incoming records use unique IDs: Empty POST is LI-020; GIF
+memory admission LI-021; online captures LI-022; Oklab/OkLCh colors LI-023;
+cookie header terminators LI-024; cookie domains LI-025; Calmind CDN LI-026;
+and the shared libuv loop LI-027. The tar follow-up remains consolidated
+under LI-012. Existing evidence filenames keep their historical prefixes.
+
 ## Open issues
+
+<a id="li-027"></a>
+
+### LI-027 — Shared libuv loop spins during concurrent context scheduler teardown
+
+**Status:** OPEN — process-global provider state confirmed; the exact intrusive-list
+corruption/race is unconfirmed. **Observed:** 2026-11-12, macOS native debug,
+Lambda checkout `85cc95ad4` plus the existing-ruling follow-up. **Lambda task
+blocker:** yes for claiming the complete standalone shared-module concurrency
+gate; no for the selected ledger repairs, whose Lambda and Test262 baselines pass.
+Ownership: **D9.1.1v4 / D6.4.4 / D7.5.1** require a loop owned by each context.
+
+Reproduction from `../Lambda-opus` after linking the current native host:
+`./test/test_lambda_concurrency_gtest.exe --gtest_death_test_style=threadsafe`.
+The preceding 97 native checks pass, and
+`RuntimeGlobalsConcurrency.SharedChartAndPdfModulesStayStableAcrossEvalThreads`
+passes its full 20-second concurrent phase. The next
+`ModuleStateSlabsArePrivateToEachEvalContext` test spins during worker cleanup.
+A one-second `sample` places its surviving worker in
+`lambda_scheduler_destroy` (`lambda/runtime/concurrency.cpp:872`) ->
+`lambda_uv_run_loop` (`lib/uv_loop.c:143`) -> `uv_run` -> `uv__run_prepare`.
+The main thread waits in `pthread_join`; CPU is about one core and peak native
+footprint is 3.5 GB. The unbounded run was stopped after capturing evidence.
+
+`lib/uv_loop.c` still owns one process-global `g_loop`, `g_prepare`, `g_check`,
+drain callback pair and active flags. Lambda's scheduler creates/closes each
+context's wake handle on that shared loop. Four independent evaluator workers
+can therefore enter its provider during teardown. A shared prepare/check-list
+race is consistent with the sample, but an exact corruption-producing operation
+has not been established. The existing Lambda Runtime Globals RG8 record
+explicitly requires an instance-based `lambda_uv_*` API; moving only the loop
+pointer or adding a Lambda-side serialization workaround does not implement it.
+
+Evidence in `../Lambda-opus/temp/ledger-ruled-fixes/`:
+`concurrency-complete.log`, `concurrency-hang.sample.txt`, and
+`concurrency-sample.log`; implementation/checkpoint:
+`../Lambda-opus/vibe/impl/Lambda_Impl_Ledger_Ruled_Followup (done).md`.
+The test setup sources only add explicit acknowledgement of now-inferred chart
+and PDF error outcomes; no workload, check, deadline or scheduler path is removed.
+The affected additional qualification is stopped. No sibling implementation,
+header, test or build source is changed by this report.
+
+<a id="li-026"></a>
+
+### LI-026 — Calmind CDN rejects a valid compressed resource request profile
+
+**Status:** OPEN external interoperability limitation; native transport defect
+unconfirmed, 2026-11-12. **Lambda blocker:** no; capture completes, but missing
+first-party CSS and images leave a major visual difference. Network ownership
+follows **D9.1.1v4 / D9.1.3v2**.
+
+The current native capture of https://calmind.com/ receives HTTP403 HTML browser
+checks for first-party CSS, scripts and images. Fresh headless Chromium receives
+200 CSS for all three stylesheets. The resource manager already forwards the
+owning document's Referer through CURLOPT_REFERER; adding the same Referer or
+copying the current native User-Agent in system curl still receives 200 CSS.
+
+Independent system-curl controls isolate an origin response variation:
+`--compressed` advertises the available `deflate, gzip` codecs and receives
+HTTP403, 5768 bytes of an HCDN browser-check page, with Vary:Accept-Encoding.
+IPv4 gives the same result. Explicit gzip-only, identity, no encoding header or
+Chromium's `gzip, deflate, br, zstd` header receives HTTP200 text/css. The valid
+native compressed request is not proven malformed; no cookie, TLS, resource
+scheduling or script-startup root cause is established by these controls.
+
+Do not disable compression, spoof unsupported codecs, reorder headers for this
+host or substitute its CSS solely to match the reference. Broader CDN/browser
+challenge interoperability is outside this existing-bug milestone. Evidence:
+Lambda `temp/online-visual-round13/calmind-corrected-controls.json`,
+`calmind-encoding-controls.json`, saved response headers/bodies,
+`calmind-native-probe.png` and `calmind-browser-current.json/png`. An early
+User-Agent extraction concatenated following macros; those native/css-accept
+controls are superseded by corrected-controls and are not evidence.
+
+<a id="li-022"></a>
+
+### LI-022 — Online document captures hit TLS/connect failures despite intermittent curl success
+
+**Status:** host-trust initialization repaired, 2026-11-11; residual public
+origin/network failures remain open. **Lambda task blocker:** cleared for
+verified Lua, Lua manual and Xiph captures; PIL and other transport failures
+remain explicit after repeated live attempts. Acquisition ownership **D9.1.2v2**, project boundaries
+**D9.1.1v4 / D9.1.3v2**. The user authorized sibling source updates.
+
+The host trust adapter previously selected/loaded platform roots inside the
+mbedTLS handshake callback, after TCP connection. Local first-record captures
+show about 91–94ms cold delay after connect versus about 2ms with roots already
+loaded. Cold Xiph probes failed 3/3; warmed probes succeeded 2/3, with an EOF
+also observed after warming. This supports a host-side initialization defect
+but does not explain every public request failure.
+
+`curl_use_host_trust_store` now resolves roots before transport and passes the
+captured chain through `CURLOPT_SSL_CTX_DATA`. The callback applies that chain;
+CA and hostname verification remain enabled. The deterministic regression
+`InputOwnedCurl.CapturesHostRootsBeforeStartingTransport` selects valid roots,
+changes the ambient override before perform, and proves selection occurred
+at configuration. It fails before the change (CURLcode60) and passes afterward.
+All three InputOwnedCurl cases pass, including rejection of an incorrect CA
+and hostname. No vendored libcurl/mbedTLS source was changed.
+
+Input HTTP diagnostics now use the backend error buffer and distinguish
+`CURLE_SSL_CONNECT_ERROR` from certificate-validation errors; handshake EOF
+is no longer incorrectly described as a certificate error. Same-host live
+Lua and Xiph renders succeeded with valid PNGs after the repair. PIL still
+hit the existing 60s downloader timeout in that check and remains a failure;
+no fallback/error page PNG is accepted as a loaded document. URLs, protocol
+policy, deadlines and TLS validation are unchanged.
+
+Evidence: owner `temp/li014-before.log`, `temp/li014-after.log`; Lambda
+`temp/online-recovery/trust-clienthello.json`, curl cold/warm probes, and
+`temp/online-recovery/li014-live/results.json` with per-page logs/PNGs.
+
+**Acquisition follow-up, 2026-11-12:** reran the remaining corpus using the
+verified Lambda host. Exact PIL URL `https://www.lua.org/pil/contents.html`
+loads in Chromium, and an input-owned curl probe also completed with HTTP200.
+Three isolated Lambda captures still failed: two connection resets during
+TLS handshake and one 60s timeout. System curl also timed out on that exact
+URL in another attempt. The discrepancy remains intermittent; a new local
+TLS defect or an origin/provider cause is **unconfirmed**. No error-page PNG
+is accepted and no protocol, certificate or redirect limit was weakened.
+
+**PIL follow-up, 2026-11-12:** The unchanged qualified Lambda host and the
+official snapshot retry both loaded the page, so a valid 1200 × 800 capture is
+now available. Three additional Lambda renders produced two TLS connection
+resets and one HTTP 200; four alternating system-curl requests returned HTTP
+200, while the standalone input-owned curl probe had one reset and three
+HTTP 200 responses. A separate input-owned curl probe reproduced resets with
+both default TLS and TLS 1.2, and also observed a connect timeout and an empty
+reply. These observations locate failures in transport but do not establish
+whether the remote peer, network path, or client TLS behavior causes them.
+No reliable source-level repair is established. Evidence is in Lambda
+`temp/pil-investigation/`; the original failed capture logs and manifest were
+preserved there before the successful retry. Ownership remains **D9.1.2v2**.
+
+Independent system-curl probes reproduce TCP connect timeouts for GNU and Qt,
+connection refusal for Eigen, the Onfolk hostname mismatch (a Squarespace
+certificate), and the expired ObservIQ certificate. The OS resolver cannot
+produce addresses for `www.narrative.bi` or `empower.me`; local DNS queries
+return NOERROR with no A answers. These are acquisition blockers in the
+current environment, not evidence of a native rendering failure. Ownership
+remains **D9.1.2v2**; attribution of the transport/DNS causes is not established.
+Evidence: Lambda `temp/online-recovery-20261112/transport/`, `pil-render/`,
+`pil-owned.log`, `pil-system.log`; per-case browser diagnostics live beside
+`test/online/snapshots/capture_results.csv`. The capture helper now retains
+selected origin headers, lifecycle events and failed/pending resources.
 
 LI-016 is [resolved below](#li-016).
 
@@ -55,15 +207,29 @@ inspection before Lambda expands that qualification. No owner source changed.
 
 **Status:** OPEN — cause unconfirmed. **Observed:** 2026-11-11, macOS,
 `make test-input-baseline` (debug), including a rerun with local socket access.
-**Lambda blocker:** no known block to the independent TeX script port.
+**Lambda blocker:** no known block to the independent TeX script port. Ownership:
+**D9.1.1v4 / D9.1.3v2**.
 
-`ZipTest.NativeTarVariantsCaptureExactBytesAndNames` in
-`test/test_zip_gtest.cpp` expects the archive input for `sample.tar.gz` to be
-non-null. It instead returns null with `tar: invalid or unsupported archive`.
-The other 34 cases in that test binary passed in the baseline. Reproduce with
-`./build/test/test_zip_gtest --gtest_filter=ZipTest.NativeTarVariantsCaptureExactBytesAndNames`
-after building the baseline. The cause has not been established; investigate
-the fixture and input-owned archive integration before changing behavior.
+Input base `c5ca83e6d4d9793223117398cea5caea868d1040` plus the two-line HTTP POST
+repair fails `ZipTest.NativeTarVariantsCaptureExactBytesAndNames` at
+`test/test_zip_gtest.cpp:602`: opening `test/input/archive/sample.tar.gz` returns
+null with `tar: invalid or unsupported archive`. The uncompressed tar fixture
+succeeds; the gzip variant is expected to preserve the same entries and bytes.
+The archive suite reports 34/35 passing, and a focused rerun reproduces the
+failure in 2 ms. A separate baseline and rerun with local socket access report
+the same failure, with the other 34 cases passing. No archive source, fixture,
+expectation, or vendor dependency was edited for these observations.
+
+Reproduce from input:
+
+```sh
+./build/test/test_zip_gtest --gtest_filter=ZipTest.NativeTarVariantsCaptureExactBytesAndNames
+```
+
+Evidence: `../../lambda/temp/kianhup-hang/input-baseline.log` and
+`tar-control.log`. Existing LI-001 / LI-002 also fail the input aggregate;
+all seven local HTTP cases and the Lambda viewer gate pass. No archive repair
+or confirmed regression attribution is claimed.
 
 <a id="li-011"></a>
 
@@ -187,6 +353,164 @@ D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
 
 ## Resolved issues
+
+<a id="li-025"></a>
+
+### LI-025 — Cookie domains include URL ports
+
+**Status:** FIXED, 2026-11-12. **Lambda blocker:** cleared for cookie transport.
+Ownership **D9.1.1v4 / D9.1.3v2**. Cookie host extraction reads Url.host, which
+contains a nondefault port, instead of the canonical hostname. Cookies then
+fail matching on another port of the same host, and curl rejects their imported
+port-bearing domain for subresource requests. [RFC6265 §8.5](https://www.rfc-editor.org/info/rfc6265/#section-8.5)
+does not isolate cookies by port.
+
+Use url_get_hostname, retaining the established empty-authority behavior for
+hostless file documents. CookiesShareAHostnameAcrossPorts fails before and
+passes after; a distinct hostname still receives no cookie. The added
+FileDocumentCookiesRetainTheirEmptyHostname and existing JS dom_document_cookie
+golden protect file compatibility. Initial and script-created image requests
+in the real HTTP export tests now carry the shared response/DOM cookies.
+The three new input cases are included in the local baseline filter.
+
+Final input aggregate:5224 passes,1 skip, with the same independent graph LOC
+budget, transition-tree external-parent and sample.tar.gz failures (LI-001 /
+LI-002 / LI-012). No affected source or fixture for those failures changed.
+Full AST574 and real HTTP/session6 checks pass with native services available.
+Evidence in Lambda temp/online-visual-round8/: http-before.log,
+http-hostless.log, input-baseline-final.log, session-qualified.log,
+js-baseline-ast-qualified.log. Capture qualification is in Lambda
+ test/online/README.md; native RI-045 provides the missing export profile.
+
+<a id="li-024"></a>
+
+### LI-024 — Document response cookies retain HTTP line terminators
+
+**Status:** FIXED, 2026-11-12. **Lambda blocker:** cleared for the reduced
+export-session case. Ownership **D9.1.1v4 / D9.1.3v2**. The synchronous document
+header callback copies the full curl span into cookie_jar_store. Unlike the
+other network frontends, it leaves CRLF intact. A final Path=/ then contains
+line endings and fails matching; a terminal HttpOnly/Secure name fails the
+attribute comparison. The two-cookie local response exposes the private cookie
+to document.cookie while omitting the ordinary visible cookie.
+[libcurl HEADERFUNCTION](https://curl.se/libcurl/c/CURLOPT_HEADERFUNCTION.html)
+delivers bounded, non-NUL-terminated header lines including their terminator.
+
+Use one cookie_jar_store_response_header helper to normalize the bounded span
+and store the copied value. The document, synchronous-resource and curl-multi
+callbacks reuse it, replacing duplicate normalization code. Allocation failure
+aborts the transport. No vendored curl implementation is changed.
+DocumentCookiesKeepFinalPathAndHttpOnlyAttributes fails before and passes after;
+script-visible cookies exclude HttpOnly while request cookies include it.
+All ten local HTTP cases and six real-renderer session tests pass. Evidence:
+Lambda temp/online-visual-round8/{http-before.log,http-after.log,http-hostless.log,
+session-qualified.log}. The full input gate retains the independent LI-001,
+LI-002 and LI-012 failures; expectations and filters were not weakened.
+
+<a id="li-023"></a>
+
+### LI-023 — Missing Oklab/OkLCh components invalidate neutral theme colors
+
+**Status:** FIXED, 2026-11-12. Input color computation ownership follows
+**D9.1.1v4 / D9.1.2v2**. **Lambda blocker:** cleared for the reduced theme case.
+Nuxt uses `oklch(14.5% 0 none)` in its neutral palette. The shared color helper
+already retains a missing-channel bit and a zero used value, but the caller
+explicitly disallowed missing components for perceptual functions. This
+invalidated the palette fallback, leaving the dark page background transparent
+and white headings invisible. CSS Color 4 §4.4 permits `none` in modern color
+syntax and treats missing components as zero outside interpolation.
+
+The caller now admits missing channels through the existing helper. Six
+regression cases cover lightness/chroma/hue/alpha, stored missing bits,
+serialization, round trips and RGB consumers. Two formerly-invalid assertions
+were corrected to test actually invalid identifiers instead. The Nuxt hue
+case fails before the change; all 112 CSS parser tests pass after. This does
+not implement missing-component interpolation in color-mix or new color spaces.
+Evidence: Lambda `temp/online-visual-round3/` reduced pages, `color-tests.log`
+and Nuxt captures. The report must retain unrelated icon/mask limitations.
+Spec: https://www.w3.org/TR/css-color-4/#missing
+
+<a id="li-021"></a>
+
+### LI-021 — All-frame GIF decoding bypasses the process memory budget
+
+**Status:** RESOLVED, 2026-11-11. **Lambda task blocker:** cleared for Studio
+PNG capture. Ownership **D9.1.1v4 / D9.1.2v2 / D9.1.3v2**. Sibling updates
+were explicitly authorized by the user.
+
+`image_gif_load_from_memory` checked each container against its decoded-byte
+limit but allocated all composited frames without process admission. Several
+individually valid animations on `https://studio.design/` retained
+1,059,694,508 image-category bytes, preventing a viewport PNG allocation.
+An allocation stack identifies `image_gif_load_from_memory` during intrinsic
+image measurement. The existing preflight peak estimate is now returned and
+admitted through `memtrack_allow_allocation` before giflib expansion. Structured
+later-frame decoding reports `IMAGE_LIMIT_EXCEEDED` when admission fails.
+The process limit is unchanged; independent first-frame decoding remains
+available when the complete animation cannot fit.
+
+Full image I/O passes 35/35, including palette/disposal/loop behavior, budget
+rejection and still decoding; native Radiant GIF playback passes 23/23.
+Studio now exports with 711,756,076 image-category bytes. Its selected initial
+frame is mostly blank, so this is load/export qualification, not visual parity.
+Evidence: Lambda `temp/online-recovery/studio-image-trace3-output.log`,
+`studio-budget-fixed-output.log`, and canonical Studio capture; owner
+`temp/online-gif-tests.log`; Radiant `temp/online-gif-player-tests.log`.
+
+Coordinated Lambda **LR03-46** also reuses `map_put_heap` for private JS fields.
+The input builder now grows storage before publishing its new descriptor,
+preserving **D6.3** at its collecting growth callback. The callback sees the
+complete old field list until the added lane and value exist. Lambda's forced-GC private growth regression passes; its full core gate passes
+7,415/7,415 including 859 JS, 368 GC stress and 47 representation cases.
+Qualification is recorded under Lambda LR03-46 and its final test logs.
+
+<a id="li-020"></a>
+
+### LI-020 — Empty POST reads terminal stdin and blocks page initialization
+
+**Status:** RESOLVED, 2026-11-11.
+**Lambda blocker:** removed; the plain terminal launch now renders the login form.
+Owner authority: **D9.1.2v2**, **D9.1.1v4 / D9.1.3v2**. The user explicitly
+authorized the owner-side fix on 2026-11-11 after the original boundary report.
+
+Confirmed on input `c5ca83e6d4d9793223117398cea5caea868d1040` and Lambda
+`456ba137dfe84a19eb59ef8c48f602fac7ffce28` plus its pending cookie-capability
+repair. Plain interactive startup hangs before first layout. The public page's
+Acro script performs synchronous template POST requests with no body.
+`http_fetch2()` sets `CURLOPT_POST=1`, but `http_set_request_body()` returns
+without setting a body or length when `FetchConfig.body` is null. Curl then
+uses its default stdin reader. The main-thread sample shows
+`js_xhr_send -> http_fetch2 -> curl_easy_perform -> Curl_client_read -> fread
+-> __read_nocancel`. The process remains idle, waiting for terminal input;
+the network timeout and CPU watchdog do not interrupt that blocking read.
+
+Earlier automated runs had EOF on stdin and completed, hiding this separate
+failure after Lambda's missing `navigator.cookieEnabled` was fixed. The
+[curl POSTFIELDS contract](https://curl.se/libcurl/c/CURLOPT_POSTFIELDS.html)
+requires an explicit empty buffer or zero POST length for an empty request.
+
+Evidence: `../../lambda/temp/kianhup-hang/user-hang.log` and
+`user-process.sample.txt`, captured from the user's process PID 53623 without
+changing or terminating it. Reproduction: run the exact `view` command in a
+terminal with stdin open. A regression must keep stdin open rather than rely
+on subprocess EOF. Repair: set POST's initial length to zero, then let the
+existing optional-body helper supply an explicit payload and length. No
+vendor curl patch or Lambda-side workaround is needed.
+
+**Repair and verification:** `lambda/input/input_http.cpp` `http_fetch2()`
+now sets POST's initial length to zero before `http_set_request_body()`
+applies any explicit payload. `test/test_http_gtest.cpp`
+`EmptyPostDoesNotReadStdin` covers null and empty bodies with a pipe whose
+writer remains open, and is selected by the owner offline baseline filter.
+All seven local HTTP tests pass. Lambda's rebuilt debug host reaches first
+render with live PTY stdin and the exact viewer argv, then a windowed PTY
+replay confirms the complete form (`plain-pty.out`, `plain-pty.log`,
+`login-window.png`, `login-window.log`). The viewer integration baseline
+passes: 8,161 passed, 299 partial, 20 skipped of 8,480, zero failures
+(`radiant-baseline.log`). The broader input baseline still fails LI-001,
+LI-002 and the separately recorded LI-012; its HTTP cases all pass. Evidence
+and the completion checkpoint are under `../../lambda/temp/kianhup-hang/`.
+No credentials were entered or login submitted.
 
 <a id="li-016"></a>
 

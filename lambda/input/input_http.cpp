@@ -203,11 +203,8 @@ static size_t write_document_header_callback(char* buffer, size_t size, size_t n
     char* curl_url = NULL;
     if (response->curl) curl_easy_getinfo(response->curl, CURLINFO_EFFECTIVE_URL, &curl_url);
     if (curl_url && curl_url[0]) effective_url = curl_url;
-    char* header = mem_dup_n(buffer, header_size, MEM_CAT_NETWORK);
-    if (!header) return 0;
-    cookie_jar_store(response->cookie_jar, effective_url, header);
-    mem_free(header);
-    return header_size;
+    return cookie_jar_store_response_header(response->cookie_jar, effective_url,
+        buffer, header_size) ? header_size : 0;
 }
 
 // Map HTTP Content-Type to file extension for routing
@@ -261,6 +258,8 @@ static char* download_http_content_impl(const char* url, size_t* content_size,
         return NULL;
     }
     CURLcode res;
+    char transport_error[CURL_ERROR_SIZE] = {};
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, transport_error);
 
     // Configure curl options
     curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -303,13 +302,17 @@ static char* download_http_content_impl(const char* url, size_t* content_size,
 
     if (res != CURLE_OK) {
         // Provide specific error messages for common failure modes
+        const char* detail = transport_error[0] ? transport_error : curl_easy_strerror(res);
         switch (res) {
             case CURLE_SSL_CONNECT_ERROR:
+                // a peer closing the handshake is not evidence of an invalid certificate.
+                log_error("HTTP: TLS handshake failed for %s: %s", url, detail);
+                break;
             case CURLE_SSL_CERTPROBLEM:
             case CURLE_SSL_CIPHER:
             case CURLE_PEER_FAILED_VERIFICATION:
             case CURLE_SSL_PINNEDPUBKEYNOTMATCH:
-                log_error("HTTP: SSL/TLS certificate error for %s: %s", url, curl_easy_strerror(res));
+                log_error("HTTP: SSL/TLS certificate error for %s: %s", url, detail);
                 break;
             case CURLE_TOO_MANY_REDIRECTS:
                 log_error("HTTP: Redirect loop detected for %s (max %ld redirects exceeded)",
@@ -744,6 +747,8 @@ FetchResponse* http_fetch2(const char* url, const FetchConfig* config, FetchFail
         size_t method_len = strlen(config->method);
         if (str_ieq_const(config->method, method_len, "POST")) {
             curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            // a missing body is empty; curl otherwise reads upload data from stdin.
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, 0L);
             http_set_request_body(curl, config);
         } else if (str_ieq_const(config->method, method_len, "PUT")) {
             curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");

@@ -41,8 +41,9 @@ static bool gif_skip_sub_blocks(const unsigned char* data, size_t length,
 // Validate the complete container before giflib expands any raster data.  The
 // estimate includes giflib's indexed frames and our retained RGBA canvases.
 static bool gif_preflight(const unsigned char* data, size_t length,
-                          int* out_frame_count) {
+                          int* out_frame_count, size_t* out_peak_bytes) {
     if (out_frame_count) *out_frame_count = 0;
+    if (out_peak_bytes) *out_peak_bytes = 0;
     if (!data || length < 14 || length > IMAGE_MAX_ENCODED_BYTES ||
         (memcmp(data, "GIF87a", 6) != 0 && memcmp(data, "GIF89a", 6) != 0)) {
         return false;
@@ -112,6 +113,7 @@ static bool gif_preflight(const unsigned char* data, size_t length,
         return false;
     }
     if (out_frame_count) *out_frame_count = frame_count;
+    if (out_peak_bytes) *out_peak_bytes = peak_bytes;
     return true;
 }
 
@@ -321,7 +323,13 @@ static GifFrames* gif_decode_all_frames(GifFileType* gif) {
 }
 
 GifFrames* image_gif_load_from_memory(const unsigned char* data, size_t length) {
-    if (!gif_preflight(data, length, NULL)) return NULL;
+    size_t peak_bytes = 0;
+    if (!gif_preflight(data, length, NULL, &peak_bytes)) return NULL;
+    // multiple valid animations must share the same process budget as still-image decoding.
+    if (!memtrack_allow_allocation(NULL, peak_bytes)) {
+        log_warn("image: GIF animation exceeds process memory budget; still-frame decoding remains available");
+        return NULL;
+    }
 
     GifMemoryReader reader = { data, length, 0 };
     int error_code;
@@ -352,7 +360,7 @@ void image_gif_free(GifFrames* gif) {
 }
 
 int image_gif_frame_count_from_memory(const unsigned char* data, size_t length) {
-    if (!gif_preflight(data, length, NULL)) return 0;
+    if (!gif_preflight(data, length, NULL, NULL)) return 0;
     GifMemoryReader reader = { data, length, 0 };
     int error_code;
     GifFileType* gif = DGifOpen(&reader, gif_memory_read_func, &error_code);
@@ -380,8 +388,8 @@ ImageStatus image_gif_decode(ImageOperation* op,const ImageSource* source,
     const ImageDecodeOptions* options,ImageDecoded* result) {
     if (options->frame_index) {
         const uint8_t* data=image_source_bytes(op,source);if(!data)return op->error->code;
-        int count=0;
-        if(!gif_preflight(data,source->length,&count))return image_fail(op,IMAGE_INVALID_DATA,"invalid GIF animation");
+        int count=0; size_t peak_bytes=0;
+        if(!gif_preflight(data,source->length,&count,&peak_bytes))return image_fail(op,IMAGE_INVALID_DATA,"invalid GIF animation");
         if((uint32_t)count>op->context->limits.max_frames ||
             (uint64_t)result->info.width*result->info.height*4*((uint64_t)count+2)>op->context->limits.max_decoded_bytes)
             return image_fail(op,IMAGE_LIMIT_EXCEEDED,"GIF animation exceeds frame/pixel limits");
@@ -389,6 +397,8 @@ ImageStatus image_gif_decode(ImageOperation* op,const ImageSource* source,
         uint32_t tw,th;image_target_size(&result->info,options,&tw,&th);
         if(options->mode==IMAGE_DECODE_THUMBNAIL&&!options->allow_full_decode&&(tw<result->info.width||th<result->info.height))
             return image_fail(op,IMAGE_FAST_PATH_UNAVAILABLE,"later GIF frames need compositing canvases");
+        if(!memtrack_allow_allocation(NULL,peak_bytes))
+            return image_fail(op,IMAGE_LIMIT_EXCEEDED,"GIF animation exceeds process memory budget");
         GifFrames* frames=image_gif_load_from_memory(data,source->length);
         if(!frames)return image_fail(op,IMAGE_INVALID_DATA,"GIF frame compositing failed");
         if(image_allocate_pixels(op,(uint32_t)frames->width,(uint32_t)frames->height,result))
