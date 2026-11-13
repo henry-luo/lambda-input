@@ -2,6 +2,8 @@
 
 ## 2026-11-11: requested full script port
 
+The Lambda-owned [script TeX engine implementation plan](../../../lambda/vibe/impl/Lambda_Impl_Latex_Script_Engine.md) tracks package-specific progress and issues. General Lambda language and runtime issues remain in the Lambda issue ledger.
+
 The requested direction supersedes the partial expl3 port below: move the TeX
 engine and LaTeX document processing to Lambda Script, with no C++ TeX/LaTeX
 implementation on the migrated path. The reason is to keep execution and
@@ -99,16 +101,31 @@ qualified (S1.8, D10.2.2).
 
 The experimental profile also accepts `script_expl3: true`. This selects the
 hand-ported Lambda Script expl3 core: syntax-category transitions; local,
-global, and protected control-sequence definitions; token-list declaration,
-assignment, local/global append and prepend with `n` and `x` arguments, use,
-clearing, `N`/`c` emptiness conditionals, `n`/`V` blankness, `NN`/`nn` equality conditionals,
-`n`/`V` stringification, `n`/`N` item counting, and standard scratch token
-lists; the non-allocating zero and one integer constants, integer expressions,
-tested absolute-value, minimum and maximum helpers, and `nNnTF`/`nNnT`/`nNnF`
-comparisons with direct relation tokens or zero-argument macros expanding to a
-single relation, chained `nTF`/`nT`/`nF` comparisons with short-circuiting,
-and tested zero, odd and even conditionals; and sequence construction, scoped updates, use,
-`N`/`c` emptiness conditionals and comparator-based sorting. ASCII text case
+global, and protected control-sequence definitions; tested `N`- and `c`-argument
+control-sequence existence and free-name conditionals and predicates; `NN`,
+`cN`, `Nc` and `cc` meaning-comparison conditionals and predicates; and
+existence aliases for token lists, sequences, integers, booleans, comma lists,
+property lists, strings and dimensions. It includes token-list declaration
+and clearing through tested `N` and `c` forms; assignment; local/global
+meaning-copy with `NN`, `cN`, `Nc` and `cc` arguments; append and prepend with
+tested `Nn`, `Nx` and `cn` forms; tested `N`/`c` use and counting; `N`/`c`
+emptiness conditionals; `n`/`V` blankness, `NN`/`nn` equality conditionals,
+`n`/`V` stringification, `n`/`N` item counting, and standard scratch token lists. The
+integer subset includes non-allocating zero and one constants, integer
+expressions, tested absolute-value, minimum and maximum helpers, `nNnTF`/`nNnT`/
+`nNnF` comparisons with direct relation tokens or zero-argument macros
+expanding to a single relation, chained `nTF`/`nT`/`nF` comparisons with
+short-circuiting, and tested zero, odd and even conditionals. The sequence
+subset includes construction and clearing through tested `N` and `c` forms,
+scoped updates with tested `Nn` and `cn` insertion, local/global meaning-copy with `NN`, `cN`, `Nc` and `cc` arguments,
+tested `Nn`/`cn` use, `N`/`c` counting and `Nn`/`cn` indexing, the standard
+empty-sequence meaning and `NTF`/`NT`/`NF` and `cTF`/`cT`/`cF` emptiness
+conditionals, tested `NnTF`/`NnT`/`NnF` membership, local/global reversal,
+tested positive and negative indices, sequence bodies constructed by ordinary
+TeX macros, and comparator-based sorting. Tested `Nn` and `cn` forms of local
+and global sequence and token-list insertion use protected TeX macros,
+preserving argument timing and introspection; their AST mapping remains guarded
+(S1.8, D10.2.2). ASCII text case
 conversion expands ordinary macros while preserving math and reference keys; it
 reports unsupported Unicode and reference-option cases. Values remain
 TeX tokens with their category codes and follow TeX group scope, including
