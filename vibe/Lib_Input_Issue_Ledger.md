@@ -19,6 +19,57 @@ under LI-012. Existing evidence filenames keep their historical prefixes.
 
 ## Open issues
 
+<a id="li-030"></a>
+
+### LI-030 — Animated WebP cannot supply even the initial export frame
+
+**Status:** OPEN capability gap, confirmed 2026-11-13. **Lambda blocker:** yes
+for Maple 082's hero title; independent native sizing work continues as RI-069.
+Codec ownership **D9.1.1v4 / D9.1.3v2**, selected-frame policy **D10.1.7**.
+
+`https://www.getmaple.ca/` serves its title from a `.gif?fm=webp...` URL, but the
+actual response is `image/webp`: 1200x628, 30496 bytes, with ANIM and 32 ANMF
+chunks. Chromium and the platform image decoder display its first frame. The
+same saved script-free page and a local one-image reduction leave the native
+title blank. Dimensions and selected URL agree; no image resource admission or
+transport failure is involved.
+
+`lib/image/image_webp.cpp` probes the animated container successfully, then
+`image_webp_decode` explicitly returns `IMAGE_UNSUPPORTED_FEATURE` when
+`config.input.has_animation` is true. The minimal native log confirms
+"animated WebP decoding is not enabled". This is distinct from the existing GIF
+player and memory-budget diagnostics. The image remains a placeholder despite
+known natural dimensions. Animation demux/compositing/playback and a bounded
+initial-frame export profile require a separate codec milestone; no URL or
+format substitution is applied to this page.
+
+Evidence: Lambda `temp/online-visual-round24/maple-title.headers`,
+`maple-title.gif` (actual WebP bytes), `maple-title-first.png`,
+`webp-only.html`, its native/browser PNGs and `webp-only-lambda.log`;
+`maple-static-*` preserves the full same-source comparison. No codec source or
+vendor dependency change is made in this online bug-fix round.
+
+
+<a id="li-029"></a>
+
+### LI-029 — Deferred single-block width is omitted from a parsed style rule
+
+**Status:** OPEN observed discrepancy; source cause **unconfirmed**,2026-11-13.
+**Lambda blocker:** no for LI-028's nested-selector repair. Ownership
+**D9.1.1v4 / D9.1.3v2**, parsed declaration ownership **D5.5.1**.
+
+For `.outer{--tokens:{a:hover{width:1px}};width:{var(--size)};a:hover{color:green}.tail{height:2px}}`,
+Chromium retains two declarations on the outer style, including the deferred
+single-block width. The native engine parser reports only one outer declaration
+before LI-028. This is distinct from losing the following pseudo/nested rules.
+The declaration parser already has a `css_value_is_single_var_block` path and
+focused color-block tests; the stage that drops this width is not yet isolated.
+No blanket acceptance or test masking is added. LI-028's custom-block control
+uses a supported definite width to test its selected nesting contract.
+Evidence: Lambda `temp/online-visual-round18/parser-before.log` and
+`browser-controls.json`/`.log`; no current-source resolution claim is made.
+
+
 <a id="li-027"></a>
 
 ### LI-027 — Shared libuv loop spins during concurrent context scheduler teardown
@@ -353,6 +404,54 @@ D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
 
 ## Resolved issues
+
+<a id="li-028"></a>
+
+### LI-028 — Type-prefixed nested pseudo selectors consume following rules
+
+**Status:** FIXED, 2026-11-13; fresh online captures are running. **Lambda blocker:** the reduced DigitalOcean
+hero omission is repaired. Ownership **D9.1.1v4 / D9.1.3v2**, parsed source and
+scratch **D5.5.1**, selected export frame **D10.1.7** unchanged.
+
+DigitalOcean's authored `html[data-pdocs=home]` rule includes `body::before`
+before its home hero/media styles. `css_parser.cpp` treated any IDENT followed
+by COLON as a declaration in both style and nested conditional blocks. Thus
+`a:hover`, `p::before` and functional pseudo selectors consumed their blocks
+as malformed declarations, losing later nested rules. The saved script-free
+HTML/CSS and small type-pseudo controls reproduce it; explicit `&` and plain
+type selector controls work. CSS Syntax3§5.5.5/§5.5.6 requires a failed
+declaration to be reconsidered as a qualified rule.
+
+One shared `css_nested_item_starts_rule` helper now disambiguates a top-level
+rule block while retaining custom-property component blocks, single-block
+values, function/bracket contexts and semicolon recovery. Both parsing
+contexts reuse it; no authored CSS or selector is rewritten. The known-property
+names `font:hover` and `color:is(.active)` are covered too.
+
+The complete114-case native parser suite passes, including two new cases with
+16 selector/context variants and a custom-block control. Twenty real PNG cases
+improve2/20 to20/20; independent Chromium agrees on all20. Identical saved
+DigitalOcean HTML/CSS with scripts removed now restores the lighthouse image,
+paragraph width and hero spacing. Original online references remain fixed;
+independent cookie/navigation/background differences are not claimed repaired.
+111 online CLI/capture/comparator checks and17 recorded layout suites pass:
+630 JS layouts,4979 static passes,295 recorded partials,zero regressions/skips.
+Full Input aggregate records5223passes,one skip and the same independent
+GraphParserTest.ParserLocBudget, TransitionTreeExternalParentTest.InadmissibleParentsAreDeclined,
+and ZipTest.NativeTarVariantsCaptureExactBytesAndNames failures (LI-001 /
+LI-002 / LI-012). Those sources/fixtures are unchanged; the complete aggregate
+is not called green. Live nested-rule mutation and CSSOM identity add74 UI
+assertions with the pinned host.
+
+Evidence: Lambda `temp/online-visual-round18/`: `parser-before.log`,
+`parser-after.log`, `png-before.log`, `png-after.log`, `browser-controls.json`,
+`digitalocean-{before,after}.png`, frozen HTML/CSS and `layout-results.json`.
+Host SHA256 `2119303b51366ffd876710921373c88ea244d4cfe84f159572136e6cd1fe37fc`
+uses Lambda0c5c0ba0d / Radiant eb39862 plus RI-062 / Input4d1ad20 plus this
+parser repair. An initial native custom-block test also exposed an unrelated
+single-block width retention discrepancy; its control uses a definite width
+to isolate nesting, and that discrepancy is not claimed fixed.
+
 
 <a id="li-025"></a>
 
