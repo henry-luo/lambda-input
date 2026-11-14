@@ -137,6 +137,9 @@ Item parse_inline_spans(MarkupParser* parser, const char* text) {
     // highlight mode: where this call's text lies in the root inline text
     InlineOriginScope origin(parser);
 
+    // link-label whitespace is content, not the end of the containing paragraph.
+    const bool trim_end_spaces = parser->state.link_depth == 0;
+
     // For simple text without markup, return as string
     // Check for any potential inline markup characters
     // Also include newline since we need to check for hard line breaks (2+ spaces before \n)
@@ -150,7 +153,7 @@ Item parse_inline_spans(MarkupParser* parser, const char* text) {
         log_debug("parse_inline_spans: no markup chars, returning as plain string");
         // Strip trailing spaces (hard line breaks at end of paragraph are ignored)
         size_t len = (size_t)(first_markup - text);
-        while (len > 0 && text[len - 1] == ' ') {
+        while (trim_end_spaces && len > 0 && text[len - 1] == ' ') {
             len--;
         }
         String* content = parser->builder.createString(text, len);
@@ -674,7 +677,7 @@ Item parse_inline_spans(MarkupParser* parser, const char* text) {
     // Flush any remaining text
     if (sb->length > 0) {
         // Strip trailing spaces at end of paragraph (they don't produce a hard break)
-        while (sb->length > 0 && sb->str->chars[sb->length - 1] == ' ') {
+        while (trim_end_spaces && sb->length > 0 && sb->str->chars[sb->length - 1] == ' ') {
             sb->length--;
         }
         sb->str->chars[sb->length] = '\0';  // null terminate

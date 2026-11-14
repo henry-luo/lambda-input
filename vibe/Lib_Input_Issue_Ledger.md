@@ -44,26 +44,6 @@ Evidence: `Lambda-opus/temp/edit-viewer/property-escape-probe.log`. Reference:
 [Java Properties.load documentation](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Properties.html#load(java.io.Reader)).
 
 
-<a id="li-050"></a>
-
-### LI-050 — Markdown parser drops trailing spaces inside link labels
-
-**Status:** OPEN. **Lambda task blocker:** yes for lossless rich editing of
-links whose selected label ends in whitespace. D9.3.4 governs document
-processing.
-
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/md-link-label-probe.ls`.
-Parsing `[ leading and trailing ](https://example.org)` yields an `<a>` whose
-text is ` leading and trailing`, missing the trailing space; formatting that
-model confirms the lost space. The Markdown source spells the trailing space
-inside the link and it is visible before adjacent text. The editor's rich
-link command can produce this valid source when a selection ends in a space;
-its preservation check must refuse the save while reparsing changes the model.
-The cause within the Input implementation is unconfirmed. Evidence:
-`Lambda-opus/temp/edit-viewer/md-link-label-probe.log` and
-`Lambda-opus/temp/edit-viewer/link-model-new.log`.
-
-
 <a id="li-049"></a>
 
 ### LI-049 — Org parser treats slash emphasis as plain text
@@ -835,6 +815,61 @@ D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
 
 ## Resolved issues
+
+<a id="li-050"></a>
+
+### LI-050 — Markdown parser drops trailing spaces inside link labels
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** cleared for link-label
+whitespace and `editor_markdown_link_roundtrip`. D9.3.4 governs document
+processing; D9.1.1v4 / D9.1.3v2 assign the parser repair to Input. The user
+explicitly authorized the owner-side repair after the initial boundary report.
+Implementation and complete verification:
+[Markdown link-label whitespace](<impl/Lib_Input_Impl_Markdown_Link_Whitespace (done).md>).
+
+The parser now applies paragraph-ending space removal only outside the existing
+link-label context, in both the plain and mixed-content paths. Nine label cases
+reproduce the defect before the fix; all 77 modular markup tests and 1,337
+CommonMark examples pass afterward. Lambda's 97 editor tests and full 7,509-test
+baseline pass. The Input aggregate retains its separately recorded LI-001,
+LI-002 and LI-012 failures (5,235 passed, three failed, one skipped).
+
+The following records the original reproduction and diagnosis before repair.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/md-link-label-probe.ls`.
+Parsing `[ leading and trailing ](https://example.org)` yields an `<a>` whose
+text is ` leading and trailing`, missing the trailing space; formatting that
+model confirms the lost space. The Markdown source spells the trailing space
+inside the link and it is visible before adjacent text. The editor's rich
+link command can produce this valid source when a selection ends in a space;
+its preservation check must refuse the save while reparsing changes the model.
+Earlier evidence: `Lambda-opus/temp/edit-viewer/md-link-label-probe.log` and
+`Lambda-opus/temp/edit-viewer/link-model-new.log`.
+
+**Confirmed pre-fix cause:** `lambda/input/markup/inline/inline_link.cpp:604` passes the
+label to `parse_inline_spans` with `parser->state.link_depth` incremented.
+That parser applies paragraph-ending space removal to nested link content:
+its plain-string path at `inline/inline_spans.cpp:151` trims the label, and
+the mixed-content flush at `inline/inline_spans.cpp:676` does the same.
+The missing distinction is paragraph-ending versus nested-inline whitespace;
+this belongs in the Input parser, with coverage for both paths.
+
+**Pre-fix reproduction:** Lambda `9bf2203cd2277dac94e5b1c9310bf84f43107eb3`,
+existing debug host, AUTO tier, 2026-11-14:
+`./test/test_lambda_gtest.exe --gtest_filter='AutoDiscovered/LambdaScriptTest.ExecuteAndCompare/editor_markdown_link_roundtrip'`
+returns `[false, false, true, true]` instead of `[true, true, true, true]`.
+Run `./lambda.exe temp/failed-dom-editor-tests/link-probe.ls` from Lambda to
+inspect the original and reparsed models: the selection is `short paragraph `,
+the exported link is `[short paragraph ](https://example.org)`, and reimport
+changes its label to `short paragraph`. The round-trip guard correctly rejects
+the changed paragraph. Evidence: Lambda
+[`link-repro.log`](../../lambda/temp/failed-dom-editor-tests/link-repro.log),
+[`link-probe.ls`](../../lambda/temp/failed-dom-editor-tests/link-probe.ls) and
+[`link-probe.log`](../../lambda/temp/failed-dom-editor-tests/link-probe.log).
+The initial Lambda task stopped at the ownership boundary. After explicit
+authorization, the Input repair cleared the blocker while retaining the golden
+and whitespace-preservation guard.
+
 
 <a id="li-028"></a>
 

@@ -345,6 +345,42 @@ TEST_F(InlineParserTest, LinksWithTitles) {
     EXPECT_TRUE(json_contains(json->chars, "\"$\": \"a\""));
 }
 
+TEST_F(InlineParserTest, LinkLabelsPreserveBoundaryWhitespace) {
+    const struct {
+        const char* source;
+        const char* expected_text;
+    } cases[] = {
+        {"[ leading and trailing ](https://example.org)\n", "\" leading and trailing \""},
+        {"[short paragraph ](https://example.org \"Title\")next\n", "\"short paragraph \""},
+        {"[**bold** tail  ](https://example.org)\n", "\" tail  \""},
+        {"[ ](https://example.org)\n", "\" \""},
+        {"[ label ][ref]\n\n[ref]: https://example.org\n", "\" label \""},
+        {"[**bold** tail ][ref]\n\n[ref]: https://example.org\n", "\" tail \""},
+        {"[label ][]\n\n[label]: https://example.org\n", "\"label \""},
+        {"[label ]\n\n[label]: https://example.org\n", "\"label \""},
+        {"[雪 ](https://example.org)\n", "\"雪 \""}
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.source);
+        String* json = parse_to_json(c.source, "test.md");
+        ASSERT_NE(json, nullptr);
+        EXPECT_TRUE(json_contains(json->chars, "\"$\": \"a\"")) << json->chars;
+        EXPECT_TRUE(json_contains(json->chars, c.expected_text)) << json->chars;
+    }
+}
+
+TEST_F(InlineParserTest, ParagraphEndSpacesRemainIgnoredOutsideLinks) {
+    String* json = parse_to_json(
+        "plain  \n\n**bold** tail  \n\n[link ](https://example.org) after  \n", "test.md");
+    ASSERT_NE(json, nullptr);
+    EXPECT_TRUE(json_contains(json->chars, "\"plain\"")) << json->chars;
+    EXPECT_TRUE(json_contains(json->chars, "\" tail\"")) << json->chars;
+    EXPECT_TRUE(json_contains(json->chars, "\" after\"")) << json->chars;
+    EXPECT_FALSE(json_contains(json->chars, "\"plain  \""));
+    EXPECT_FALSE(json_contains(json->chars, "\" tail  \""));
+    EXPECT_FALSE(json_contains(json->chars, "\" after  \""));
+}
+
 // Test autolinks
 TEST_F(InlineParserTest, Autolinks) {
     const char* content = "Visit <https://example.com> for more.\n";
