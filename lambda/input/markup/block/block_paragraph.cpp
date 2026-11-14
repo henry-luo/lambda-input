@@ -459,6 +459,10 @@ Item parse_paragraph(MarkupParser* parser, const char* line) {
                 sb->str->chars[len + 1] = '\0';
             }
 
+            // the literal parser reuses the shared buffer for its own content.
+            String* introduction = omit_para ? nullptr : parser->builder.createString(sb->str->chars, sb->length);
+            if (!omit_para && !introduction) return Item{.item = ITEM_ERROR};
+
             // Parse literal block
             Item literal = parse_rst_literal_block(parser);
 
@@ -475,8 +479,7 @@ Item parse_paragraph(MarkupParser* parser, const char* line) {
             // Need to create a container or return para and queue literal
             // For now, create paragraph normally, then if literal exists,
             // we need to return both. The cleanest way is to wrap in a div.
-            String* text_content = parser->builder.createString(sb->str->chars, sb->length);
-            Item content = parse_inline_spans(parser, text_content->chars);
+            Item content = parse_inline_spans(parser, introduction->chars);
 
             if (content.item != ITEM_ERROR && content.item != ITEM_UNDEFINED) {
                 list_push((List*)para, content);

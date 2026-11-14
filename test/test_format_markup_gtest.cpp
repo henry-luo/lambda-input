@@ -397,6 +397,89 @@ protected:
     }
 };
 
+TEST_F(FormatMarkupParityTest, TextilePlainSpanDoesNotAddVisibleDelimiters) {
+    const char* out = format_parsed("Hello _world_.\n", "textile");
+    ASSERT_NE(out, nullptr);
+    EXPECT_NE(strstr(out, "Hello _world_."), nullptr) << out;
+    String* textile = make_str("textile");
+    Input* input = input_from_source(const_cast<char*>(out), nullptr, textile, nullptr);
+    ASSERT_NE(input, nullptr);
+    String* json = make_str("json");
+    String* reparsed = format_data(input->root, json, nullptr, input->pool);
+    ASSERT_NE(reparsed, nullptr);
+    EXPECT_EQ(strstr(reparsed->chars, "%"), nullptr) << reparsed->chars;
+    EXPECT_NE(strstr(reparsed->chars, "world"), nullptr) << reparsed->chars;
+}
+
+TEST_F(FormatMarkupParityTest, OrgListAndFollowingParagraphAreSeparated) {
+    const char* out = format_parsed("- one\n- two\n\nA paragraph.\n", "org");
+    ASSERT_NE(out, nullptr);
+    EXPECT_NE(strstr(out, "- two\n\nA paragraph."), nullptr) << out;
+    String* type = make_str("org");
+    Input* reparsed = input_from_source(const_cast<char*>(out), nullptr, type, nullptr);
+    ASSERT_NE(reparsed, nullptr);
+    ElementReader body = ElementReader(reparsed->root).findChildElement("body");
+    ASSERT_EQ(body.childCount(), 2);
+    EXPECT_TRUE(body.childAt(0).asElement().hasTag("ul"));
+    EXPECT_TRUE(body.childAt(1).asElement().hasTag("p"));
+}
+
+TEST_F(FormatMarkupParityTest, OrgTableAndCodeBlockKeepMarkdownStructure) {
+    const char* table = format_parsed("| A | B |\n|---|---|\n| one | two |\n", "org");
+    ASSERT_NE(table, nullptr);
+    EXPECT_NE(strstr(table, "| A | B |"), nullptr) << table;
+    EXPECT_NE(strstr(table, "| one | two |"), nullptr) << table;
+    const char* code = format_parsed("```\nhello\n```\n", "org");
+    ASSERT_NE(code, nullptr);
+    EXPECT_NE(strstr(code, "#+BEGIN_SRC\nhello\n#+END_SRC"), nullptr) << code;
+    String* type = make_str("org");
+    Input* table_input = input_from_source(const_cast<char*>(table), nullptr, type, nullptr);
+    Input* code_input = input_from_source(const_cast<char*>(code), nullptr, type, nullptr);
+    ASSERT_NE(table_input, nullptr);
+    ASSERT_NE(code_input, nullptr);
+    ElementReader table_body = ElementReader(table_input->root).findChildElement("body");
+    ElementReader code_body = ElementReader(code_input->root).findChildElement("body");
+    EXPECT_TRUE(table_body.findChildElement("table").isValid());
+    ElementReader code_node = code_body.findChildElement("code");
+    ASSERT_TRUE(code_node.isValid());
+    EXPECT_STREQ(code_node.get_attr("type").cstring(), "block");
+    EXPECT_STREQ(code_node.childAt(0).cstring(), "hello\n");
+}
+
+TEST_F(FormatMarkupParityTest, RstCodeBlockKeepsRawMultilineContent) {
+    const char* out = format_parsed("```\nfirst\nsecond\n```\n", "rst");
+    ASSERT_NE(out, nullptr);
+    EXPECT_NE(strstr(out, "   first\n   second"), nullptr) << out;
+    EXPECT_EQ(strstr(out, "``"), nullptr) << out;
+    String* type = make_str("rst");
+    Input* reparsed = input_from_source(const_cast<char*>(out), nullptr, type, nullptr);
+    ASSERT_NE(reparsed, nullptr);
+    ElementReader body = ElementReader(reparsed->root).findChildElement("body");
+    ElementReader pre = body.findChildElement("pre");
+    ASSERT_TRUE(pre.isValid());
+    ElementReader code = pre.findChildElement("code");
+    ASSERT_TRUE(code.isValid());
+    EXPECT_NE(strstr(code.childAt(0).cstring(), "first\nsecond"), nullptr);
+}
+
+TEST_F(FormatMarkupParityTest, RstLiteralBlockRoundTripKeepsIntroductionAndCode) {
+    String* type = make_str("rst");
+    char source[] = "Example::\n\n  code\n";
+    Input* parsed = input_from_source(source, nullptr, type, nullptr);
+    ASSERT_NE(parsed, nullptr);
+    String* out = format_data(parsed->root, type, nullptr, parsed->pool);
+    ASSERT_NE(out, nullptr);
+    EXPECT_NE(strstr(out->chars, "Example:"), nullptr) << out->chars;
+    Input* reparsed = input_from_source(out->chars, nullptr, type, nullptr);
+    ASSERT_NE(reparsed, nullptr);
+    String* json = make_str("json");
+    String* result = format_data(reparsed->root, json, nullptr, reparsed->pool);
+    ASSERT_NE(result, nullptr);
+    EXPECT_NE(strstr(result->chars, "Example:"), nullptr) << result->chars;
+    EXPECT_NE(strstr(result->chars, "\"$\": \"pre\""), nullptr) << result->chars;
+    EXPECT_NE(strstr(result->chars, "code"), nullptr) << result->chars;
+}
+
 // Parity test: simple heading + paragraph to markdown
 TEST_F(FormatMarkupParityTest, MarkdownSimple) {
     const char* out = format_parsed("# Hello\n\nWorld\n", "markdown");

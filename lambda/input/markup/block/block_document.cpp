@@ -45,6 +45,8 @@ extern bool try_parse_link_definition(MarkupParser* parser, const char* line);
 typedef TypedHashMap<FootnoteDefinition,
     HashMapCStrMemberKeyOps<FootnoteDefinition, &FootnoteDefinition::label>> FootnoteMap;
 
+static void record_source_position(MarkupParser* parser, Item block, int start, int end);
+
 static const char* footnote_label(const char* line, const char** end) {
     const char* p = line;
     unsigned indent = 0;
@@ -68,6 +70,7 @@ bool MarkupParser::parseFootnoteDefinition(const char* line) {
     const char* label_end;
     const char* label = footnote_label(line, &label_end);
     if (!label) return false;
+    int source_start = current_line;
     char* normalized = normalizeLabel(label, (size_t)(label_end - label));
     if (!normalized) return false;
     if (!footnote_defs_) footnote_defs_ = FootnoteMap::create(16);
@@ -81,8 +84,8 @@ bool MarkupParser::parseFootnoteDefinition(const char* line) {
     };
     FootnoteDefinition probe = {normalized, nullptr, 0};
     bool duplicate = FootnoteMap::get(footnote_defs_, probe) != nullptr;
-    if (!duplicate) {
-        FootnoteMap::set(footnote_defs_, definition);
+    if (!duplicate) FootnoteMap::set(footnote_defs_, definition);
+    if (!duplicate || input()->source_positions) {
         list_push((List*)footnotes_, Item{.element = note});
     }
     mem_free(normalized);
@@ -108,6 +111,8 @@ bool MarkupParser::parseFootnoteDefinition(const char* line) {
         }
         current_line++;
     }
+    if (input()->source_positions)
+        record_source_position(this, Item{.element = note}, source_start, current_line);
     // Reuse the same parser so notes inherit document-level link definitions.
     MarkupLinesScope line_scope(this, (char**)content->data, (int)content->length);
     int list_depth = state.list_depth;
@@ -198,7 +203,13 @@ void MarkupParser::resolveFootnotes(Element* body) {
             resolve_footnote_references(this, &ordered->items[resolved++], ordered);
         } else {
             Element* note = footnotes_->items[unused++].element;
-            order_footnote(this, find_footnote(this, note->get_attr("label").string()), ordered);
+            FootnoteDefinition* definition = find_footnote(this, note->get_attr("label").string());
+            if (definition && definition->node != note) {
+                // preserve duplicate authored definitions for source-backed editing.
+                list_push((List*)ordered, Item{.element = note});
+            } else {
+                order_footnote(this, definition, ordered);
+            }
         }
     }
     if (ordered->length) list_push((List*)body, Item{.element = ordered});

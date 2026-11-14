@@ -1,7 +1,6 @@
 #include "input-graph.h"
 #include "lib/arraylist.h"
 #include "lib/file.h"
-#include "lib/file_utils.h"
 #include "lib/memtrack.h"
 #include "lib/path_str.h"
 #include "../io/security_io.h"
@@ -52,14 +51,8 @@ struct StructurizrIncludeResolver {
     }
 
     static const char* include_target(Element* directive) {
-        ElementReader reader(directive);
-        for (int64_t i = 0; i < reader.childCount(); i++) {
-            ItemReader child = reader.childAt(i);
-            if (!child.isElement()) continue;
-            ElementReader argument = child.asElement();
-            if (argument.hasTag("argument")) return argument.get_attr_string("value");
-        }
-        return nullptr;
+        ElementReader argument = ElementReader(directive).findChildElement("argument");
+        return argument.isValid() ? argument.get_attr_string("value") : nullptr;
     }
 
     static const char* child_context(Element* value) {
@@ -94,17 +87,6 @@ struct StructurizrIncludeResolver {
         Element* diagnostics = builder.element("diagnostics").final().element;
         add_node_to_graph(input, diagnostics, value.final().element);
         add_node_to_graph(input, root, diagnostics);
-    }
-
-    static bool is_absolute(const char* path) {
-        if (!path || !*path) return false;
-#ifdef _WIN32
-        return (path[0] == '/' || path[0] == '\\' ||
-            (path[1] == ':' && ((path[0] >= 'A' && path[0] <= 'Z') ||
-                                (path[0] >= 'a' && path[0] <= 'z'))));
-#else
-        return path[0] == '/';
-#endif
     }
 
     bool within_root(const char* path) const {
@@ -204,47 +186,28 @@ struct StructurizrIncludeResolver {
 
     void resolve_directory(Element* directive, const char* context, const char* path,
                            size_t depth) {
-        if (io) {
-            SecurityDirectory listing = {};
-            if (!security_io_enumerate(io, path, SECURITY_IO_DIRECTORY_LIMIT, &listing, nullptr)) {
-                diagnostic("structurizr.include-missing",
-                    "Structurizr local include directory is unavailable", directive, path);
-                return;
-            }
-            for (uint32_t i = 0; i < listing.count; i++) {
-                SecurityDirectoryEntry* entry = &listing.entries[i];
-                if (!entry->is_directory && (file_path_has_ext_ci(entry->name, "dsl") ||
-                        file_path_has_ext_ci(entry->name, "structurizr"))) {
-                    char* joined = file_path_join(path, entry->name);
-                    if (joined) resolve_file(directive, context, joined, depth);
-                    mem_free(joined);
-                }
-            }
-            security_io_directory_free(&listing);
-            return;
-        }
-        ArrayList* entries = dir_list(path);
-        if (!entries) {
+        SecurityDirectory listing = {};
+        if (!security_io_enumerate(io, path,
+                io ? SECURITY_IO_DIRECTORY_LIMIT : UINT32_MAX, &listing, nullptr)) {
             diagnostic("structurizr.include-missing",
                 "Structurizr local include directory is unavailable", directive, path);
             return;
         }
-        for (int i = 0; i < entries->length; i++) {
-            DirEntry* entry = (DirEntry*)arraylist_get(entries, i);
-            if (!entry->is_dir && !entry->is_symlink &&
+        for (uint32_t i = 0; i < listing.count; i++) {
+            SecurityDirectoryEntry* entry = &listing.entries[i];
+            if (!entry->is_directory && (io || !entry->metadata.is_symlink) &&
                 (file_path_has_ext_ci(entry->name, "dsl") ||
                  file_path_has_ext_ci(entry->name, "structurizr"))) {
                 char* joined = file_path_join(path, entry->name);
-                char* canonical = joined ? file_realpath(joined) : nullptr;
+                char* canonical = io ? joined : joined ? file_realpath(joined) : nullptr;
                 if (canonical) resolve_file(directive, context, canonical, depth);
-                else diagnostic("structurizr.include-missing",
+                else if (!io) diagnostic("structurizr.include-missing",
                     "Structurizr local include file is unavailable", directive, joined);
-                if (canonical) mem_free(canonical);
-                if (joined) mem_free(joined);
+                if (canonical != joined) mem_free(canonical);
+                mem_free(joined);
             }
-            dir_entry_free(entry);
         }
-        arraylist_free(entries);
+        security_io_directory_free(&listing);
     }
 
     void resolve_directive(Element* directive, const char* context,
@@ -260,7 +223,13 @@ struct StructurizrIncludeResolver {
                 "Structurizr network includes are disabled", directive, target);
             return;
         }
-        char* joined = is_absolute(target)
+#ifdef _WIN32
+        bool absolute = path_str_win32_is_absolute(target) ||
+            (path_str_is_drive_letter(target[0]) && target[1] == ':');
+#else
+        bool absolute = path_str_posix_is_absolute(target);
+#endif
+        char* joined = absolute
             ? mem_strdup(target, MEM_CAT_TEMP) : file_path_join(containing_dir, target);
         char* canonical = resolve_path(io, joined);
         if (!canonical) {
@@ -282,9 +251,7 @@ struct StructurizrIncludeResolver {
         if (joined) mem_free(joined);
     }
 
-    void resolve(const char* root_path) {
-        char* canonical_root = resolve_path(io, root_path);
-        if (!canonical_root) return;
+    void resolve(char* canonical_root) {
         arraylist_append(stack, canonical_root);
         resolve_children(root, "workspace", root_dir, 0);
         mem_free(arraylist_pop(stack));
@@ -299,8 +266,7 @@ void resolve_graph_structurizr_local_includes(Input* input, const char* root_pat
     char* canonical_root = StructurizrIncludeResolver::resolve_path(io, root_path);
     if (!canonical_root) return;
     char* root_dir = file_path_dirname(canonical_root);
-    mem_free(canonical_root);
-    if (!root_dir) return;
+    if (!root_dir) { mem_free(canonical_root); return; }
     StructurizrIncludeResolver resolver(input, input->root.element, root_dir, io);
-    resolver.resolve(root_path);
+    resolver.resolve(canonical_root);
 }

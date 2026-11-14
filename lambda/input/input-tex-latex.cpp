@@ -69,7 +69,7 @@ static const LatexPrim LATEX_PRIMS[] = {
     {"(", P_MATH_SWITCH, 0}, {")", P_MATH_SWITCH, 1}, {"[", P_MATH_SWITCH, 2}, {"]", P_MATH_SWITCH, 3},
     {"lambda@Roman", P_ROMAN_UPPER, 0},
     {"\x02packageend", P_PACKAGE_END, 0}, {"\x02packagepop", P_PACKAGE_POP, 0},
-    {"\x02envend", P_ENV_END_GROUP, 0},
+    {"\x02" "envend", P_ENV_END_GROUP, 0},
     {"\x02documentend", P_DOCUMENT_END, 0},
     {"NewDocumentCommand", P_NEWDOCUMENTCOMMAND, 0}, {"RenewDocumentCommand", P_NEWDOCUMENTCOMMAND, 1},
     {"ProvideDocumentCommand", P_NEWDOCUMENTCOMMAND, 2}, {"DeclareDocumentCommand", P_NEWDOCUMENTCOMMAND, 3},
@@ -789,7 +789,7 @@ bool latex_arg_mode_env(Engine* e, const Token& t, bool begin) {
             strbuf_append_str(end_name, name);
             uint32_t cs_end = intern(e, end_name->str, (uint32_t)end_name->length);
             strbuf_free(end_name);
-            Token seq[2] = {make_cs(cs_end), make_cs(intern_cstr(e, "\x02envend"))};
+            Token seq[2] = {make_cs(cs_end), make_cs(intern_cstr(e, "\x02" "envend"))};
             back_list_copy(e, seq, 2);
         }
         return true;
@@ -849,7 +849,7 @@ static void do_end_env(Engine* e, const Token& t) {
     strbuf_append_str(end_name, name);
     uint32_t cs_end = intern(e, end_name->str, (uint32_t)end_name->length);
     strbuf_free(end_name);
-    Token seq[2] = {make_cs(cs_end), make_cs(intern_cstr(e, "\x02envend"))};
+    Token seq[2] = {make_cs(cs_end), make_cs(intern_cstr(e, "\x02" "envend"))};
     back_list_copy(e, seq, 2);
 }
 
@@ -1010,12 +1010,14 @@ static bool package_counter(Engine* e, uint32_t cs) {
 static int32_t eval_counter_value(Engine* e, TokSpan value) {
     lam::ArrayList<Token> list(MEM_CAT_INPUT_OTHER, value.count + 1);
     for (uint32_t i = 0; i < value.count; i++) list.append(value.data[i]);
-    list.append(make_cs(e->cs_frozen_relax));
+    Token boundary = make_cs(e->cs_frozen_relax);
+    boundary.flags |= TF_SCAN_BOUNDARY;
+    list.append(boundary);
     back_list_copy(e, list);
     int32_t v = scan_int(e);
     Token x;
     if (get_x_token(e, &x)) {
-        if (!(x.kind == TK_CS && x.value == e->cs_frozen_relax)) {
+        if (!(x.kind == TK_CS && x.value == e->cs_frozen_relax && (x.flags & TF_SCAN_BOUNDARY))) {
             back_input(e, x);
             diag(e, "latex-counter-value", "counter value has trailing material");
         }

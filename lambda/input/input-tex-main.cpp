@@ -73,8 +73,12 @@ static void emit_rule(Engine* e, const Token& t, bool vrule) {
 static void unskip(Engine* e) {
     if (e->out.empty()) return;
     const OutItem& last = e->out.back();
-    if (last.kind == OUT_TOKEN && last.tok.kind == TK_CHAR && last.tok.cat == CAT_SPACE)
+    if (last.kind == OUT_TOKEN && last.tok.kind == TK_CHAR && last.tok.cat == CAT_SPACE) {
         e->out.remove(e->out.size() - 1);
+        // a removal can cross the start of several still-open output slices.
+        for (size_t i = 0; i < e->groups.size(); i++)
+            if (e->groups[i].out_start > e->out.size()) e->groups[i].out_start = (uint32_t)e->out.size();
+    }
 }
 
 static const char* accent_command(int32_t code) {
@@ -479,7 +483,8 @@ static void arg_mode(Engine* e, bool bracket) {
             if (latex_arg_mode_env(e, t, m.value == P_BEGIN)) continue;
             continue;
         }
-        if (m.type == MT_PRIM && (m.value == P_VERB || m.value == P_RAW_GROUP_CMD)) {
+        if (m.type == MT_PRIM && (m.value == P_VERB || m.value == P_RAW_GROUP_CMD ||
+                                  m.value == P_ENV_END_GROUP)) {
             latex_do(e, t, m.value);
             continue;
         }

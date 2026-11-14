@@ -9,6 +9,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -179,7 +180,7 @@ struct Pool {
     PoolCleanup* cleanups;   // newest first
 };
 
-static unsigned next_pool_id = 1;
+static atomic_uint next_pool_id = 1;
 static void (*g_pool_node_release)(void*) = NULL;
 
 void pool_set_node_release_hook(void (*fn)(void*)) {
@@ -409,7 +410,8 @@ static void pool_free_struct(Pool* pool) {
 }
 
 static void pool_init(Pool* pool, size_t initial_size) {
-    pool->pool_id = next_pool_id++;
+    // pool creation is independent across threads; only the diagnostic sequence is shared.
+    pool->pool_id = atomic_fetch_add_explicit(&next_pool_id, 1, memory_order_relaxed);
     pool->valid = POOL_VALID_MARKER;
     pool->category = MEM_CAT_SYSTEM;
     pool->next_extent_size = initial_size;

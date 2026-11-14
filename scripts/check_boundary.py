@@ -7,11 +7,14 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parent.parent
+profile = sys.argv[1] if len(sys.argv) > 1 else 'debug'
+if profile not in ('debug', 'release'):
+    raise SystemExit(f'unsupported build profile: {profile}')
 errors = []
 for target, group in (('lambda-lib', 'lib'), ('lambda-data', 'data')):
     sources = subprocess.check_output([sys.executable, str(root / 'scripts/build_sources.py'), target], text=True).split()
     for source in sources:
-        depfile = root / 'build/obj' / group / (source + '.o.d')
+        depfile = root / 'build/obj' / group / profile / (source + '.o.d')
         if not depfile.is_file():
             errors.append(f'missing dependency file for {source}')
             continue

@@ -737,6 +737,13 @@ void parse_toml(Input* input, const char* toml_string) {
             continue;
         }
 
+        skip_tab_pace(&toml);
+        if (*toml && *toml != '\r' && *toml != '\n' && *toml != '#') {
+            ctx.addError("Unexpected content after TOML value");
+            skip_line(&toml, &line_num);
+            continue;
+        }
+
         ctx.builder.putToMap(lam::gc_borrow(owner), key, value);
 
         skip_line(&toml, &line_num);

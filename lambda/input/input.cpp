@@ -2136,7 +2136,7 @@ static void parse_typst_input(Input* input, const char* source) {
 }
 
 static void parse_textile_input(Input* input, const char* source) {
-    input->root = input_markup_modular(input, source);
+    input->root = input_markup_with_format(input, source, MARKUP_TEXTILE);
 }
 
 #ifndef LAMBDA_NO_LATEX

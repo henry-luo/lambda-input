@@ -775,6 +775,14 @@ Item MarkEditor::container_rebuild_with_new_shape(Map* old_container,
         builder->field_count, (int)is_element);
 
     TypeMap* old_type = (TypeMap*)old_container->type;
+    bool source_shares_type = false, source_shares_data = false;
+    if (is_element && ui_document_) {
+        DomElement* node = element_to_dom_element((Element*)old_container);
+        if (dom_node_registry_owns(ui_document_, node)) {
+            dom_node_registry_shared_source_storage(ui_document_, node,
+                &source_shares_type, &source_shares_data);
+        }
+    }
     int count = (int)builder->field_count;
     TypeTreeStep* steps = rebuild_steps(builder_, old_type, builder);
     if (count > 0 && !steps) {
@@ -841,7 +849,8 @@ Item MarkEditor::container_rebuild_with_new_shape(Map* old_container,
     if (tree_type) {
         result->type = tree_type;
     } else if (is_inline && old_type->is_private_clone &&
-            !typemap_is_shared_shape(old_type) && old_type != &EmptyMap) {
+            !typemap_is_shared_shape(old_type) && old_type != &EmptyMap &&
+            !source_shares_type) {
         // In place, and only here: this container owns its type. Every other
         // type may be read by another container -- a transition-tree node, a
         // literal's compile-time type, a pooled chain -- and rewriting one
@@ -883,7 +892,8 @@ Item MarkEditor::container_rebuild_with_new_shape(Map* old_container,
     // JIT result's buffer belongs to its result arena (ui_mode) or the GC heap,
     // which reclaim it themselves. Keying this on ui_mode_ trusted every path
     // to set that flag right, where a wrong one freed a foreign buffer (LR11-3).
-    if (is_inline && pool_owns(pool_, old_container->data)) {
+    // a wrapper can share its source's pool data even when its header is distinct.
+    if (is_inline && !source_shares_data && pool_owns(pool_, old_container->data)) {
         pool_free(pool_, old_container->data);
     }
     result->data = new_data;
@@ -1329,7 +1339,7 @@ bool MarkEditor::prepare_child_edit(Item element, int64_t index, int64_t delete_
     return true;
 }
 
-Item MarkEditor::publish_child_edit(Element* old_elmt, const Array* edited) {
+Item MarkEditor::publish_child_edit(Element* old_elmt, const Array* edited, bool relink) {
     Element* target = old_elmt;
     if (mode_ == EDIT_MODE_IMMUTABLE) {
         target = (Element*)arena_alloc(arena_, sizeof(Element));
@@ -1349,7 +1359,7 @@ Item MarkEditor::publish_child_edit(Element* old_elmt, const Array* edited) {
     target->length = edited->length;
     target->capacity = edited->capacity;
     target->extra = edited->extra;
-    if (mode_ == EDIT_MODE_INLINE && ui_mode_) dom_relink_children(target);
+    if (mode_ == EDIT_MODE_INLINE && ui_mode_ && relink) dom_relink_children(target);
     return {.element = target};
 }
 
@@ -1423,6 +1433,13 @@ Item MarkEditor::dom_replace_child(Item element, int index, Item child) {
     return dom_edit_child(element, index, 1, &child);
 }
 
+Item MarkEditor::dom_replace_backing_child(Item element, int index, Item child) {
+    if (mode_ != EDIT_MODE_INLINE) return ItemError;
+    Array edited = {};
+    if (!prepare_child_edit(element, index, 1, 1, &child, &edited)) return ItemError;
+    return publish_child_edit(element.element, &edited, false);
+}
+
 Item MarkEditor::elmt_rename(Item element, const char* new_tag_name) {
     if (!element.element || element.element->type_id != LMD_TYPE_ELEMENT) {
         log_error("elmt_rename: not an element");
@@ -1494,10 +1511,19 @@ Item MarkEditor::array_set(Item array, int64_t index, Item value) {
 }
 
 Item MarkEditor::array_insert(Item array, int64_t index, Item value) {
+    return array_insert_internal(array, index, value, false);
+}
+
+Item MarkEditor::dom_array_insert(Item array, int64_t index, Item value) {
+    return array_insert_internal(array, index, value, true);
+}
+
+Item MarkEditor::array_insert_internal(Item array, int64_t index, Item value, bool preserve_ui_nodes) {
     TypeId array_type = get_type_id(array);
 
     if (array_type == LMD_TYPE_ELEMENT) {
-        return elmt_edit_children(array, index, 0, 1, &value);
+        return preserve_ui_nodes ? dom_insert_child(array, index, value)
+            : elmt_edit_children(array, index, 0, 1, &value);
     }
     if (array_type == LMD_TYPE_ARRAY) {
         Array* arr = array.array;
@@ -1509,7 +1535,8 @@ Item MarkEditor::array_insert(Item array, int64_t index, Item value) {
         }
 
         // Ensure value is in target arena (deep copy if external)
-        if (!builder_->is_in_arena(value)) {
+        if (preserve_ui_nodes) value = import_child(value, true);
+        else if (!builder_->is_in_arena(value)) {
             log_debug("array_insert: value not in arena, deep copying");
             value = builder_->deep_copy(value);
         }

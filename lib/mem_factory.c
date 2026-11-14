@@ -1,4 +1,9 @@
 #include "mem_factory.h"
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 
 // Release hook installed into mempool.c / arena.c so that ANY pool_destroy /
 // arena_destroy path (factory or raw) safely unregisters a tracked node — no
@@ -9,15 +14,35 @@ static void release_node(void* node) {
     mem_unregister_subtree((MemNode*)node);
 }
 
-static void ensure_release_hooks(void) {
-    static bool installed = false;
-    if (!installed) {
-        pool_set_node_release_hook(release_node);
-        arena_set_node_release_hook(release_node);
-        scratch_set_node_release_hook(release_node);
-        installed = true;
-    }
+static void install_release_hooks(void) {
+    pool_set_node_release_hook(release_node);
+    arena_set_node_release_hook(release_node);
+    scratch_set_node_release_hook(release_node);
 }
+
+// publish all hooks before another factory thread can register an allocator.
+#ifdef _WIN32
+static INIT_ONCE release_hooks_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK install_release_hooks_once(PINIT_ONCE once, PVOID parameter,
+                                                 PVOID* context) {
+    (void)once;
+    (void)parameter;
+    (void)context;
+    install_release_hooks();
+    return TRUE;
+}
+
+static void ensure_release_hooks(void) {
+    InitOnceExecuteOnce(&release_hooks_once, install_release_hooks_once, NULL, NULL);
+}
+#else
+static pthread_once_t release_hooks_once = PTHREAD_ONCE_INIT;
+
+static void ensure_release_hooks(void) {
+    (void)pthread_once(&release_hooks_once, install_release_hooks);
+}
+#endif
 
 // ============================================================================
 // Pool factory

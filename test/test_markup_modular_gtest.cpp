@@ -22,6 +22,8 @@
 #include <string>
 #include <chrono>
 #include "lambda/lambda.h"
+#include "lambda/input/input.hpp"
+#include "lambda/core/mark_reader.hpp"
 #include "lambda/core/data.hpp"
 #include "lib/log.h"
 #include "lib/strbuf.h"
@@ -30,7 +32,7 @@
 
 // Forward declarations
 extern "C" {
-    Input* input_from_source(char* source, Url* abs_url, String* type, String* flavor);
+    Input* input_from_source(const char* source, Url* abs_url, String* type, String* flavor);
     String* format_data(Item item, String* type, String* flavor, Pool* pool);
     void format_item(StrBuf* buf, Item item, int indent, char* format);
     Url* get_current_dir(void);
@@ -677,6 +679,51 @@ TEST_F(FormatAdapterTest, OrgModeDetection) {
     ASSERT_NE(json, nullptr);
 
     EXPECT_GT(json->len, 0);
+}
+
+TEST_F(FormatAdapterTest, OrgEmphasisRecognizesFormatSpecificMarkers) {
+    String* json = parse_to_json("Hello /world/.\n\n=code= and +gone+\n", "test.org");
+    ASSERT_NE(json, nullptr);
+    EXPECT_TRUE(json_contains(json->chars, "\"$\": \"em\"")) << json->chars;
+    EXPECT_TRUE(json_contains(json->chars, "\"$\": \"code\"")) << json->chars;
+    EXPECT_TRUE(json_contains(json->chars, "\"$\": \"del\"")) << json->chars;
+}
+
+TEST_F(FormatAdapterTest, OrgTableSeparatorIsNotADataRow) {
+    String* json = parse_to_json("| A | B |\n|---+---|\n| one | two |\n", "test.org");
+    ASSERT_NE(json, nullptr);
+    EXPECT_TRUE(json_contains(json->chars, "\"$\": \"th\"")) << json->chars;
+    EXPECT_TRUE(json_contains(json->chars, "one")) << json->chars;
+    EXPECT_FALSE(json_contains(json->chars, "---+---")) << json->chars;
+}
+
+TEST_F(FormatAdapterTest, FootnoteSourcePositionsIncludeDuplicatesAndContinuations) {
+    const char* source = "[^used]: first\n    second\n\n[^unused]: unused\n[^used]: duplicate\n";
+    String* type = create_lambda_string("markdown");
+    Input* parsed = input_from_source_with_positions(source, nullptr, type, nullptr);
+    ASSERT_NE(parsed, nullptr);
+    ElementReader body = ElementReader(parsed->root).findChildElement("body");
+    ElementReader notes = body.findChildElement("footnotes");
+    ASSERT_TRUE(notes.isValid());
+    ASSERT_EQ(notes.childCount(), 3);
+    EXPECT_STREQ(notes.childAt(0).asElement().get_attr("sourcepos").cstring(), "1:1-2:10");
+    EXPECT_STREQ(notes.childAt(1).asElement().get_attr("sourcepos").cstring(), "4:1-4:17");
+    EXPECT_STREQ(notes.childAt(2).asElement().get_attr("sourcepos").cstring(), "5:1-5:18");
+}
+
+TEST_F(FormatAdapterTest, RstLiteralBlockKeepsItsIntroduction) {
+    String* json = parse_to_json("Example::\n\n  code\n", "test.rst");
+    ASSERT_NE(json, nullptr);
+    EXPECT_TRUE(json_contains(json->chars, "Example:")) << json->chars;
+    EXPECT_TRUE(json_contains(json->chars, "\"$\": \"pre\"")) << json->chars;
+    EXPECT_TRUE(json_contains(json->chars, "code")) << json->chars;
+}
+
+TEST_F(FormatAdapterTest, ManZeroWidthEscapeDoesNotProduceText) {
+    String* json = parse_to_json(".SH NAME\n\\&test\n", "test.man");
+    ASSERT_NE(json, nullptr);
+    EXPECT_TRUE(json_contains(json->chars, "\"test\"")) << json->chars;
+    EXPECT_FALSE(json_contains(json->chars, "&test")) << json->chars;
 }
 
 TEST_F(FormatAdapterTest, OrgTitleRendersAsHeading) {

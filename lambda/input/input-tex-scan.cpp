@@ -1025,7 +1025,9 @@ found:
         o = EX_NONE;
         if (stack.empty()) {
             Meaning m = token_meaning(e, t);
-            if (!(t.kind == TK_CS && m.type == MT_PRIM && m.value == P_RELAX)) back_input(e, t);
+            // an implicit expression terminator must remain available to its bounded caller.
+            if ((t.flags & TF_SCAN_BOUNDARY) ||
+                !(t.kind == TK_CS && m.type == MT_PRIM && m.value == P_RELAX)) back_input(e, t);
         } else if (!is_other(t, ')')) {
             diag(e, "tex-missing-paren", "Missing ) inserted for expression");
             back_input(e, t);

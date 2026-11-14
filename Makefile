@@ -135,8 +135,8 @@ check-curl: curl-deps
 	@test -f "$(CURL_PREFIX)/include/curl/curl.h" && test -f "$(CURL_PREFIX)/lib/libcurl.a" && test -x "$(CURL_PREFIX)/bin/curl-config" || { echo "input build: run make curl-deps or set CURL_PREFIX to a static mbedTLS curl"; exit 1; }
 	@test "$$("$(CURL_PREFIX)/bin/curl-config" --ssl-backends)" = mbedTLS || { echo "input build: curl must use only mbedTLS"; exit 1; }
 
-check-boundary: all
-	$(PYTHON) scripts/check_boundary.py
+check-boundary: build-all-internal
+	$(PYTHON) scripts/check_boundary.py $(PROFILE)
 
 # Link all input providers so unused objects cannot conceal missing dependencies.
 NATIVE_TEST_PACKAGES = gtest_main libutf8proc thorvg libuv libbrotlidec libmpdec libopenjp2 liblzma libzstd mbedtls mbedx509 mbedcrypto
@@ -154,7 +154,7 @@ check-native-test-deps: check-curl
 define LINK_NATIVE_TEST
 $(CXX) $(PLATFORM_FLAGS) $(INPUT_CPPFLAGS) $(shell PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" $(PKG_CONFIG) --cflags $(NATIVE_TEST_PACKAGES)) -std=c++17 $(3) $(1) \
   $(if $(4),$(4),-Wl,-force_load,build/lib/$(PROFILE)/liblambda-input.a -Wl,-force_load,build/lib/$(PROFILE)/liblambda-lib.a) \
-  $(NATIVE_TEST_LIBS) $(CURL_PREFIX)/lib/libcurl.a $(shell PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" $(PKG_CONFIG) --libs $(NATIVE_TEST_PACKAGES)) \
+  $(NATIVE_TEST_LIBS) $(CURL_PREFIX)/lib/libcurl.a -lz $(shell PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" $(PKG_CONFIG) --libs $(NATIVE_TEST_PACKAGES)) \
   $(shell PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" $(PKG_CONFIG) --static --libs libcurl) -lbz2 -liconv \
   -framework CoreFoundation -framework Security -framework CoreServices -framework CoreText \
   -framework CoreGraphics -framework SystemConfiguration $(NATIVE_TEST_EXTRA_LIBS) -o $(2)
@@ -164,7 +164,7 @@ endef
 MIGRATED_LIB_TESTS = atomic base64 binsearch color datetime digest signature endian hash hex lru_cache \
   math_utils sort str str_scan strbuf strview stringbuf time_util uuid url url_extra arraylist \
   arena hashmap_helpers byte_storage checked_alloc file_module font_config font_context fts grep mail_imap mail_mime mem_context \
-  mem_factory mem_vm mempool memtrack mime_detect scratch_arena shell span thread_pool woff2
+  mem_factory mem_factory_once mem_vm mempool memtrack mime_detect scratch_arena shell span thread_pool uv_loop woff2
 MIGRATED_TEST_SOURCES = $(addprefix test/lib/test_,$(addsuffix _gtest.cpp,$(MIGRATED_LIB_TESTS))) \
   test/test_physics_gtest.cpp test/test_input_sourcepos_gtest.cpp test/test_tex_engine_gtest.cpp \
   test/css/test_css_tokenizer_gtest.cpp test/css/test_css_parser_gtest.cpp \
@@ -202,7 +202,7 @@ build/lib/$(PROFILE)/liblambda-test-utils.a: $(TEST_HELPER_OBJECTS)
 $(NATIVE_TEST_LIBS): | native-deps
 $(CURL_PREFIX)/lib/libcurl.a: | curl-deps
 
-build/test/%: test/%.cpp build/lib/$(PROFILE)/liblambda-test-utils.a build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a $(NATIVE_TEST_LIBS) $(CURL_PREFIX)/lib/libcurl.a | all check-native-test-deps
+build/test/%: test/%.cpp build/lib/$(PROFILE)/liblambda-test-utils.a build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a $(NATIVE_TEST_LIBS) $(CURL_PREFIX)/lib/libcurl.a | build-all-internal check-native-test-deps
 	@mkdir -p $(@D)
 	$(call LINK_NATIVE_TEST,$<,$@,$(CXXFLAGS),build/lib/$(PROFILE)/liblambda-test-utils.a build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a)
 
@@ -219,7 +219,7 @@ $(RUNTIME_SCALAR_TEST_ARCHIVE): build/lib/$(PROFILE)/liblambda-input.a $(RUNTIME
 	cp $< $@
 	$(AR) rcs $@ $(RUNTIME_SCALAR_TEST_OBJECT)
 
-build/test/test_runtime_scalar_storage_gtest: test/test_runtime_scalar_storage_gtest.cpp $(RUNTIME_SCALAR_TEST_ARCHIVE) build/lib/$(PROFILE)/liblambda-lib.a $(NATIVE_TEST_LIBS) $(CURL_PREFIX)/lib/libcurl.a | all check-native-test-deps
+build/test/test_runtime_scalar_storage_gtest: test/test_runtime_scalar_storage_gtest.cpp $(RUNTIME_SCALAR_TEST_ARCHIVE) build/lib/$(PROFILE)/liblambda-lib.a $(NATIVE_TEST_LIBS) $(CURL_PREFIX)/lib/libcurl.a | build-all-internal check-native-test-deps
 	@mkdir -p $(@D)
 	$(call LINK_NATIVE_TEST,$<,$@,$(CXXFLAGS),$(RUNTIME_SCALAR_TEST_ARCHIVE) build/lib/$(PROFILE)/liblambda-lib.a)
 
@@ -247,7 +247,8 @@ test-api-headers: | temp
 
 test-input-baseline: test-native
 
-test-native: test-api-headers setup-test-data check-native-test-deps all native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest build/test/test_runtime_scalar_storage_gtest
+# share one prerequisite graph so a parallel test run cannot start a second vendor build.
+test-native: test-api-headers setup-test-data check-native-test-deps build-all-internal native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest build/test/test_runtime_scalar_storage_gtest
 	@mkdir -p build/test
 	$(call LINK_NATIVE_TEST,$(NATIVE_TEST_SOURCES),build/test/test_input_native)
 	$(call LINK_NATIVE_TEST,test/test_graph_parser_gtest.cpp,build/test/test_graph_parser_native)

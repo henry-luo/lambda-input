@@ -267,6 +267,45 @@ protected:
 // JSON Tests
 class JsonTests : public InputRoundtripTest {};
 
+TEST_F(JsonTests, RejectsTrailingContentAndMissingValue) {
+    String* type = create_lambda_string("json");
+    for (const char* source : {"1abc", "1 2", "", "  \n"}) {
+        SCOPED_TRACE(source);
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, type, nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_TRUE(parsed->parse_failed);
+    }
+    for (const char* source : {"1 \n", "null", "{\"a\":1}"}) {
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, type, nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_FALSE(parsed->parse_failed);
+    }
+}
+
+TEST_F(InputRoundtripTest, CalendarAndContactRejectMalformedContentLines) {
+    for (const char* type_name : {"ics", "vcf"}) {
+        String* type = create_lambda_string(type_name);
+        const char* invalid = strcmp(type_name, "ics") == 0
+            ? "BEGIN:VCALENDAR\nBROKEN\nEND:VCALENDAR\n"
+            : "BEGIN:VCARD\nBROKEN\nEND:VCARD\n";
+        Input* parsed = input_from_source(const_cast<char*>(invalid), nullptr, type, nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_TRUE(parsed->parse_failed) << type_name;
+    }
+}
+
+TEST_F(InputRoundtripTest, YamlAndTomlRejectIncompleteValues) {
+    struct Case { const char* type; const char* text; };
+    for (const Case& sample : {Case{"yaml", "a: [1,\n"}, Case{"yaml", "a: {b: 1\n"},
+                               Case{"toml", "x = 1junk\n"}, Case{"toml", "x = true false\n"}}) {
+        SCOPED_TRACE(sample.text);
+        String* type = create_lambda_string(sample.type);
+        Input* parsed = input_from_source(const_cast<char*>(sample.text), nullptr, type, nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_TRUE(parsed->parse_failed);
+    }
+}
+
 TEST_F(JsonTests, JsonRoundtrip) {
     printf("\n=== Testing comprehensive JSON roundtrip ===\n");
 
@@ -1278,6 +1317,34 @@ TEST_F(HtmlTests, SimpleHtmlRoundtrip) {
 // LaTeX Tests
 class LatexTests : public InputRoundtripTest {};
 
+TEST_F(LatexTests, EscapedDollarDoesNotCloseMath) {
+    char source[] = "\\begin{document}$\\$\\%\\# $ and $x$\\end{document}";
+    String* type = create_lambda_string("latex");
+    Input* parsed = input_from_source(source, nullptr, type, nullptr);
+    ASSERT_NE(parsed, nullptr);
+    EXPECT_FALSE(parsed->parse_failed);
+}
+
+TEST_F(LatexTests, EnvironmentScanSkipsInlineVerbatimPayload) {
+    for (const char* source : {"\\begin{document}A\\verb|x_%|B\\end{document}",
+                               "\\begin{document}A\\verb|\\end{document}|B\\end{document}",
+                               "\\begin{document}A\\verb*|x_%|B\\end{document}"}) {
+        SCOPED_TRACE(source);
+        String* type = create_lambda_string("latex");
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, type, nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_FALSE(parsed->parse_failed);
+    }
+}
+
+TEST_F(LatexTests, UnclosedOptionalMathArgumentTerminates) {
+    char source[] = "\\begin{document}$\\downarrow[unclosed$\\end{document}";
+    String* type = create_lambda_string("latex");
+    Input* parsed = input_from_source(source, nullptr, type, nullptr);
+    ASSERT_NE(parsed, nullptr);
+    EXPECT_FALSE(parsed->parse_failed);
+}
+
 TEST_F(LatexTests, LatexRoundtrip) {
     printf("\n=== Testing LaTeX roundtrip ===\n");
 
@@ -2043,6 +2110,27 @@ TEST_F(TomlTests, TomlUnicodeSurrogatePairs) {
 // INI Tests
 class IniTests : public InputRoundtripTest {};
 
+TEST_F(IniTests, PropertiesEscapedKeySeparatorsAndWhitespace) {
+    char source[] = "a\\=b=c\nkey\\ space=value\ncolon\\:key:ok\n"
+                    "continued\\\n key = done\nwhitespace value\n"
+                    "formfeed\f=\fvalue\nvertical\vkey=ok\n"
+                    "drop\\bslash=value\\btext\nraw=value\\btext\n";
+    String* type = create_lambda_string("properties");
+    Input* parsed = input_from_source(source, nullptr, type, nullptr);
+    ASSERT_NE(parsed, nullptr);
+    ASSERT_FALSE(parsed->parse_failed);
+    MapReader map = MapReader::fromItem(parsed->root);
+    EXPECT_STREQ(map.get("a=b").cstring(), "c");
+    EXPECT_STREQ(map.get("key space").cstring(), "value");
+    EXPECT_STREQ(map.get("colon:key").cstring(), "ok");
+    EXPECT_STREQ(map.get("continuedkey").cstring(), "done");
+    EXPECT_STREQ(map.get("whitespace").cstring(), "value");
+    EXPECT_STREQ(map.get("formfeed").cstring(), "value");
+    EXPECT_STREQ(map.get("vertical\vkey").cstring(), "ok");
+    EXPECT_STREQ(map.get("dropbslash").cstring(), "valuebtext");
+    EXPECT_STREQ(map.get("raw").cstring(), "valuebtext");
+}
+
 TEST_F(IniTests, IniRoundtrip) {
     printf("\n=== Testing INI roundtrip ===\n");
 
@@ -2245,6 +2333,28 @@ TEST_F(IniTests, PropertiesUnicodeSurrogatePairs) {
 
 // CSV Tests
 class CsvTests : public InputRoundtripTest {};
+
+extern char detect_csv_separator(const char* csv_string);
+
+TEST_F(CsvTests, SeparatorDetectionIgnoresQuotedFirstRecord) {
+    EXPECT_EQ(detect_csv_separator("\"a\t\tb\",c\n1,2\n"), ',');
+    EXPECT_EQ(detect_csv_separator("\"a\"\"\t\nb\",c\n1,2\n"), ',');
+    EXPECT_EQ(detect_csv_separator("\"a,,\"\tb\n1\t2\n"), '\t');
+    EXPECT_EQ(detect_csv_separator("a,b\n1\t2\n"), ',');
+}
+
+TEST_F(CsvTests, QuotedHeaderTabsDoNotChangeCsvDelimiter) {
+    char source[] = "\"a\t\tb\",c\n1,2\n";
+    String* type = create_lambda_string("csv");
+    Input* parsed = input_from_source(source, nullptr, type, nullptr);
+    ASSERT_NE(parsed, nullptr);
+    ASSERT_FALSE(parsed->parse_failed);
+    ArrayReader rows = ItemReader(parsed->root.to_const()).asArray();
+    ASSERT_EQ(rows.length(), 1);
+    MapReader row = rows.get(0).asMap();
+    EXPECT_STREQ(row.get("a\t\tb").cstring(), "1");
+    EXPECT_STREQ(row.get("c").cstring(), "2");
+}
 
 TEST_F(CsvTests, CsvRoundtrip) {
     printf("\n=== Testing CSV roundtrip ===\n");

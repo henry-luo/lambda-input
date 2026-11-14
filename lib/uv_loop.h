@@ -2,8 +2,7 @@
  * @file uv_loop.h
  * @brief Unified libuv event loop wrapper for Lambda
  *
- * Provides a global event loop shared by the JS runtime,
- * HTTP server, and async I/O subsystems.
+ * Provides context-owned loops and the legacy shared-loop interface.
  */
 
 #ifndef LAMBDA_UV_LOOP_H
@@ -15,6 +14,24 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+typedef struct LambdaUvLoop LambdaUvLoop;
+typedef void (*LambdaUvDrain)(void* context);
+
+// Each instance is driven and modified by its owning thread. Drive it only
+// through lambda_uv_instance_run so callback-time lifecycle checks apply.
+// User handles and requests must be closed or completed before destroy;
+// UV_EBUSY leaves the instance live and usable for draining or retry.
+int lambda_uv_instance_create(LambdaUvLoop** out);
+uv_loop_t* lambda_uv_instance_loop(LambdaUvLoop* instance);
+// The caller keeps the callback context alive until it is replaced or the
+// instance is destroyed, including any host-managed roots it requires.
+void lambda_uv_instance_set_drains(LambdaUvLoop* instance,
+    LambdaUvDrain microtask, LambdaUvDrain task, void* context);
+void lambda_uv_instance_checkpoint(LambdaUvLoop* instance);
+int lambda_uv_instance_run(LambdaUvLoop* instance, uv_run_mode mode);
+void lambda_uv_instance_stop(LambdaUvLoop* instance);
+int lambda_uv_instance_destroy(LambdaUvLoop* instance);
 
 // global event loop (one per process)
 uv_loop_t* lambda_uv_loop(void);

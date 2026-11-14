@@ -2343,6 +2343,26 @@ TEST(TransitionTreeExternalParentTest, InadmissibleParentsAreDeclined) {
         nullptr);
 }
 
+TEST(TransitionTreeExternalParentTest, SpreadMarkerRequiresNamedStoredFields) {
+    ExternalParentFixture f("test.tree.external.spread.marker");
+    ASSERT_NE(f.tree, nullptr);
+    MarkBuilder builder(f.doc);
+    TypeMap* parent = (TypeMap*)alloc_type(f.doc_pool, LMD_TYPE_MAP, sizeof(TypeMap));
+    ASSERT_NE(parent, nullptr);
+    ShapeEntry* field = alloc_shape_entry(f.doc_pool, builder.createString("a"), LMD_TYPE_INT, nullptr);
+    ASSERT_NE(field, nullptr);
+    parent->shape = parent->last = field;
+    parent->length = 1;
+    parent->byte_size = shape_entry_storage_size(field);
+    parent->has_spread = true;
+    TypeMap* child = type_tree_add_map_field_chars(f.tree, parent, "b", 1, LMD_TYPE_INT, nullptr);
+    ASSERT_NE(child, nullptr);
+    EXPECT_TRUE(child->has_spread);
+    EXPECT_NE(typemap_first_field(child), field);
+    field->name = nullptr;
+    EXPECT_EQ(type_tree_add_map_field_chars(f.tree, parent, "c", 1, LMD_TYPE_INT, nullptr), nullptr);
+}
+
 TEST(TransitionTreeExternalParentTest, EqualShapesFromTwoDocumentsShareAChild) {
     ExternalParentFixture f("test.tree.external.structural");
     ASSERT_NE(f.tree, nullptr);

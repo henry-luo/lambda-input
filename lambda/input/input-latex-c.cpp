@@ -27,6 +27,14 @@ static bool starts_with(const char* s, size_t n, size_t p, const char* needle) {
     return latex_scan_starts_with(s, n, p, needle);
 }
 
+static size_t latex_verbatim_end(const char* source, size_t length, size_t cursor) {
+    if (cursor < length && source[cursor] == '*') cursor++;
+    if (cursor >= length) return length;
+    char delimiter = source[cursor++];
+    while (cursor < length && source[cursor] != delimiter) cursor++;
+    return cursor < length ? cursor + 1 : cursor;
+}
+
 static bool item_present(Item item) {
     return item.item != ITEM_NULL;
 }
@@ -489,14 +497,6 @@ private:
         return true;
     }
 
-    size_t verbatim_end(size_t cursor) {
-        if (cursor < length_ && source_[cursor] == '*') cursor++;
-        if (cursor >= length_) return length_;
-        char delimiter = source_[cursor++];
-        while (cursor < length_ && source_[cursor] != delimiter) cursor++;
-        return cursor < length_ ? cursor + 1 : cursor;
-    }
-
     Item parse_command() {
         char name[96];
         char full[104];
@@ -509,7 +509,7 @@ private:
         if (!allow_infix_ && is_infix_fraction_command(name)) return ItemNull;
 
         if (strcmp(name, "verb") == 0) {
-            size_t after = verbatim_end(position_);
+            size_t after = latex_verbatim_end(source_, length_, position_);
             bool starred = position_ < length_ && source_[position_] == '*';
             if (starred) position_++;
             size_t begin = position_ < length_ ? position_ + 1 : length_;
@@ -955,7 +955,10 @@ private:
                     elem.attr("arg1_raw", builder_.createStringItem(source_ + arg_begin, arg_end - arg_begin));
                 arg_index++;
             } else if (position_ < length_ && source_[position_] == '[') {
+                size_t before = position_;
                 elem.child(parse_brack_group());
+                // leave an unmatched bracket for the ordinary punctuation parser.
+                if (position_ == before) break;
             } else break;
         }
         return elem.final();
@@ -1224,7 +1227,7 @@ private:
                 continue;
             }
             if (strcmp(name, "verb") == 0) {
-                cursor = verbatim_end(end);
+                cursor = latex_verbatim_end(source_, length_, end);
                 continue;
             }
             if (brace_depth == 0 && is_infix_fraction_command(name)) {
@@ -1266,7 +1269,7 @@ private:
                 size_t end = latex_scan_command(source_, length_, cursor, name, sizeof(name), full, sizeof(full));
                 if (strcmp(name, "\\") == 0 || strcmp(name, "cr") == 0) return cursor;
                 cursor = strcmp(name, "begin") == 0 ? skip_environment_span(end) :
-                    strcmp(name, "verb") == 0 ? verbatim_end(end) : end;
+                    strcmp(name, "verb") == 0 ? latex_verbatim_end(source_, length_, end) : end;
             } else cursor++;
         }
         return length_;
@@ -1816,6 +1819,11 @@ private:
                                                        sizeof(command), full, sizeof(full));
             if (after_command == 0) {
                 i++;
+                continue;
+            }
+            if (strcmp(command, "verb") == 0) {
+                // verbatim bytes cannot begin comments or close the surrounding environment.
+                i = latex_verbatim_end(source_, length_, after_command);
                 continue;
             }
             if ((strcmp(command, "begin") != 0 && strcmp(command, "end") != 0) ||
@@ -2368,6 +2376,11 @@ private:
                 if (display) ++position_;
                 size_t math_end = position_;
                 while (math_end < length_) {
+                    // a control symbol consumes its next byte, including a dollar.
+                    if (source_[math_end] == '\\' && math_end + 1 < length_) {
+                        math_end += 2;
+                        continue;
+                    }
                     if (source_[math_end] == '$' && (!display || (math_end + 1 < length_ && source_[math_end + 1] == '$'))) break;
                     math_end++;
                 }

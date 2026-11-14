@@ -33,6 +33,7 @@ enum TokFlag : uint16_t {
     TF_DIRECT = 1,     // read straight from a file reader, never stored in a list
     TF_NOEXPAND = 2,   // \noexpand marker: acts as \relax for one expansion
     TF_PARLINE = 4,    // \par produced by a blank line
+    TF_SCAN_BOUNDARY = 8, // private end marker for a bounded numeric scan
 };
 
 struct Token {

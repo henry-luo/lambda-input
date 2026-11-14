@@ -40,6 +40,8 @@ typedef struct DomNodeRecord {
     Item* borrowed_items;
     bool borrows_data;
     bool borrows_items;
+    void* shared_source_type;
+    void* shared_source_data;
     uint32_t pins[DOM_NODE_PIN_REASON_COUNT];
     size_t stranded_bytes;  // counted in stats.wrapper_stranded_bytes while a candidate
     struct DomNodeRecord* bucket_next;
@@ -240,6 +242,16 @@ static void dom_record_set_backing_value(DomDocument* doc, DomNodeRecord* record
     Element* source = get_type_id(value) == LMD_TYPE_ELEMENT ? value.element : nullptr;
     record->backing_source = source;
     record->backing_root = value;
+    record->shared_source_type = nullptr;
+    record->shared_source_data = nullptr;
+    if (source && record->address->is_element()) {
+        Element* backing = &record->address->as_element()->elmt;
+        if (source != backing) {
+            // remember shared storage while the source is still a valid borrow.
+            if (backing->type == source->type) record->shared_source_type = backing->type;
+            if (backing->data == source->data) record->shared_source_data = backing->data;
+        }
+    }
     // native nodes can outlive both their parent and the model's next update.
     record->backing_gc = dom_retain_backing_root(doc, &record->backing_root, owner_gc);
     if (record->backing_gc) {
@@ -409,6 +421,20 @@ Element* dom_node_registry_backing_source(DomDocument* doc, DomNode* node) {
         return nullptr;
     }
     return record->backing_source;
+}
+
+void dom_node_registry_shared_source_storage(DomDocument* doc, DomNode* node,
+                                             bool* shared_type, bool* shared_data) {
+    if (shared_type) *shared_type = false;
+    if (shared_data) *shared_data = false;
+    DomNodeRecord* record = dom_record_find(dom_registry(doc), node);
+    if (!record || record->state == DOM_NODE_RETIRED || record->id != node->id ||
+            !node->is_element()) return;
+    Element* backing = &node->as_element()->elmt;
+    if (shared_type) *shared_type = record->shared_source_type &&
+        record->shared_source_type == backing->type;
+    if (shared_data) *shared_data = record->shared_source_data &&
+        record->shared_source_data == backing->data;
 }
 
 Pool* dom_node_registry_owned_string_pool(DomDocument* doc, DomNode* node) {

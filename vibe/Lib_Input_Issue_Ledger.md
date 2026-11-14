@@ -22,106 +22,96 @@ CSV separator detection LI-042; and the zero-width man escape LI-043. The tar
 follow-up remains consolidated under LI-012. Existing evidence filenames keep
 their historical prefixes.
 
+## Qualification before graph and DOM follow-up — 2026-11-14
+
+The input baseline with loopback access and the copied expl3 resources enabled
+completed 107 native executables: **5,268 passed, 2 failed, 1 skipped**. The
+remaining failures are LI-001's source-line ceilings and LI-002's preserved
+external-parent assertion. The skip is the host-font-dependent emoji fallback.
+The expl3 reference and properties escape regressions ran and passed. Evidence:
+`temp/ledger-input-baseline-current.log`; resource hashes:
+`temp/ledger-expl3-resource-sha256.txt`. The debug and release dependency-file
+boundary audits both pass. This result does not close the remaining records.
+
+## Qualification after graph and DOM follow-up — 2026-11-14
+
+With loopback access and `LAMBDA_INPUT_EXPL3_TEST_DIR=./temp/ledger-expl3`, the
+then-current input baseline completed 107 native executables: **5,277 passed,
+1 failed, 1 skipped**. LI-002's preserved external-parent assertion remains
+the failure, and the host-font-dependent emoji fallback is the skip. The
+graph source-line budgets and the focused DOM ownership and nested-array
+regressions passed. Evidence: `temp/ledger-input-baseline-cow-final.log`.
+The current release archives build successfully, and both debug and release
+dependency-file boundary audits pass; build evidence is in
+`temp/ledger-release-cow-build.log` and `temp/build-release.log`.
+The retained-snapshot controls exercise input-owned backing storage; they do
+not constitute a Radiant integration or host-managed GC qualification.
+
+## Qualification after source-lifetime investigation — 2026-11-14
+
+The then-current input baseline completed 107 native executables with expl3
+resources and loopback access: **5,279 passed, 2 failed, 1 skipped**. The
+failures are LI-002's preserved assertion and LI-003's newly retained
+field-contract lifetime regression. The host-font-dependent emoji fallback
+is the skip. The source-header and separately allocated source-input
+regressions pass. Evidence: `temp/ledger-input-baseline-contract-open.log`.
+
+## Qualification after libuv provider follow-up — 2026-11-14
+
+The then-current input baseline completed 108 native executables with expl3 resources and
+loopback access: **5,284 passed, 2 failed, 1 skipped**. The failures remain
+LI-002 and LI-003's field-contract regression; the emoji fallback is skipped
+for the host font. All five instance-loop tests pass, including the concurrent
+owner control. Evidence: `temp/ledger-input-baseline-uv-instance.log`.
+The release archives build and debug and release boundary audits pass; the
+release build result is in `temp/ledger-uv-instance-release.log`.
+
+## Qualification after build-graph repair — 2026-11-14
+
+The parallel input baseline completed 108 native executables with expl3
+resources and loopback access: **5,284 passed, 3 failed, 1 skipped**. The
+failures are LI-002 and the two LI-003 field-contract lifetime controls; the
+emoji fallback is skipped for the host font. Evidence:
+`temp/ledger-input-baseline-dag-fix.log`. The combined native-test/boundary
+build-graph control and the dependency-builder suite pass 12/12
+(`temp/ledger-build-deps-dag-combined.log`); the debug boundary audit passes
+(`temp/ledger-build-dag-boundary.log`).
+
+## Qualification after allocator-factory race completion — 2026-11-14
+
+The input baseline completed 109 native executables with expl3 resources and
+loopback access: **5,285 passed, 3 failed, 1 skipped**. The failures remain
+LI-002 and the two LI-003 field-contract lifetime controls; the emoji fallback
+is skipped for the host font. The new first-use test, existing factory and
+NamePool suites, and all pool tests pass. Evidence: `temp/li055-input-baseline.log`.
+The release archives build (`temp/li055-release-build.log`), and debug and
+release dependency-file boundary audits pass. LI-055's focused subsystem
+ThreadSanitizer test passes in ten fresh processes.
+
 ## Open issues
 
-<a id="li-051"></a>
+<a id="li-053"></a>
 
-### LI-051 — Properties parser treats escaped key separators as delimiters
+### LI-053 — Shared allocators lack ruled reference-counted lifetime
 
-**Status:** OPEN. **Lambda task blocker:** yes for correct property editing of
-Java properties with escaped key separators or spaces. D9.3.4 governs document
-processing.
+**Status:** OPEN — capability absent, 2026-11-14. **Lambda blocker:** not
+established. D5.2.3 requires an atomic allocator reference count for shared
+arenas and pools, with destruction at zero and exclusive reset/rewind.
 
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/property-escape-probe.ls`.
-For `a\=b=c`, parsing as `properties` currently returns key `a\` and value
-`b=c`; Java's `Properties.load(Reader)` rules specify key `a=b` and value `c`.
-The editor's current source-span scanner makes the same split and thus presents
-this file incorrectly. A separate probe of `key\ space=value` produces a parse
-error. The Input implementation cause is unconfirmed. Once the Input provider
-is corrected, the Lambda editor's span scanner also needs to recognize escaped
-separators and preserve their spelling; do not patch around the Input parser.
-Evidence: `Lambda-opus/temp/edit-viewer/property-escape-probe.log`. Reference:
-[Java Properties.load documentation](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Properties.html#load(java.io.Reader)).
+The current `lib/mempool.h` and `lib/arena.h` expose no allocator retain or
+release API, and `pool_destroy` and `arena_destroy` directly reclaim their
+storage. `mem_context_destroy` also recursively releases registered child
+nodes before destroying an allocator. The formal implementation inventory in
+`Lambda_Formal_Design.md` likewise marks D5.2.3 reference counting as not
+implemented. A retained allocator must keep its backing nodes, context and
+any dependent cleanup state alive until its final release; adding a counter
+to the allocator alone would leave those dependencies dangling. Reset and
+rewind also need an exclusivity check.
 
-
-<a id="li-049"></a>
-
-### LI-049 — Org parser treats slash emphasis as plain text
-
-**Status:** OPEN. **Lambda task blocker:** yes for rendering and rich editing
-of Org italic text. D9.3.4 governs document processing.
-
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/org-combine-census.ls`.
-Both `Hello /world/.\n` and `/world/\n` parse as plain paragraph strings
-containing the slash delimiters instead of an emphasized run. The viewer and
-editor both consume this input-owned parse result. The exact cause is not yet
-confirmed. Evidence: `Lambda-opus/temp/edit-viewer/org-combine-census.log`.
-
-<a id="li-048"></a>
-
-### LI-048 — Org writer merges a following paragraph into a list
-
-**Status:** OPEN. **Lambda task blocker:** yes for rich editing of Org files
-with a list followed by a paragraph. D9.3.4 governs document processing.
-
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/org-combined-probe.ls`.
-The source in `test/ui/edit/sample-org-list-followed.org` contains a two-item list followed
-by a separate paragraph with a link. The input-owned Org formatter emits the
-list and paragraph without a separating blank line, and reparsing places the
-paragraph inside the second list item. The editor falls back to source rather
-than changing the document structure. The precise formatter cause is not yet
-confirmed. Evidence: `Lambda-opus/temp/edit-viewer/org-combined-probe.log`.
-
-<a id="li-047"></a>
-
-### LI-047 — reStructuredText literal block changes content on round trip
-
-**Status:** OPEN. **Lambda task blocker:** yes for rich editing of affected
-RST literal blocks. D9.3.4 governs document processing.
-
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-structure-roundtrip.ls`.
-For `Example::\n\n  code\n`, the input parser returns a div with a
-paragraph `code` and a pre/code block also containing `code`; the `Example:`
-introduction is absent. Formatting its Markdown-equivalent Mark Doc back to
-RST yields a paragraph and inline-code syntax, which reparses to a different
-model. The input parser and formatter are both input-owned; the exact root
-causes have not been confirmed. The editor falls back to source to avoid
-changing the document. Evidence:
-`Lambda-opus/temp/edit-viewer/markup-structure-roundtrip.log`.
-
-<a id="li-046"></a>
-
-### LI-046 — Org table and source block round trips lose structure
-
-**Status:** OPEN. **Lambda task blocker:** yes for rich editing of affected
-Org tables and source blocks. D9.3.4 governs document processing.
-
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-structure-roundtrip.ls`.
-The Org input `| A | B |\n|---+---|\n| one | two |\n` is parsed with the
-separator as a data row; after Markdown conversion the input-owned Org writer
-returns an empty string. The source block `#+BEGIN_SRC\nhello\n#+END_SRC\n`
-parses as block code, but formatting its Markdown-equivalent model produces
-`~hello\n~`, which reparses as ordinary paragraph text. The responsible parser
-and formatter paths are input-owned; the exact causes remain unconfirmed. The
-editor falls back to source instead of losing table or code structure. Evidence:
-`Lambda-opus/temp/edit-viewer/markup-structure-roundtrip.log`.
-
-<a id="li-045"></a>
-
-### LI-045 — Textile formatter and parser disagree on ordinary spans
-
-**Status:** OPEN. **Lambda task blocker:** yes for rich editing of Textile
-paragraphs whose parsed model contains a span. D9.3.4 governs document processing.
-
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-roundtrip-probe.ls`.
-The Textile input `h1. Title\n\nHello _world_.\n` parses with paragraph text
-`Hello `, an emphasized `world`, and `.`. Formatting its Markdown-equivalent
-Mark Doc to Textile produces `h1. Title\n\n%Hello _world_.%\n\n`.
-Reparsing that output includes the surrounding `%` characters as visible text.
-The input-owned Textile formatter's custom `span` handler emits `%` delimiters;
-whether the formatter or parser should change is not yet confirmed. The editor
-cannot save this round trip without changing visible text and falls back to source.
-Evidence: `Lambda-opus/temp/edit-viewer/markup-roundtrip-probe.log`.
+This prevents using a retained source allocator as a general solution to the
+source-owned type-contract lifetime in [LI-003](#li-003). It does not establish
+that allocator retention is the only possible repair for that issue. No new
+allocation mechanism or conservative GC scan is authorized by this record.
 
 <a id="li-044"></a>
 
@@ -138,348 +128,18 @@ for document metadata and maps body h1 to `==`, while the input parser maps
 `==` to h2. This existing reader/writer mismatch is also documented in
 `doc/Script_Formats_Support.md` under the current round-trip results. The editor
 falls back to source instead of changing heading levels. Evidence:
-`Lambda-opus/temp/edit-viewer/markup-roundtrip-probe.log`.
-
-<a id="li-043"></a>
-
-### LI-043 — Man parser renders the zero-width `\&` escape as text
-
-**Status:** Open. **Blocks:** rich editing of man pages in `lambda edit`.
-
-Reproduction from the Lambda checkout: run a Lambda script evaluating
-`parse(".SH NAME\n\\&test\n", 'man')` and
-`parse(".SH NAME\ntest\n", 'man')`. The first result contains a span with
-text `&test`; the second contains text `test`. The roff `\&` escape is
-zero-width, so these inputs should have the same visible paragraph text.
-The checked output is in `Lambda-opus/temp/edit-viewer/man-input-probe.log`.
-The parser's treatment of this escape is unconfirmed; this report identifies
-observable behavior rather than an implementation cause. The Lambda man writer
-uses `\&` to protect text, so its output cannot currently round-trip through
-the input parser. The editor retains source mode until the input owner fixes it.
-
-<a id="li-042"></a>
-
-### LI-042 — CSV separator detection counts tabs inside quoted fields
-
-**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
-`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
-property editing CSV files whose first quoted record contains more tabs than
-commas. Input ownership follows **D9.1.1v4**; **D9.3.4** covers document
-processing.
-
-`parse("\"a\t\tb\",c\n1,2\n", 'csv')` treats tabs inside the
-quoted first field as separators and returns one field named `a\t\tb`
-with value `1,2`, instead of the two CSV columns `a\t\tb` and `c`
-with values `1` and `2`. The viewer uses this input parser. The editor's
-matching delimiter choice cannot safely build the property tree for this
-source and currently falls back to source editing.
-
-Reproduce from the Lambda checkout with
-`./lambda.exe temp/edit-viewer/csv-separator-probe.ls`. In
-`lambda/input/input-csv.cpp`, `detect_csv_separator` counts every tab and
-comma on the first physical line without tracking quoted fields. Detection
-should ignore delimiters inside quoted fields, including escaped quotes and
-multiline quoted records. No input implementation or reference was changed
-by this report.
-
-<a id="li-041"></a>
-
-### LI-041 — Markdown footnote definitions lack source ranges
-
-**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
-`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
-showing and editing surrounding Markdown while retaining footnote definitions
-as individually rendered view-only blocks. Input ownership follows **D9.1.1v4**;
-source-backed document editing is covered by **D9.3.4**.
-
-`parse(source, {type: 'markdown', sourcepos: true})` gives authored paragraph,
-HTML and math blocks `sourcepos`, but moves footnote definitions into a generated
-`<footnotes>` element whose individual `<footnote>` nodes have no original
-source positions. The original source may contain multiple definitions and
-unrelated link definitions in the same gap. Consequently the Lambda editor
-cannot reliably associate each footnote with its exact authored lines, and
-shows the combined gap as raw source instead of rendering the footnote. The
-existing `edit_md_view_only` and `edit_md_view_only_keys` UI replays reproduce
-this with the original editor as well as the current changes.
-
-Reproduce from the Lambda checkout with
-`./lambda.exe temp/edit-viewer/md-footnote-probe.ls` using
-`test/ui/edit/kept.md`; its output shows the source-positioned body nodes,
-the generated footnote without a `sourcepos`, and the combined source gap.
-`lambda/input/markup/block/block_document.cpp` records source positions for
-ordinary blocks but `parseFootnoteDefinition` constructs the note separately.
-The input owner should retain each definition's original span when source
-positions are requested, including multiline, duplicate and unused definitions.
-No input implementation or reference was changed by this report.
-
-<a id="li-040"></a>
-
-### LI-040 — iCalendar and vCard parsers silently drop malformed content lines
-
-**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
-`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
-safe property editing of the affected format. Input ownership follows
-**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
-
-Both `parse("BEGIN:VCALENDAR\nBROKEN\nEND:VCALENDAR\n", 'ics')` and `parse("BEGIN:VCARD\nBROKEN\nEND:VCARD\n", 'vcf')` succeed with empty entries, instead of reporting the line without a colon. The editor cannot rely on these results to validate a complete contact or calendar file. Relevant owner code is `lambda/input/input-ics.cpp` and `lambda/input/input-vcf.cpp`; the exact causes have not been confirmed. This is consistent with the older I-F10 observation in `vibe/impl/Lambda_Impl_Code_Review.md`.
-
-Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
-A malformed document must produce an error rather than a successful partial
-value. No input implementation or reference was changed by this report.
-
-<a id="li-039"></a>
-
-### LI-039 — YAML parser accepts an unterminated flow sequence
-
-**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
-`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
-safe property editing of the affected format. Input ownership follows
-**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
-
-`parse("a: [1,\n", 'yaml')` returns a map containing `a: [1]` rather than an error for the unclosed sequence. The editor cannot rely on this parser to validate the complete YAML document. Relevant owner code is `lambda/input/input-yaml.cpp`; the exact cause has not been confirmed.
-
-Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
-A malformed document must produce an error rather than a successful partial
-value. No input implementation or reference was changed by this report.
-
-<a id="li-038"></a>
-
-### LI-038 — TOML parser accepts a numeric prefix followed by invalid text
-
-**Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
-`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
-safe property editing of the affected format. Input ownership follows
-**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
-
-`parse("x = 1junk\n", 'toml')` returns `{x: 1}` instead of rejecting the invalid numeric value. The editor cannot use that result to validate property edits or saved data. Relevant owner code is `lambda/input/input-toml.cpp`; the exact cause has not been confirmed.
-
-Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
-A malformed document must produce an error rather than a successful partial
-value. No input implementation or reference was changed by this report.
-
-<a id="li-037"></a>
-
-### LI-037 — JSON top-level parser accepts trailing non-whitespace
-
-**Status:** OPEN, reproduced 2026-11-13 on macOS with Lambda-opus debug
-`8b5ebe56e` plus the editor work. **Lambda task blocker:** yes for safely
-admitting JSON property editing. Input ownership follows **D9.1.1v4**;
-**S7.5.1v6** governs acknowledgement of an ordinary parse error.
-
-From the Lambda checkout, run `./lambda.exe temp/edit-viewer/invalid.ls`
-(the script evaluates `parse` on malformed JSON). In particular,
-`parse("1abc", 'json')` and `parse("1 2", 'json')` both return `1`
-instead of reporting the non-whitespace content after the top-level value;
-`parse("", 'json')` returns null. Malformed JSON must report an error rather
-than admit a prefix as the complete document. The editor cannot trust the
-script-facing result when checking whether a JSON file or edited value is
-safe to save.
-
-In `lambda/input/input-json.cpp`, `parse_json` calls `parse_value` once and
-returns without checking the remaining cursor; the existing native
-`parse_json_to_item_strict` has a trailing-content check. The script-facing
-`parse(..., 'json')` dispatch and the intended strictness policy should be
-confirmed by the input owner. This report does not change input sources or
-reference results.
-
-
-<a id="li-036"></a>
-
-### LI-036 — Resource capacity rejects already-admitted consumers
-
-**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
-Input owns the resource manager under D9.1.1v4 / D9.1.3v2.
-
-At 500 retained resources, `resource_manager_load` rejected every request before
-checking the URL map. CSS, script and image consumers could no longer reuse
-already-cached or pending bytes. Conductor's capture exposed this after unrelated
-CSS icon prefetch exhausted the budget (Radiant RI-079).
-
-The existing capacity check now follows existing-resource reuse and still
-precedes acquisition of every new identity. Document admission still precedes
-both paths; the cap remains 500. No caller reference, retry or ownership rule is
-changed. The new offline unit actually stores and admits 500 cached identities,
-reuses the first as an image consumer, rejects a new 501st URL and checks the
-unchanged total. It and two neighboring cache/lifetime units pass.
-
-Evidence: Lambda's `temp/online-visual-round31/input-focused.log`; test
-`NetworkResourceManager.CapacityKeepsExistingConsumersAndRejectsNewResources`
-in `test/test_network_scheduler_gtest.cpp`. Full input baseline deferred under
-the user's focused-verification instruction.
-
-
-<a id="li-035"></a>
-
-### LI-035 — Grid auto-flow discards pending custom properties
-
-**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
-Input owns declaration validation under D9.1.1v4 / D9.1.3v2.
-
-Ahrefs' saved tablet promotion used `grid-auto-flow:var(--directionTablet-12pdsr3)`
-with `column`, but laid out vertically. The `CSS_PROPERTY_GRID_AUTO_FLOW`
-validator rejected pending values before the existing Radiant substitution pass.
-`css_properties.cpp` now admits pending substitution, as neighboring keyword
-properties already do. Substituted values still pass ordinary grammar validation;
-an invalid winning variable resets at computed-value time rather than reviving
-an older declaration. No page selectors or replacement values are introduced.
-
-Qualification: the new `SupportsGridAutoFlowRetainsPendingSubstitution` case
-passes within 32 selected media/supports units. Five exported PNG controls cover
-whole-value/list variables, fallback, dense packing and invalid computed values;
-all five fail before and pass after, and independently pass Chromium. Evidence:
-Lambda's `temp/online-visual-round30/`; tracked reductions are
-`test/online/grid_flow_variable_fixtures.cjs` in Lambda. Full input baseline was
-deferred under the user's focused-verification instruction.
-
-<a id="li-034"></a>
-
-### LI-034 — Compact logical conditions lose valid token boundaries
-
-**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
-Input owns CSS condition evaluation under D9.1.1v4 / D9.1.3v2.
-
-Ahrefs' minified tablet queries use `(min-width:768px)and (max-width:1279px)`.
-`css_condition_find_operator` incorrectly required whitespace before `and`/`or`,
-so both device variants painted and the hero lost its tablet width. A closing
-parenthesis now supplies that token boundary. Whitespace after the keyword
-remains required; `and(` stays a function token rather than a logical operator,
-as specified by [Media Queries 4](https://www.w3.org/TR/mediaqueries-4/#mq-syntax).
-The related supports evaluator now unwraps enclosing groups before scanning
-operators, fixing nested supported declarations previously sent to the atom parser.
-
-Qualification: two new native cases exercise compact and/or, nesting, case,
-comment-separated stylesheet parsing, viewport invalidation and invalid controls.
-All 32 selected media/supports cases pass. Six PNG controls improve from 1/6 to
-6/6 and independently pass Chromium. The exact saved Ahrefs source removes the
-duplicate promotion and restores the hero width. Lambda's
-`temp/online-visual-round30/` pins sources/binaries and before/after evidence;
-tracked reductions are `test/online/compact_condition_fixtures.cjs` in Lambda.
-No admission, URL, stylesheet, viewport or snapshot-time workaround is used.
-
-
-<a id="li-033"></a>
-
-### LI-033 — Escaped dollar ends native inline math prematurely
-
-**Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
-**Lambda task blocker:** yes for native-reference comparison of dollar-delimited
-math containing an escaped dollar; other math cases can proceed. D10.2.2
-governs the current LaTeX input boundary.
-
-Parsing `\begin{document}$\$\%\#$\end{document}` with
-`parse(..., {type: "latex"})` reports a missing dollar delimiter, although
-the escaped dollar belongs to the math content. The dollar-math delimiter
-scan in `lambda/input/input-latex-c.cpp` stops at the first `$` byte without
-checking whether it is escaped. The expected result is one closed math node
-containing the escaped symbols.
-
-Reproduction and error evidence are in
-`temp/expl3-script/math-raw-probe.ls` and `math-raw-v4-interp.log`. The issue
-was found while qualifying the Lambda Script TeX engine. Native input source
-and existing reference results have not been modified for this report.
-
-
-<a id="li-032"></a>
-
-### LI-032 — Shared signature verifier requires OpenSSL during mbedCrypto-only migration
-
-**Status:** RESOLVED, 2026-11-13. The user explicitly authorized scoped
-input-owned source, header, tests and build/setup changes for this migration.
-**Lambda task blocker:** no; native provider migration and verification complete.
-Ownership: D9.1.1v4 / D9.1.3v2; native crypto boundary: D11.1.2.
-
-The previous `lib/signature.c` used OpenSSL EVP/provider APIs and the `lambda-lib`
-target required `openssl-crypto`. Replaced the provider with mbedCrypto RSA-PSS/
-SHA-256 and P-256/SHA-256 verification. Ed25519 remains an unsupported reserved
-ABI value. Raw SEC1 keys require canonical low-S P1363 signatures; SPKI keys use
-standard DER ECDSA. PEM/DER parsing rejects trailing data and extra key blocks.
-OpenSSL package/link requirements are removed from input build/setup configuration.
-
-Verification: input signature 4/4, digest 9/9, dependency configuration 11/11;
-Lambda baseline 7,473/7,473; 85 sync goldens per AUTO/interpreter/JIT; 42 focused
-ordinary/forced-GC crypto, identity, TUF and admission checks. Peer, DataChannel
-and LAN demo native process gates pass. Native Lambda host and input archive
-symbol/linkage audit finds no OpenSSL dependency. Tests retain the external
-OpenSSL CLI only as an independent fixture/certificate oracle. Runtime and setup
-need no OpenSSL provider. Evidence: Lambda's `temp/mbedcrypto-only/` and its
-`vibe/impl/Lambda_Impl_MbedCrypto_Only (done).md` completion record. The user
-subsequently authorized the Lambda-owned optional Node provider removal; that
-module is also mbedCrypto-only.
-
-
-<a id="li-031"></a>
-
-### LI-031 — Unclosed optional math argument stalls native LaTeX parsing
-
-**Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
-**Lambda task blocker:** yes for malformed-input parity and safe full script
-port qualification. D10.2.2 governs the current LaTeX input boundary.
-
-Parsing `\begin{document}$\downarrow[unclosed$\end{document}` with
-`parse(..., {type: "latex"})` did not return within five seconds; the timed
-process was stopped. The fallback loop in `lambda/input/input-latex-c.cpp`
-sees `[`, calls `parse_brack_group`, and repeats without advancing when the
-bracket is unclosed: `consume_group_span` returns false for that form.
-Parsing should terminate with a recoverable result or a diagnostic.
-
-Reproduce with `python3 temp/expl3-script/verify-native-unclosed-math-bracket.py`;
-the script and `native-unclosed-math-bracket-result.txt` are in the same
-temporary directory. The behavior was discovered while qualifying the Lambda
-Script TeX engine. Native input ownership is unchanged, and no input source
-or reference result is modified by this report.
-
-
-<a id="li-030"></a>
-
-### LI-030 — Animated WebP cannot supply even the initial export frame
-
-**Status:** FIXED for initial-frame image decoding, 2026-11-14. Playback and
-later-frame selection remain unsupported. **Lambda blocker:** cleared for
-Maple 082's missing title. Native ownership **D9.1.1v4 / D9.1.3v2**;
-selected-frame contract **D10.1.7**, allocation ownership **D5.5.1**.
-
-The saved Maple title response is animated WebP despite its `.gif` URL.
-The shared decoder explicitly rejected every animated container, including
-ordinary image consumers asking only for frame zero. The existing WebP decoder
-now decodes the first demuxed subframe directly into a transparent, full-size
-canvas, retaining its offset and alpha. ANIM background and later frames are
-not composited. The manifest adds the pinned demux source; vendor code is
-unchanged. Existing scratch estimates, decoded-pixel and frame limits apply.
-Strict thumbnails refuse full-canvas fallback; permitted thumbnails use the
-shared reducer. Nonzero frame selection remains explicitly unsupported.
-
-Two new native cases fail before and pass after. They cover full/offset frames,
-alpha, transparent canvas, delay/loop metadata, frame/pixel/scratch limits,
-truncation, thumbnail policy and unsupported later selection. All five focused
-image cases pass, including static scaled WebP, format round trips and GIF.
-The unchanged saved Maple page now visibly displays its large Health Yeah title.
-Its original Chromium reference shows another animation phase and a cookie
-panel; neither page-wide parity nor playback is claimed. Aggregate suites are
-deferred under the user's focused-verification instruction.
-
-Evidence: Lambda `temp/online-visual-round26/webp-before.log`, `webp-after.log`,
-`maple-before.png` / `maple-after.png`; input `test/test_image_io_gtest.cpp`.
-Original source/headers and independent first-frame image remain in Lambda
-`temp/online-visual-round24/maple-title*` and `maple-static.html`.
-
-<a id="li-029"></a>
-
-### LI-029 — Deferred single-block width is omitted from a parsed style rule
-
-**Status:** OPEN observed discrepancy; source cause **unconfirmed**, 2026-11-13.
-**Lambda blocker:** no for LI-028's nested-selector repair. Ownership
-**D9.1.1v4 / D9.1.3v2**, parsed declaration ownership **D5.5.1**.
-
-For `.outer{--tokens:{a:hover{width:1px}};width:{var(--size)};a:hover{color:green}.tail{height:2px}}`,
-Chromium retains two declarations on the outer style, including the deferred
-single-block width. The native engine parser reports only one outer declaration
-before LI-028. This is distinct from losing the following pseudo/nested rules.
-The declaration parser already has a `css_value_is_single_var_block` path and
-focused color-block tests; the stage that drops this width is not yet isolated.
-No blanket acceptance or test masking is added. LI-028's custom-block control
-uses a supported definite width to test its selected nesting contract.
-Evidence: Lambda `temp/online-visual-round18/parser-before.log` and
-`browser-controls.json`/`.log`; no current-source resolution claim is made.
+`Lambda-opus/temp/edit-viewer/markup-roundtrip-probe.log`. The cross-owner
+handoff is recorded in the [Lambda ledger](../../Lambda/vibe/Lambda_Issue_Ledger.md#input-format-integration-handoffs--2026-11-14).
+
+2026-11-14 ownership review: the input adapter currently maps the number of
+leading equals signs directly to a body heading. The Lambda writer's documented
+profile instead reserves a single equals sign for `meta.title` and starts body
+headings at two. Mapping only `==` to h1 would leave the document title as a
+body heading and would not implement that model. Moving the title into `meta`
+also affects the existing Markdown conversion path, whose input-owned writer
+currently skips metadata, so the reported Markdown-mediated round trip needs
+an agreed title-preservation path across the owners. No parser mapping has been
+changed as an isolated workaround.
 
 <a id="li-027"></a>
 
@@ -522,6 +182,20 @@ and PDF error outcomes; no workload, check, deadline or scheduler path is remove
 The affected additional qualification is stopped. No sibling implementation,
 header, test or build source is changed by this report.
 
+**Provider follow-up, 2026-11-14:** input now exposes `LambdaUvLoop` instances
+with per-instance loop, prepare/check handles and drain context. Instances are
+owned and driven by one thread; destruction returns `UV_EBUSY` while a user
+handle or request remains or the loop is running. The legacy global API uses
+the same checkpoint implementation and remains available for existing hosts.
+Native tests exercise four concurrent owners, checkpoint ordering and
+isolation, pending work, unreferenced handles, reentrant cleanup refusal and
+legacy behavior (`temp/ledger-uv-instance-focused.log`); twenty repeated runs
+pass (`temp/ledger-uv-instance-repeat.log`). This is an input
+provider capability, not a repair of the reported Lambda hang: the scheduler,
+JS event loop and other runtime consumers still call the legacy global API.
+Lambda must migrate its context-owned consumers and qualify its concurrency
+gate before LI-027 can close. D7.5.1 governs scheduler ownership.
+
 <a id="li-026"></a>
 
 ### LI-026 — Calmind CDN rejects a valid compressed resource request profile
@@ -553,6 +227,13 @@ Lambda `temp/online-visual-round13/calmind-corrected-controls.json`,
 `calmind-native-probe.png` and `calmind-browser-current.json/png`. An early
 User-Agent extraction concatenated following macros; those native/css-accept
 controls are superseded by corrected-controls and are not evidence.
+
+2026-11-14 refresh: the current page points to a first-party autoptimized CSS
+asset for which system curl received HTTP 200 with compressed, identity, and
+absent Accept-Encoding headers. Its URL and response are saved in
+`temp/ledger-network-calmind-css-*.log`. This is a current asset, not the
+previously captured asset or a native-renderer comparison, so it does not
+establish that the original interoperability issue is fixed.
 
 <a id="li-022"></a>
 
@@ -626,6 +307,11 @@ Evidence: Lambda `temp/online-recovery-20261112/transport/`, `pil-render/`,
 `test/online/snapshots/capture_results.csv`. The capture helper now retains
 selected origin headers, lifecycle events and failed/pending resources.
 
+2026-11-14 refresh: a bounded system-curl request to the same PIL URL failed
+with `SSL_ERROR_SYSCALL` (exit 35), before an HTTP response. This is a system
+transport control, not evidence of a new input-provider defect. See
+`temp/ledger-network-pil.log`.
+
 LI-016 is [resolved below](#li-016).
 
 <a id="li-015"></a>
@@ -663,36 +349,6 @@ owner investigation should establish supported writer admission and outcome
 inspection before Lambda expands that qualification. No owner source changed.
 
 
-<a id="li-012"></a>
-
-### LI-012 — Native tar variants test rejects sample.tar.gz
-
-**Status:** OPEN — cause unconfirmed. **Observed:** 2026-11-11, macOS,
-`make test-input-baseline` (debug), including a rerun with local socket access.
-**Lambda blocker:** no known block to the independent TeX script port. Ownership:
-**D9.1.1v4 / D9.1.3v2**.
-
-Input base `c5ca83e6d4d9793223117398cea5caea868d1040` plus the two-line HTTP POST
-repair fails `ZipTest.NativeTarVariantsCaptureExactBytesAndNames` at
-`test/test_zip_gtest.cpp:602`: opening `test/input/archive/sample.tar.gz` returns
-null with `tar: invalid or unsupported archive`. The uncompressed tar fixture
-succeeds; the gzip variant is expected to preserve the same entries and bytes.
-The archive suite reports 34/35 passing, and a focused rerun reproduces the
-failure in 2 ms. A separate baseline and rerun with local socket access report
-the same failure, with the other 34 cases passing. No archive source, fixture,
-expectation, or vendor dependency was edited for these observations.
-
-Reproduce from input:
-
-```sh
-./build/test/test_zip_gtest --gtest_filter=ZipTest.NativeTarVariantsCaptureExactBytesAndNames
-```
-
-Evidence: `../../lambda/temp/kianhup-hang/input-baseline.log` and
-`tar-control.log`. Existing LI-001 / LI-002 also fail the input aggregate;
-all seven local HTTP cases and the Lambda viewer gate pass. No archive repair
-or confirmed regression attribution is claimed.
-
 <a id="li-011"></a>
 
 ### LI-011 — Input dependency build pipeline and cross-platform qualification
@@ -718,11 +374,295 @@ macOS, Linux and Windows; actual Linux and Windows builds are not verified.
 See `scripts/dependency_builder.py`, `scripts/build_vendor.py`,
 `scripts/build_curl.py`, and `scripts/generate_native_deps_premake.py`.
 
+2026-11-14 environment check: this host is Darwin arm64 and has no available
+Docker, Podman, Lima, QEMU system emulator, or Wine command. Linux and Windows
+native qualification remains pending; this check is not a platform build.
+
+<a id="li-002"></a>
+
+### LI-002 — External-parent admissibility test disagrees with implementation
+
+**Status:** OPEN — expected behavior and root cause need investigation.
+**Observed:** 2026-11-09, macOS, `make test-input-baseline` (debug).
+**Lambda blocker:** not established. D3.4.3 requires a transition tree not
+to write to an external parent; it does not by itself establish the disputed
+`has_spread` admission rule.
+
+`TransitionTreeExternalParentTest.InadmissibleParentsAreDeclined` in
+`test/test_mark_builder_gtest.cpp` expects `type_tree_add_map_field_chars`
+to return null for an external map marked `has_spread`, but it returns a
+non-null child. `external_parent_admissible` in `lambda/input/input.cpp`
+currently allows named stored fields for runtime-key literals that keep this
+flag. Determine the intended admission rule and repair the implementation or
+the test at the root cause; do not change the expectation merely to pass.
+Reproduce with `./build/test/test_mark_builder_gtest --gtest_filter=TransitionTreeExternalParentTest.InadmissibleParentsAreDeclined`
+after building the baseline.
+
+2026-11-14 review: the existing D3.4.3 implementation record in
+`Lambda_Impl_DBench.md` explicitly admits `has_spread` when every stored
+field is named, and rejects actual unnamed spread slots. The failing test
+constructs an empty shape with only the marker, so it conflicts with that
+documented implementation policy. A separate native control now checks both
+the named-field admission and the unnamed-slot rejection. The original
+assertion remains unchanged under this repository's test-preservation rule;
+the aggregate failure remains open.
+
+<a id="li-003"></a>
+
+### LI-003 — Recheck DOM element backing-copy ownership
+
+**Status:** PARTIAL — a source-storage lifetime defect is fixed; broader
+non-view ownership remains unverified.
+**Ownership checked:** 2026-11-09. **Lambda blocker:** not established.
+
+The historical [RAD01-2](../../Lambda/vibe/radiant/Radiant_Issue_Ledger.md#rad01-2)
+claimed that DOM element backing data was copied and could diverge. The current
+input-owned `DomElement::create_in` in `lambda/input/css/dom_element.cpp` still
+assigns the supplied `Element` into `element->elmt` and conditionally snapshots
+backing data, but the old member names and constructor description are stale.
+Review the current ownership and mutation invariants, including D5.5.1 and
+D9.1.1v4, before deciding whether any defect remains.
+
+2026-11-14 review: D5.5.3 requires a view occurrence to own its copied
+document content. `build_dom_tree_with_parent` now uses `deep_copy_for_dom`
+for ordinary view inputs, and the focused
+`InputDomNativeTest.ViewOccurrencesOwnBackingAndLeaveSourceUnchanged` passes
+for two occurrences and a mutated descendant. The historical `native_element`
+member is gone; the registry separately records a render source, while DOM
+reads and writes use the embedded backing. A second control verifies that
+mapping and live mutation for a non-view wrapper. Non-view construction still
+borrows shallow-copied data, and its behavior when the source has a shorter
+lifetime than the document has not been qualified, so this issue remains open.
+D5.5.2 permits a retained reference only when its GC root lives at least as
+long as the document; the non-view control does not establish that host-side
+lifetime condition.
+
+**Source storage repair, 2026-11-14:** a non-view wrapper shallow-copies the
+source element header. Adding an attribute through `MarkEditor` rebuilt the
+wrapper's shape and freed its shared pool buffer, leaving the retained source
+pointing at a freed block. If the shared type was a private clone, the same
+edit could also change the source's shape. The editor now checks its document's
+registered source before reusing a private shape or freeing old data; it
+keeps the source-owned type and allocation intact. The test
+`InputDomNativeTest.NonViewWrapperShapeChangesRetainSourceStorage` failed for
+both shared and private shapes before the repair and passes afterward, along
+with the other eight native DOM cases. Evidence: `temp/ledger-dom-regression-before.log`
+and `temp/ledger-dom-suite-after.log`. Same-type writes through a directly
+created non-view wrapper still share existing data. The shorter-source-lifetime
+question remains unqualified; this partial repair does not close LI-003.
+
+**Descendant reproduction:** a non-view tree's parent backing retains its
+original child instead of the live DOM wrapper. Consequently
+`dom_backed_node_index` returns -1 for the linked child, and a new child
+attribute is absent when reading through the parent's Mark backing. Non-view
+tree construction now uses the existing D5.5.2/D5.5.3 document-owned deep-copy
+path, allocates each copied occurrence as DOM node storage, and retains the
+source mapping. Focused tests cover two independent occurrences, descendant
+edits and removal, and nested arrays without modifying the source. The native
+regression `InputDomNativeTest.NonViewChildBackingTracksTheLiveWrapper` fails
+before and passes after the repair. Evidence: `temp/ledger-dom-tree-before.log`
+and `temp/ledger-dom-cow-qualified.log`. See the subsequent source-lifetime
+control below for its scope; host-managed GC qualification remains open.
+
+**Source-header lifetime repair, 2026-11-14:** even after a tree had been
+copied into its document, a later shape edit dereferenced its retained source
+header to discover whether its type and data were shared. A guard-page probe
+reproduced the access after the source header became inaccessible
+(`temp/ledger-dom-source-guard-before.log`). The node registry now records
+shared storage while binding the valid source, and the editor consults that
+record without rereading the source. Sixteen native DOM controls pass,
+including view and non-view copied trees after a separate source pool is
+destroyed, a guarded source header, and the existing shared-wrapper cases
+(`temp/ledger-dom-source-focused.log`). These tests do not qualify foreign
+storage borrowed by a directly created wrapper, render-map identity after
+source retirement, or host-managed GC and compaction; LI-003 remains open.
+
+**Retained field contract, 2026-11-14:** the copied element shape still
+retains each source `ShapeEntry::type`. With a source-owned field contract,
+protecting that contract's page after tree construction causes a subsequent
+attribute read to fault (`temp/ledger-dom-contract-before.log`). The native
+regression `InputDomNativeTest.CopiedTreeOwnsForeignFieldTypeContract` remains
+failing for both view and non-view documents
+(`temp/ledger-dom-contract-focused.log`). Shape contracts can contain nested
+type graphs and nominal records whose pointer identity is significant under
+S2.1.4/D3.1.1; copying only the base header or replacing the contract with a
+generic type would not establish the required lifetime or preserve semantics.
+The correct ownership of those contracts is still under investigation.
+The cached `LaneStorageDesc::semantic_contract` and `base_contract` also
+point into the source pool. The additional native nullable-contract control
+exposes both the outer contract and its nested base; both controls fail in
+view and non-view modes (`temp/ledger-dom-contract-graph-before.log`). The
+document constructor receives an `Element*`, not its source `Input` or an
+owner handle, and the shared allocator capability is open as [LI-053](#li-053).
+
+## Resolved issues
+<a id="li-055"></a>
+
+### LI-055 — Concurrent allocator factories race while installing release hooks
+
+**Status:** RESOLVED, 2026-11-14. **Lambda blocker:** not established. D5.2.1
+governs allocator context registration, and D6.4.4 requires safe registry
+initialization.
+
+The pool/arena/scratch factory and the NamePool factory each used an
+unsynchronized function-local `installed` flag while writing their global
+release hooks. Isolated eight-thread first-use probes, with the respective
+factory source instrumented by ThreadSanitizer, report races on both flags
+(`temp/ledger-mem-factory-tsan-before.log` and
+`temp/ledger-name-factory-tsan-before.log`). The C factory now uses the native
+platform's one-time initialization primitive, and the C++ factory uses
+thread-safe function-local initialization. The same instrumented probes pass
+afterward (`temp/ledger-mem-factory-tsan-after.log` and
+`temp/ledger-name-factory-tsan-after.log`). This is a focused sanitizer check,
+not whole-program ThreadSanitizer qualification. A separate native executable
+exercises concurrent first use, and the existing allocator factory and NamePool
+suites pass. Shared allocator reference counting remains open as [LI-053](#li-053).
+
+**Completion follow-up, 2026-11-14:** instrumenting the factories together
+with the pool, arena, scratch-arena and NamePool implementations exposed the
+additional shared `next_pool_id` increment in `pool_init`
+(`temp/li055-tsan-pool-id-before.log`). The diagnostic ID sequence now uses
+a relaxed atomic increment. The native first-use control also exercises the
+scratch release hook and checks that concurrently created pools have distinct
+IDs. With all six implementation files and the test instrumented, the control
+passes in ten fresh processes (`temp/li055-tsan-repeat.json`); exact source
+hashes and compile/link commands are in `temp/li055-tsan-metadata.json`.
+This remains focused subsystem instrumentation; other linked archive objects
+are not instrumented by this check. The Windows one-time initialization path
+is present but has not been qualified on a Windows host.
+The complete native baseline, release build and boundary audit evidence is
+recorded in the allocator-factory qualification above; its remaining failures
+belong to LI-002 and LI-003.
+
+<a id="li-054"></a>
+
+### LI-054 — Parallel native tests start duplicate dependency builders
+
+**Status:** RESOLVED, 2026-11-14. **Lambda blocker:** not established. D9.1.5
+governs the JSON-driven build pipeline.
+
+`make -j4 test-input-baseline` started the vendor builder directly and through
+the recursive quiet `all` target. Concurrent builders reused ThorVG's staging
+directory, and one failed because `libthorvg.a` disappeared before installation
+(`temp/ledger-input-baseline-contract-graph.log`; inner build evidence
+`temp/ledger-build-dag-inner-before.log`). Native test binaries, the aggregate
+and the boundary target now depend on the same nonrecursive build graph, so
+make schedules each shared dependency builder once. The pre-change dry-run
+control exposes both paths (`temp/ledger-build-dag-control-before.log`), and
+the new dependency-builder test checks the combined native-test/boundary graph.
+The full parallel baseline reaches every executable; its unrelated test failures
+remain listed in the qualification above.
+
+<a id="li-052"></a>
+
+### LI-052 — Nested-array DOM edits diverge from the backing tree
+
+**Status:** RESOLVED for ordinary document-owned nested arrays, 2026-11-14.
+Input-owned insertion and removal retain DOM node identity and publish copied
+array paths, so earlier shallow document snapshots keep their old contents.
+Foreign arrays and specialized multidimensional, view, or sparse arrays are
+refused before mutation; those profiles are not claimed qualified. Focused
+tests cover nested elements, text, comments, sibling order, wide scalars,
+snapshot preservation and ownership refusal in view and non-view modes.
+Evidence: `temp/ledger-dom-cow-qualified.log`.
+
+**Status at report:** OPEN, reproduced 2026-11-14 on macOS. **Lambda blocker:** not
+established. D5.5.2 governs retained DOM ownership and S2.6.4 preserves array
+boundaries in element content.
+
+Before the repair, when an element's content contained an array whose child
+appeared in the DOM sibling chain, `dom_remove_prepared_backed_child` saw no
+direct backing slot and unlinked the wrapper while leaving the array entry.
+A later backing-tree consumer could still observe the removed node. The
+regression `InputDomNativeTest.NestedArrayEditsKeepOwnedChildOccurrences`
+now verifies that removal updates the array. Pre-fix evidence:
+`temp/ledger-dom-nested-removal.log`. Inserting before a nested reference also
+put the new backing entry after the array even though the DOM link preceded
+the reference (`temp/ledger-dom-nested-insertion.log`). The direct-index API remains unchanged. Lambda replacement uses it directly;
+the unqualified host path is recorded in the [Lambda ledger](../../Lambda/vibe/Lambda_Issue_Ledger.md#dom-replacement-of-nested-array-children--2026-11-14).
+
+<a id="li-001"></a>
+
+### LI-001 — Graph parser line-budget test fails
+
+**Status:** RESOLVED, 2026-11-14. Shared directory enumeration and existing
+path/Mark helpers remove duplicate logic while preserving local and brokered
+include behavior. The resolver is 272 lines, the header 106, and the six-unit
+total 4,407; the unchanged budget test and all 22 graph tests pass.
+
+**Status at report:** OPEN — validation failure. **Observed:** 2026-11-09, macOS,
+`make test-input-baseline` (debug). **Lambda blocker:** not established.
+
+`GraphParserTest.ParserLocBudget` in `test/test_graph_parser_gtest.cpp`
+reports 306 resolver lines against a limit of 273, 108 header lines against
+107, and 4,443 combined lines against 4,409. The other 19 graph parser cases
+passed in the same run. Reproduce with
+`./build/test/test_graph_parser_native --gtest_filter=GraphParserTest.ParserLocBudget`
+after building the baseline. The expected result is that the unchanged budget
+check passes; a source simplification or other resolution requires investigation.
+This observation does not establish a functional parser regression.
+
+2026-11-14 repair: the shared directory adapter already supports an unlimited
+ambient listing. It now retains the directory entry symlink classification even
+when target metadata is unavailable, so the resolver can use the same
+enumeration path while keeping the broker limit, local symlink exclusion,
+canonicalization, and ordering. The resolver also reuses the existing Mark
+child and path helpers and resolves the root path once. A duplicate header
+declaration was removed. The unchanged controls cover local directories with
+more than 4,096 entries, live and dangling symlinks, include cycles and network
+rejection, as well as brokered filtering and sorted order. The original test
+and all source ceilings remain unchanged. Evidence: `temp/ledger-graph-controls-before.log`
+and `temp/ledger-graph-final2.log`.
+
+<a id="li-013"></a>
+
+### LI-013 — Native TeX text-case expansion exhausts its budget on reference controls
+
+**Status:** RESOLVED, 2026-11-14. The native reference and undefined-control
+case conversions terminate with the kernel encoding dispatch in place. This
+does not claim full LaTeX font-selection support. D10.2.2 governs the native
+TeX input boundary.
+
+**Status at report:** OPEN — cause unconfirmed. **Observed:** 2026-11-11, macOS debug
+native TeX parser. **Script TeX-port blocker:** no; the experimental script
+case converter explicitly reports unsupported reference forms it cannot handle.
+
+Running `parse("\\ExplSyntaxOn\\text_uppercase:n{\\ref{aB}/\\pageref{aB}/\\eqref{aB}}\\ExplSyntaxOff", {type: "tex"})`
+returns empty text and a `tex-budget` diagnostic after 20,000,000 macro calls,
+followed by missing-number and missing-brace diagnostics. Evidence is in
+`temp/expl3-script/native-case-refs.out`; the same probe shows `\\label` and
+`\\cite` in a different case-conversion argument completing without a budget
+diagnostic.
+
+2026-11-14 isolation: `\ref`, `\pageref`, `\relax`, and a defined `\eqref`
+complete; undefined `\eqref` and an unrelated undefined command each exhaust
+the budget. The bundled expl3 resources were copied into `temp/ledger-expl3/`.
+The expl3 predicate correctly reports an undefined token as non-expandable.
+Before the repair, the minimal kernel did not define the LaTeX font-encoding controls
+`\@current@cmd` and `\@changed@cmd`. In the expl3 text expansion path,
+TeX's `\ifx` correctly considers an unrelated undefined control equal to
+each undefined encoding control, so expl3 takes its encoding-escape branch
+and repeats until the budget is exhausted. A diagnostic preamble defining
+both controls prevents this loop, but does not implement their encoding
+semantics and is not a fix. The kernel now implements both dispatch controls,
+including current-encoding lookup, default-encoding fallback, missing-symbol diagnostics, math warnings,
+and protected expansion. Focused controls exercise dispatch, fallback,
+missing-symbol reporting, and protection. The opt-in focused regressions
+are `TexEngineTest.Expl3ReferenceCaseExpansionTerminates` and
+`TexEngineTest.Expl3UndefinedTokenIsNotExpandable`, enabled by
+`LAMBDA_INPUT_EXPL3_TEST_DIR`; both pass with the copied resources. Evidence:
+`temp/ledger-tex-encoding-suite2.log`, `temp/ledger-expl3-resource-sha256.txt`,
+`temp/ledger-expl3-controls.log`,
+`temp/ledger-expl3-path2.log`, and `temp/ledger-expl3-kernel-control.log`.
+
 <a id="li-007"></a>
 
 ### LI-007 — Shared header retains declarations from the second runtime retirement
 
-**Status:** OPEN — owner header cleanup. **Observed:** 2026-11-10, Lambda
+**Status:** RESOLVED by the existing header split; revalidated 2026-11-14.
+
+
+**Status at report:** OPEN — owner header cleanup. **Observed:** 2026-11-10, Lambda
 `5f3550a38` plus the second runtime audit. **Lambda blocker:** no; the
 36 declarations have no source, generated-import or host-export consumer.
 Authority: **D9.1.1v4 / D9.1.3v2** (header ownership), **D9.4.6** (host exports).
@@ -747,11 +687,276 @@ the earlier LI-006 exception was scoped to its region patch only.
 Implementation and qualification record:
 `../lambda/vibe/impl/Lambda_Impl_MIR_Full_Retirement.md`, second runtime audit.
 
+2026-11-14 review: neither sibling checkout retains the referenced temporary
+inventory or patch. The inventory was reconstructed from Lambda retirement
+commit `1a038ece67` and the pre-split input header: all 36 matching removed
+function definitions had declarations there, and none remains in the current
+`lambda/lambda.h`. Input commit `b2a13ec` removed the declarations as part of
+the header split. The auditable reconstructed list is
+`temp/ledger-retirement-candidates.txt`; no new header change is needed.
+
+
+<a id="li-036"></a>
+
+### LI-036 — Resource capacity rejects already-admitted consumers
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns the resource manager under D9.1.1v4 / D9.1.3v2.
+
+At 500 retained resources, `resource_manager_load` rejected every request before
+checking the URL map. CSS, script and image consumers could no longer reuse
+already-cached or pending bytes. Conductor's capture exposed this after unrelated
+CSS icon prefetch exhausted the budget (Radiant RI-079).
+
+The existing capacity check now follows existing-resource reuse and still
+precedes acquisition of every new identity. Document admission still precedes
+both paths; the cap remains 500. No caller reference, retry or ownership rule is
+changed. The new offline unit actually stores and admits 500 cached identities,
+reuses the first as an image consumer, rejects a new 501st URL and checks the
+unchanged total. It and two neighboring cache/lifetime units pass.
+
+Evidence: Lambda's `temp/online-visual-round31/input-focused.log`; test
+`NetworkResourceManager.CapacityKeepsExistingConsumersAndRejectsNewResources`
+in `test/test_network_scheduler_gtest.cpp`. Full input baseline deferred under
+the user's focused-verification instruction.
+
+<a id="li-035"></a>
+
+### LI-035 — Grid auto-flow discards pending custom properties
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns declaration validation under D9.1.1v4 / D9.1.3v2.
+
+Ahrefs' saved tablet promotion used `grid-auto-flow:var(--directionTablet-12pdsr3)`
+with `column`, but laid out vertically. The `CSS_PROPERTY_GRID_AUTO_FLOW`
+validator rejected pending values before the existing Radiant substitution pass.
+`css_properties.cpp` now admits pending substitution, as neighboring keyword
+properties already do. Substituted values still pass ordinary grammar validation;
+an invalid winning variable resets at computed-value time rather than reviving
+an older declaration. No page selectors or replacement values are introduced.
+
+Qualification: the new `SupportsGridAutoFlowRetainsPendingSubstitution` case
+passes within 32 selected media/supports units. Five exported PNG controls cover
+whole-value/list variables, fallback, dense packing and invalid computed values;
+all five fail before and pass after, and independently pass Chromium. Evidence:
+Lambda's `temp/online-visual-round30/`; tracked reductions are
+`test/online/grid_flow_variable_fixtures.cjs` in Lambda. Full input baseline was
+deferred under the user's focused-verification instruction.
+
+<a id="li-034"></a>
+
+### LI-034 — Compact logical conditions lose valid token boundaries
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns CSS condition evaluation under D9.1.1v4 / D9.1.3v2.
+
+Ahrefs' minified tablet queries use `(min-width:768px)and (max-width:1279px)`.
+`css_condition_find_operator` incorrectly required whitespace before `and`/`or`,
+so both device variants painted and the hero lost its tablet width. A closing
+parenthesis now supplies that token boundary. Whitespace after the keyword
+remains required; `and(` stays a function token rather than a logical operator,
+as specified by [Media Queries 4](https://www.w3.org/TR/mediaqueries-4/#mq-syntax).
+The related supports evaluator now unwraps enclosing groups before scanning
+operators, fixing nested supported declarations previously sent to the atom parser.
+
+Qualification: two new native cases exercise compact and/or, nesting, case,
+comment-separated stylesheet parsing, viewport invalidation and invalid controls.
+All 32 selected media/supports cases pass. Six PNG controls improve from 1/6 to
+6/6 and independently pass Chromium. The exact saved Ahrefs source removes the
+duplicate promotion and restores the hero width. Lambda's
+`temp/online-visual-round30/` pins sources/binaries and before/after evidence;
+tracked reductions are `test/online/compact_condition_fixtures.cjs` in Lambda.
+No admission, URL, stylesheet, viewport or snapshot-time workaround is used.
+
+<a id="li-032"></a>
+
+### LI-032 — Shared signature verifier requires OpenSSL during mbedCrypto-only migration
+
+**Status:** RESOLVED, 2026-11-13. The user explicitly authorized scoped
+input-owned source, header, tests and build/setup changes for this migration.
+**Lambda task blocker:** no; native provider migration and verification complete.
+Ownership: D9.1.1v4 / D9.1.3v2; native crypto boundary: D11.1.2.
+
+The previous `lib/signature.c` used OpenSSL EVP/provider APIs and the `lambda-lib`
+target required `openssl-crypto`. Replaced the provider with mbedCrypto RSA-PSS/
+SHA-256 and P-256/SHA-256 verification. Ed25519 remains an unsupported reserved
+ABI value. Raw SEC1 keys require canonical low-S P1363 signatures; SPKI keys use
+standard DER ECDSA. PEM/DER parsing rejects trailing data and extra key blocks.
+OpenSSL package/link requirements are removed from input build/setup configuration.
+
+Verification: input signature 4/4, digest 9/9, dependency configuration 11/11;
+Lambda baseline 7,473/7,473; 85 sync goldens per AUTO/interpreter/JIT; 42 focused
+ordinary/forced-GC crypto, identity, TUF and admission checks. Peer, DataChannel
+and LAN demo native process gates pass. Native Lambda host and input archive
+symbol/linkage audit finds no OpenSSL dependency. Tests retain the external
+OpenSSL CLI only as an independent fixture/certificate oracle. Runtime and setup
+need no OpenSSL provider. Evidence: Lambda's `temp/mbedcrypto-only/` and its
+`vibe/impl/Lambda_Impl_MbedCrypto_Only (done).md` completion record. The user
+subsequently authorized the Lambda-owned optional Node provider removal; that
+module is also mbedCrypto-only.
+
+<a id="li-030"></a>
+
+### LI-030 — Animated WebP cannot supply even the initial export frame
+
+**Status:** FIXED for initial-frame image decoding, 2026-11-14. Playback and
+later-frame selection remain unsupported. **Lambda blocker:** cleared for
+Maple 082's missing title. Native ownership **D9.1.1v4 / D9.1.3v2**;
+selected-frame contract **D10.1.7**, allocation ownership **D5.5.1**.
+
+The saved Maple title response is animated WebP despite its `.gif` URL.
+The shared decoder explicitly rejected every animated container, including
+ordinary image consumers asking only for frame zero. The existing WebP decoder
+now decodes the first demuxed subframe directly into a transparent, full-size
+canvas, retaining its offset and alpha. ANIM background and later frames are
+not composited. The manifest adds the pinned demux source; vendor code is
+unchanged. Existing scratch estimates, decoded-pixel and frame limits apply.
+Strict thumbnails refuse full-canvas fallback; permitted thumbnails use the
+shared reducer. Nonzero frame selection remains explicitly unsupported.
+
+Two new native cases fail before and pass after. They cover full/offset frames,
+alpha, transparent canvas, delay/loop metadata, frame/pixel/scratch limits,
+truncation, thumbnail policy and unsupported later selection. All five focused
+image cases pass, including static scaled WebP, format round trips and GIF.
+The unchanged saved Maple page now visibly displays its large Health Yeah title.
+Its original Chromium reference shows another animation phase and a cookie
+panel; neither page-wide parity nor playback is claimed. Aggregate suites are
+deferred under the user's focused-verification instruction.
+
+Evidence: Lambda `temp/online-visual-round26/webp-before.log`, `webp-after.log`,
+`maple-before.png` / `maple-after.png`; input `test/test_image_io_gtest.cpp`.
+Original source/headers and independent first-frame image remain in Lambda
+`temp/online-visual-round24/maple-title*` and `maple-static.html`.
+
+
+<a id="li-014"></a>
+
+### LI-014 — Native counter value scanning crosses an implicit expression boundary
+
+**Status:** RESOLVED, 2026-11-14. Counter scans mark their private end token and expression scanning leaves that boundary for its caller, preventing expansion of following document tokens. Simple, implicit and nested expression controls pass in the native TeX engine suite.
+
+
+**Status at report:** OPEN — root cause confirmed. **Observed:** 2026-11-11, macOS debug
+native TeX parser; independently compared with pdfLaTeX. **Script TeX-port
+blocker:** no for implementing the correct bounded evaluation, but native
+parity for this case is blocked until the native path is fixed.
+
+For `\begin{document}\newcounter{n}\setcounter{n}{\numexpr1+2}\arabic{n}\end{document}`,
+native `parse(..., {type:"tex"})` emits `0` for `\arabic{n}` and reports
+`latex-counter-value`, even though the counter eventually holds 3. The
+pdfLaTeX reference emits 3; see `temp/expl3-script/counter-numexpr-ref.log` and
+`counter-numexpr-debug.out`. In `input-tex-latex.cpp`, `eval_counter_value`
+appends one frozen `\relax`, calls `scan_int`, and then reads another expanded
+token to check for trailing material. An implicitly terminated `\numexpr`
+consumes the only sentinel; that trailing-token read expands the following
+`\arabic{n}` before `counter_command` stores the newly computed value. The
+counter-value scan must remain bounded to its argument, including nested
+expressions, without evaluating the following document tokens prematurely.
+
+<a id="li-017"></a>
+
+### LI-017 — Native TeX leaks an environment end marker inside constructor arguments
+
+**Status:** RESOLVED, 2026-11-14. Constructor argument mode executes the internal environment-end primitive and closes the group. The private control name is encoded without consuming the first hex-looking letter. Single and consecutive custom-environment controls pass.
+
+
+**Status at report:** OPEN — cause confirmed for the observed path. **Observed:**
+2026-11-12, macOS debug native TeX parser. **Script TeX-port blocker:** yes for
+native-compatible handling of custom environments inside constructor arguments.
+
+For `\newenvironment{foo}{B}{E}\begin{document}\textbf{A\begin{foo}X\end{foo}Z}\end{document}`,
+native TeX output contains `\textbf{ABXE\.nvendZ}`. The reproduction and
+native output are in `temp/expl3-script/constructor-env-probe.ls` and `.out`;
+the staged Script result explicitly fails reconstruction for this case. In
+`lambda/input/input-tex-latex.cpp`, `latex_arg_mode_env` pushes the end macro
+and the internal environment-end primitive for a custom environment.
+`arg_mode` in `lambda/input/input-tex-main.cpp` emits that unexpandable
+primitive instead of executing it, leaking its internal control sequence into
+the output and leaving the environment group unclosed. The internal name uses
+`"\x02envend"`, whose C++ hexadecimal escape includes the `e` and produces
+the observed leading dot. The native argument-mode handling and group lifetime
+need correction before this case can be used as a parity reference.
+
+<a id="li-018"></a>
+
+### LI-018 — Native LaTeX environment scanning interprets raw inline verbatim
+
+**Status:** RESOLVED, 2026-11-14. The document environment scanner shares the existing verbatim delimiter scanner, so percent signs and environment-looking text inside verb payloads remain raw. The original and starred reproductions pass.
+
+
+**Status at report:** OPEN — cause confirmed for the observed examples. **Observed:**
+2026-11-12, macOS debug native LaTeX parser. **Script TeX-port blocker:** yes
+for native AST comparison of affected valid verbatim content.
+
+Native TeX preserves both `\begin{document}A\verb|x_%|B\end{document}` and
+`\begin{document}A\verb|\end{document}|B\end{document}` without diagnostics,
+but native LaTeX parsing reports an error for each; the same parser builds a
+`verb` node for `\verb|xyz|`. Reproduction and output are
+`temp/expl3-script/verb-native-digest-probe.ls` and `.out`. The document
+`find_environment_end` scan in `lambda/input/input-latex-c.cpp` skips the
+control word but does not skip its verbatim payload, so it treats `%` inside
+that payload as a comment and `\end{document}` inside it as an environment
+terminator. The scan needs to recognize raw inline spans before looking for
+comments and environment boundaries.
+
+<a id="li-019"></a>
+
+### LI-019 — Native TeX discard boundaries become stale after cross-boundary unskip
+
+**Status:** RESOLVED, 2026-11-14. Removing a preceding space now adjusts all open output-slice boundaries before nested boxes finish. The original discard and global-definition controls pass without leaked content or an out-of-bounds removal.
+
+
+**Status at report:** OPEN — root cause confirmed. **Observed:** 2026-11-12, macOS debug
+native TeX parser. **Script TeX-port blocker:** yes for native-compatible
+cross-boundary removal in discarded and nested box material.
+
+For `\begin{document}A \insert0{\vadjust{\unskip}X}B\end{document}`, native
+TeX emits `AXB`: the inner `\unskip` removes the preceding space, but `X`
+leaks from the outer discarded insert. A similar case leaks an echoed global
+macro definition. Reproduction and native output are
+`temp/expl3-script/discard-unskip-detail.ls` and `.out`. The native log also
+shows `arraylist_remove_oob` with a length of 4294967295; evidence is
+`temp/expl3-script/discard-unskip-detail.log`.
+
+`unskip` in `lambda/input/input-tex-main.cpp` removes the last output item
+without adjusting open groups' `out_start` values. `finish_box` in
+`lambda/input/input-tex-prims.cpp` subtracts those stale unsigned boundaries
+from the shorter output length; it can either leave subsequent items outside
+the intended discard slice or underflow. The array-list bounds check rejects
+the invalid removal. Update the native boundary accounting and qualify nested
+discarded groups before using these cases as port parity references.
+
+<a id="li-029"></a>
+
+### LI-029 — Deferred single-block width is omitted from a parsed style rule
+
+**Status:** RESOLVED, 2026-11-14. Width and height validation now defers its single-value grammar when substitution is pending. The original nested stylesheet and standalone declaration pass, while non-variable block and extra-token controls remain rejected.
+
+
+**Status at report:** OPEN observed discrepancy; source cause **unconfirmed**, 2026-11-13.
+**Lambda blocker:** no for LI-028's nested-selector repair. Ownership
+**D9.1.1v4 / D9.1.3v2**, parsed declaration ownership **D5.5.1**.
+
+For `.outer{--tokens:{a:hover{width:1px}};width:{var(--size)};a:hover{color:green}.tail{height:2px}}`,
+Chromium retains two declarations on the outer style, including the deferred
+single-block width. The native engine parser reports only one outer declaration
+before LI-028. This is distinct from losing the following pseudo/nested rules.
+The declaration parser already has a `css_value_is_single_var_block` path and
+focused color-block tests; the stage that drops this width is not yet isolated.
+No blanket acceptance or test masking is added. LI-028's custom-block control
+uses a supported definite width to test its selected nesting contract.
+Evidence: Lambda `temp/online-visual-round18/parser-before.log` and
+`browser-controls.json`/`.log`; no current-source resolution claim is made.
+
+
 <a id="li-005"></a>
 
 ### LI-005 — Boundary check looks in the unprofiled object directory
 
-**Status:** OPEN — build validation failure. **Observed:** 2026-11-10, macOS,
+**Status:** RESOLVED, 2026-11-14. The boundary audit now receives the selected build profile and reads its dependency files. Debug and release audits pass; stale unprofiled files no longer affect the result.
+
+
+**Status at report:** OPEN — build validation failure. **Observed:** 2026-11-10, macOS,
 `make -j4 check-boundary` (debug). **Lambda blocker:** not established.
 Authority: **D9.1.1v4 / D9.1.3v2** (input ownership boundary).
 
@@ -762,59 +967,370 @@ expected result is for `make check-boundary` to inspect the selected profile's
 dependency files and succeed when all dependencies stay inside input. An
 in-memory audit using the debug-profile paths passed during LI-004 verification.
 
-<a id="li-001"></a>
+<a id="li-012"></a>
 
-### LI-001 — Graph parser line-budget test fails
+### LI-012 — Native tar variants test rejects sample.tar.gz
 
-**Status:** OPEN — validation failure. **Observed:** 2026-11-09, macOS,
-`make test-input-baseline` (debug). **Lambda blocker:** not established.
+**Status:** RESOLVED, 2026-11-14. The macOS native test link now places zlib before the JPEG provider, whose exported inflate symbols otherwise intercept gzip initialization. The executable binds inflateInit2_ to libz and all 35 archive cases pass, including compressed tar integrity and limits. Other hosts must likewise link the intended zlib provider.
 
-`GraphParserTest.ParserLocBudget` in `test/test_graph_parser_gtest.cpp`
-reports 306 resolver lines against a limit of 273, 108 header lines against
-107, and 4,443 combined lines against 4,409. The other 19 graph parser cases
-passed in the same run. Reproduce with
-`./build/test/test_graph_parser_native --gtest_filter=GraphParserTest.ParserLocBudget`
-after building the baseline. The expected result is that the unchanged budget
-check passes; a source simplification or other resolution requires investigation.
-This observation does not establish a functional parser regression.
 
-<a id="li-002"></a>
+**Status at report:** OPEN — cause unconfirmed. **Observed:** 2026-11-11, macOS,
+`make test-input-baseline` (debug), including a rerun with local socket access.
+**Lambda blocker:** no known block to the independent TeX script port. Ownership:
+**D9.1.1v4 / D9.1.3v2**.
 
-### LI-002 — External-parent admissibility test disagrees with implementation
+Input base `c5ca83e6d4d9793223117398cea5caea868d1040` plus the two-line HTTP POST
+repair fails `ZipTest.NativeTarVariantsCaptureExactBytesAndNames` at
+`test/test_zip_gtest.cpp:602`: opening `test/input/archive/sample.tar.gz` returns
+null with `tar: invalid or unsupported archive`. The uncompressed tar fixture
+succeeds; the gzip variant is expected to preserve the same entries and bytes.
+The archive suite reports 34/35 passing, and a focused rerun reproduces the
+failure in 2 ms. A separate baseline and rerun with local socket access report
+the same failure, with the other 34 cases passing. No archive source, fixture,
+expectation, or vendor dependency was edited for these observations.
 
-**Status:** OPEN — expected behavior and root cause need investigation.
-**Observed:** 2026-11-09, macOS, `make test-input-baseline` (debug).
-**Lambda blocker:** not established. D3.4.3 requires a transition tree not
-to write to an external parent; it does not by itself establish the disputed
-`has_spread` admission rule.
+Reproduce from input:
 
-`TransitionTreeExternalParentTest.InadmissibleParentsAreDeclined` in
-`test/test_mark_builder_gtest.cpp` expects `type_tree_add_map_field_chars`
-to return null for an external map marked `has_spread`, but it returns a
-non-null child. `external_parent_admissible` in `lambda/input/input.cpp`
-currently allows named stored fields for runtime-key literals that keep this
-flag. Determine the intended admission rule and repair the implementation or
-the test at the root cause; do not change the expectation merely to pass.
-Reproduce with `./build/test/test_mark_builder_gtest --gtest_filter=TransitionTreeExternalParentTest.InadmissibleParentsAreDeclined`
-after building the baseline.
+```sh
+./build/test/test_zip_gtest --gtest_filter=ZipTest.NativeTarVariantsCaptureExactBytesAndNames
+```
 
-<a id="li-003"></a>
+Evidence: `../../lambda/temp/kianhup-hang/input-baseline.log` and
+`tar-control.log`. Existing LI-001 / LI-002 also fail the input aggregate;
+all seven local HTTP cases and the Lambda viewer gate pass. No archive repair
+or confirmed regression attribution is claimed.
 
-### LI-003 — Recheck DOM element backing-copy ownership
+<a id="li-031"></a>
 
-**Status:** UNVERIFIED — historical issue requires owner review.
-**Ownership checked:** 2026-11-09. **Lambda blocker:** not established.
+### LI-031 — Unclosed optional math argument stalls native LaTeX parsing
 
-The historical [RAD01-2](../../Lambda/vibe/radiant/Radiant_Issue_Ledger.md#rad01-2)
-claimed that DOM element backing data was copied and could diverge. The current
-input-owned `DomElement::create_in` in `lambda/input/css/dom_element.cpp` still
-assigns the supplied `Element` into `element->elmt` and conditionally snapshots
-backing data, but the old member names and constructor description are stale.
-Review the current ownership and mutation invariants, including D5.5.1 and
-D9.1.1v4, before deciding whether any defect remains. No behavioral regression
-has been reproduced in this review.
+**Status:** RESOLVED, 2026-11-14. The fallback command parser leaves an unmatched bracket for punctuation parsing instead of retrying without advancing. The native unclosed-argument regression terminates successfully.
 
-## Resolved issues
+
+**Status at report:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
+**Lambda task blocker:** yes for malformed-input parity and safe full script
+port qualification. D10.2.2 governs the current LaTeX input boundary.
+
+Parsing `\begin{document}$\downarrow[unclosed$\end{document}` with
+`parse(..., {type: "latex"})` did not return within five seconds; the timed
+process was stopped. The fallback loop in `lambda/input/input-latex-c.cpp`
+sees `[`, calls `parse_brack_group`, and repeats without advancing when the
+bracket is unclosed: `consume_group_span` returns false for that form.
+Parsing should terminate with a recoverable result or a diagnostic.
+
+Reproduce with `python3 temp/expl3-script/verify-native-unclosed-math-bracket.py`;
+the script and `native-unclosed-math-bracket-result.txt` are in the same
+temporary directory. The behavior was discovered while qualifying the Lambda
+Script TeX engine. Native input ownership is unchanged, and no input source
+or reference result is modified by this report.
+
+<a id="li-033"></a>
+
+### LI-033 — Escaped dollar ends native inline math prematurely
+
+**Status:** RESOLVED, 2026-11-14. Dollar-delimited math skips escaped control symbols when searching for its closing delimiter. The escaped-dollar regression and neighboring native LaTeX cases pass.
+
+
+**Status at report:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
+**Lambda task blocker:** yes for native-reference comparison of dollar-delimited
+math containing an escaped dollar; other math cases can proceed. D10.2.2
+governs the current LaTeX input boundary.
+
+Parsing `\begin{document}$\$\%\#$\end{document}` with
+`parse(..., {type: "latex"})` reports a missing dollar delimiter, although
+the escaped dollar belongs to the math content. The dollar-math delimiter
+scan in `lambda/input/input-latex-c.cpp` stops at the first `$` byte without
+checking whether it is escaped. The expected result is one closed math node
+containing the escaped symbols.
+
+Reproduction and error evidence are in
+`temp/expl3-script/math-raw-probe.ls` and `math-raw-v4-interp.log`. The issue
+was found while qualifying the Lambda Script TeX engine. Native input source
+and existing reference results have not been modified for this report.
+
+<a id="li-037"></a>
+
+### LI-037 — JSON top-level parser accepts trailing non-whitespace
+
+**Status:** RESOLVED, 2026-11-14. The script-facing JSON parser now rejects missing top-level values and non-whitespace trailing content using the existing parse-error channel. Focused valid and invalid controls pass.
+
+
+**Status at report:** OPEN, reproduced 2026-11-13 on macOS with Lambda-opus debug
+`8b5ebe56e` plus the editor work. **Lambda task blocker:** yes for safely
+admitting JSON property editing. Input ownership follows **D9.1.1v4**;
+**S7.5.1v6** governs acknowledgement of an ordinary parse error.
+
+From the Lambda checkout, run `./lambda.exe temp/edit-viewer/invalid.ls`
+(the script evaluates `parse` on malformed JSON). In particular,
+`parse("1abc", 'json')` and `parse("1 2", 'json')` both return `1`
+instead of reporting the non-whitespace content after the top-level value;
+`parse("", 'json')` returns null. Malformed JSON must report an error rather
+than admit a prefix as the complete document. The editor cannot trust the
+script-facing result when checking whether a JSON file or edited value is
+safe to save.
+
+In `lambda/input/input-json.cpp`, `parse_json` calls `parse_value` once and
+returns without checking the remaining cursor; the existing native
+`parse_json_to_item_strict` has a trailing-content check. The script-facing
+`parse(..., 'json')` dispatch and the intended strictness policy should be
+confirmed by the input owner. This report does not change input sources or
+reference results.
+
+<a id="li-038"></a>
+
+### LI-038 — TOML parser accepts a numeric prefix followed by invalid text
+
+**Status:** RESOLVED, 2026-11-14. TOML document parsing validates the remainder of each value line before accepting the value. Numeric-prefix and extra-token regressions pass.
+
+
+**Status at report:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+safe property editing of the affected format. Input ownership follows
+**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
+
+`parse("x = 1junk\n", 'toml')` returns `{x: 1}` instead of rejecting the invalid numeric value. The editor cannot use that result to validate property edits or saved data. Relevant owner code is `lambda/input/input-toml.cpp`; the exact cause has not been confirmed.
+
+Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
+A malformed document must produce an error rather than a successful partial
+value. No input implementation or reference was changed by this report.
+
+<a id="li-039"></a>
+
+### LI-039 — YAML parser accepts an unterminated flow sequence
+
+**Status:** RESOLVED, 2026-11-14. Flow sequences and mappings now require their matching closing delimiter. Focused malformed cases and the existing YAML corpus pass.
+
+
+**Status at report:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+safe property editing of the affected format. Input ownership follows
+**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
+
+`parse("a: [1,\n", 'yaml')` returns a map containing `a: [1]` rather than an error for the unclosed sequence. The editor cannot rely on this parser to validate the complete YAML document. Relevant owner code is `lambda/input/input-yaml.cpp`; the exact cause has not been confirmed.
+
+Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
+A malformed document must produce an error rather than a successful partial
+value. No input implementation or reference was changed by this report.
+
+<a id="li-040"></a>
+
+### LI-040 — iCalendar and vCard parsers silently drop malformed content lines
+
+**Status:** RESOLVED, 2026-11-14. Calendar and contact readers report content lines missing a property name or value separator instead of silently discarding them. Focused malformed-line controls pass.
+
+
+**Status at report:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+safe property editing of the affected format. Input ownership follows
+**D9.1.1v4**; **S7.5.1v6** governs acknowledgement of a parse error.
+
+Both `parse("BEGIN:VCALENDAR\nBROKEN\nEND:VCALENDAR\n", 'ics')` and `parse("BEGIN:VCARD\nBROKEN\nEND:VCARD\n", 'vcf')` succeed with empty entries, instead of reporting the line without a colon. The editor cannot rely on these results to validate a complete contact or calendar file. Relevant owner code is `lambda/input/input-ics.cpp` and `lambda/input/input-vcf.cpp`; the exact causes have not been confirmed. This is consistent with the older I-F10 observation in `vibe/impl/Lambda_Impl_Code_Review.md`.
+
+Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-invalid.ls`.
+A malformed document must produce an error rather than a successful partial
+value. No input implementation or reference was changed by this report.
+
+<a id="li-041"></a>
+
+### LI-041 — Markdown footnote definitions lack source ranges
+
+**Status:** RESOLVED, 2026-11-14. With source positions requested, each Markdown footnote retains its authored range, and duplicate definitions remain available as separate source-backed nodes without changing ordinary reference resolution. Multiline, unused, and duplicate-definition controls pass.
+
+
+**Status at report:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+showing and editing surrounding Markdown while retaining footnote definitions
+as individually rendered view-only blocks. Input ownership follows **D9.1.1v4**;
+source-backed document editing is covered by **D9.3.4**.
+
+`parse(source, {type: 'markdown', sourcepos: true})` gives authored paragraph,
+HTML and math blocks `sourcepos`, but moves footnote definitions into a generated
+`<footnotes>` element whose individual `<footnote>` nodes have no original
+source positions. The original source may contain multiple definitions and
+unrelated link definitions in the same gap. Consequently the Lambda editor
+cannot reliably associate each footnote with its exact authored lines, and
+shows the combined gap as raw source instead of rendering the footnote. The
+existing `edit_md_view_only` and `edit_md_view_only_keys` UI replays reproduce
+this with the original editor as well as the current changes.
+
+Reproduce from the Lambda checkout with
+`./lambda.exe temp/edit-viewer/md-footnote-probe.ls` using
+`test/ui/edit/kept.md`; its output shows the source-positioned body nodes,
+the generated footnote without a `sourcepos`, and the combined source gap.
+`lambda/input/markup/block/block_document.cpp` records source positions for
+ordinary blocks but `parseFootnoteDefinition` constructs the note separately.
+The input owner should retain each definition's original span when source
+positions are requested, including multiline, duplicate and unused definitions.
+No input implementation or reference was changed by this report.
+
+<a id="li-042"></a>
+
+### LI-042 — CSV separator detection counts tabs inside quoted fields
+
+**Status:** RESOLVED, 2026-11-14. Separator detection scans the first logical record, ignoring separators and line breaks within quoted fields and handling doubled quotes. Focused detection and parsed-row controls pass.
+
+
+**Status at report:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
+`8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
+property editing CSV files whose first quoted record contains more tabs than
+commas. Input ownership follows **D9.1.1v4**; **D9.3.4** covers document
+processing.
+
+`parse("\"a\t\tb\",c\n1,2\n", 'csv')` treats tabs inside the
+quoted first field as separators and returns one field named `a\t\tb`
+with value `1,2`, instead of the two CSV columns `a\t\tb` and `c`
+with values `1` and `2`. The viewer uses this input parser. The editor's
+matching delimiter choice cannot safely build the property tree for this
+source and currently falls back to source editing.
+
+Reproduce from the Lambda checkout with
+`./lambda.exe temp/edit-viewer/csv-separator-probe.ls`. In
+`lambda/input/input-csv.cpp`, `detect_csv_separator` counts every tab and
+comma on the first physical line without tracking quoted fields. Detection
+should ignore delimiters inside quoted fields, including escaped quotes and
+multiline quoted records. No input implementation or reference was changed
+by this report.
+
+<a id="li-043"></a>
+
+### LI-043 — Man parser renders the zero-width `\&` escape as text
+
+**Status:** RESOLVED, 2026-11-14. The man inline reader consumes the roff zero-width escape without producing visible text. The focused man regression passes.
+
+
+**Status at report:** Open. **Blocks:** rich editing of man pages in `lambda edit`.
+
+Reproduction from the Lambda checkout: run a Lambda script evaluating
+`parse(".SH NAME\n\\&test\n", 'man')` and
+`parse(".SH NAME\ntest\n", 'man')`. The first result contains a span with
+text `&test`; the second contains text `test`. The roff `\&` escape is
+zero-width, so these inputs should have the same visible paragraph text.
+The checked output is in `Lambda-opus/temp/edit-viewer/man-input-probe.log`.
+The parser's treatment of this escape is unconfirmed; this report identifies
+observable behavior rather than an implementation cause. The Lambda man writer
+uses `\&` to protect text, so its output cannot currently round-trip through
+the input parser. The editor retains source mode until the input owner fixes it.
+
+<a id="li-045"></a>
+
+### LI-045 — Textile formatter and parser disagree on ordinary spans
+
+**Status:** RESOLVED, 2026-11-14. Explicit Textile input now selects the Textile adapter, and its inline parser reads the span delimiters emitted by the existing writer. The writer assertion and parse-format-parse control pass.
+
+
+**Status at report:** OPEN. **Lambda task blocker:** yes for rich editing of Textile
+paragraphs whose parsed model contains a span. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-roundtrip-probe.ls`.
+The Textile input `h1. Title\n\nHello _world_.\n` parses with paragraph text
+`Hello `, an emphasized `world`, and `.`. Formatting its Markdown-equivalent
+Mark Doc to Textile produces `h1. Title\n\n%Hello _world_.%\n\n`.
+Reparsing that output includes the surrounding `%` characters as visible text.
+The input-owned Textile formatter's custom `span` handler emits `%` delimiters;
+whether the formatter or parser should change is not yet confirmed. The editor
+cannot save this round trip without changing visible text and falls back to source.
+Evidence: `Lambda-opus/temp/edit-viewer/markup-roundtrip-probe.log`.
+
+<a id="li-046"></a>
+
+### LI-046 — Org table and source block round trips lose structure
+
+**Status:** RESOLVED, 2026-11-14. Org input recognizes plus-delimited table separators; its writer accepts shared table nodes and writes language-free block code as a source block. Focused parsing and format-then-parse controls pass.
+
+
+**Status at report:** OPEN. **Lambda task blocker:** yes for rich editing of affected
+Org tables and source blocks. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-structure-roundtrip.ls`.
+The Org input `| A | B |\n|---+---|\n| one | two |\n` is parsed with the
+separator as a data row; after Markdown conversion the input-owned Org writer
+returns an empty string. The source block `#+BEGIN_SRC\nhello\n#+END_SRC\n`
+parses as block code, but formatting its Markdown-equivalent model produces
+`~hello\n~`, which reparses as ordinary paragraph text. The responsible parser
+and formatter paths are input-owned; the exact causes remain unconfirmed. The
+editor falls back to source instead of losing table or code structure. Evidence:
+`Lambda-opus/temp/edit-viewer/markup-structure-roundtrip.log`.
+
+<a id="li-047"></a>
+
+### LI-047 — reStructuredText literal block changes content on round trip
+
+**Status:** RESOLVED, 2026-11-14. The RST literal-block reader saves its introduction before reusing the parser buffer, and the formatter emits block code as raw indented directive content. Literal-block and multiline-code format-then-parse controls pass.
+
+
+**Status at report:** OPEN. **Lambda task blocker:** yes for rich editing of affected
+RST literal blocks. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-structure-roundtrip.ls`.
+For `Example::\n\n  code\n`, the input parser returns a div with a
+paragraph `code` and a pre/code block also containing `code`; the `Example:`
+introduction is absent. Formatting its Markdown-equivalent Mark Doc back to
+RST yields a paragraph and inline-code syntax, which reparses to a different
+model. The input parser and formatter are both input-owned; the exact root
+causes have not been confirmed. The editor falls back to source to avoid
+changing the document. Evidence:
+`Lambda-opus/temp/edit-viewer/markup-structure-roundtrip.log`.
+
+<a id="li-048"></a>
+
+### LI-048 — Org writer merges a following paragraph into a list
+
+**Status:** RESOLVED, 2026-11-14. The Org writer emits a blank line after a top-level list, preserving a following paragraph on reparse. The focused structural round trip passes.
+
+
+**Status at report:** OPEN. **Lambda task blocker:** yes for rich editing of Org files
+with a list followed by a paragraph. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/org-combined-probe.ls`.
+The source in `test/ui/edit/sample-org-list-followed.org` contains a two-item list followed
+by a separate paragraph with a link. The input-owned Org formatter emits the
+list and paragraph without a separating blank line, and reparsing places the
+paragraph inside the second list item. The editor falls back to source rather
+than changing the document structure. The precise formatter cause is not yet
+confirmed. Evidence: `Lambda-opus/temp/edit-viewer/org-combined-probe.log`.
+
+<a id="li-049"></a>
+
+### LI-049 — Org parser treats slash emphasis as plain text
+
+**Status:** RESOLVED, 2026-11-14. The inline prefilter recognizes Org-only emphasis markers before choosing the plain-text fast path. Slash emphasis and neighboring markers pass focused tests.
+
+
+**Status at report:** OPEN. **Lambda task blocker:** yes for rendering and rich editing
+of Org italic text. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/org-combine-census.ls`.
+Both `Hello /world/.\n` and `/world/\n` parse as plain paragraph strings
+containing the slash delimiters instead of an emphasized run. The viewer and
+editor both consume this input-owned parse result. The exact cause is not yet
+confirmed. Evidence: `Lambda-opus/temp/edit-viewer/org-combine-census.log`.
+
+<a id="li-051"></a>
+
+### LI-051 — Properties parser treats escaped key separators as delimiters
+
+**Status:** RESOLVED, 2026-11-14. The properties reader decodes escaped key separators, whitespace, and continued key lines before splitting the entry. Focused input tests pass. The separately owned Lambda editor source-span scanner still needs its own repair, recorded in the [Lambda ledger](../../Lambda/vibe/Lambda_Issue_Ledger.md#input-format-integration-handoffs--2026-11-14).
+
+The properties escape adapter also preserves Java's literal `b` for `\b` in
+keys and values, instead of applying the shared JSON backspace rule. The
+extended key/value regression reproduced the difference before the repair.
+
+
+**Status at report:** OPEN. **Lambda task blocker:** yes for correct property editing of
+Java properties with escaped key separators or spaces. D9.3.4 governs document
+processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/property-escape-probe.ls`.
+For `a\=b=c`, parsing as `properties` currently returns key `a\` and value
+`b=c`; Java's `Properties.load(Reader)` rules specify key `a=b` and value `c`.
+The editor's current source-span scanner makes the same split and thus presents
+this file incorrectly. A separate probe of `key\ space=value` produces a parse
+error. The Input implementation cause is unconfirmed. Once the Input provider
+is corrected, the Lambda editor's span scanner also needs to recognize escaped
+separators and preserve their spelling; do not patch around the Input parser.
+Evidence: `Lambda-opus/temp/edit-viewer/property-escape-probe.log`. Reference:
+[Java Properties.load documentation](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Properties.html#load(java.io.Reader)).
+
 
 <a id="li-050"></a>
 
@@ -1385,105 +1901,3 @@ Historical owner declaration inventory (line numbers before removal):
 - `Item cow_path_borrow_home_keys` (line 3819)
 - `Item cow_place_leaf_fixed` (line 3830)
 - `Item cow_place_leaf_keys` (line 3834)
-
-<a id="li-013"></a>
-
-### LI-013 — Native TeX text-case expansion exhausts its budget on reference controls
-
-**Status:** OPEN — cause unconfirmed. **Observed:** 2026-11-11, macOS debug
-native TeX parser. **Script TeX-port blocker:** no; the experimental script
-case converter explicitly reports unsupported reference forms it cannot handle.
-
-Running `parse("\\ExplSyntaxOn\\text_uppercase:n{\\ref{aB}/\\pageref{aB}/\\eqref{aB}}\\ExplSyntaxOff", {type: "tex"})`
-returns empty text and a `tex-budget` diagnostic after 20,000,000 macro calls,
-followed by missing-number and missing-brace diagnostics. Evidence is in
-`temp/expl3-script/native-case-refs.out`; the same probe shows `\\label` and
-`\\cite` in a different case-conversion argument completing without a budget
-diagnostic. Which control or combination triggers the exhaustion, and its root
-cause, have not been established. Investigate the native expansion path before
-changing its behavior.
-
-<a id="li-014"></a>
-
-### LI-014 — Native counter value scanning crosses an implicit expression boundary
-
-**Status:** OPEN — root cause confirmed. **Observed:** 2026-11-11, macOS debug
-native TeX parser; independently compared with pdfLaTeX. **Script TeX-port
-blocker:** no for implementing the correct bounded evaluation, but native
-parity for this case is blocked until the native path is fixed.
-
-For `\begin{document}\newcounter{n}\setcounter{n}{\numexpr1+2}\arabic{n}\end{document}`,
-native `parse(..., {type:"tex"})` emits `0` for `\arabic{n}` and reports
-`latex-counter-value`, even though the counter eventually holds 3. The
-pdfLaTeX reference emits 3; see `temp/expl3-script/counter-numexpr-ref.log` and
-`counter-numexpr-debug.out`. In `input-tex-latex.cpp`, `eval_counter_value`
-appends one frozen `\relax`, calls `scan_int`, and then reads another expanded
-token to check for trailing material. An implicitly terminated `\numexpr`
-consumes the only sentinel; that trailing-token read expands the following
-`\arabic{n}` before `counter_command` stores the newly computed value. The
-counter-value scan must remain bounded to its argument, including nested
-expressions, without evaluating the following document tokens prematurely.
-
-<a id="li-017"></a>
-
-### LI-017 — Native TeX leaks an environment end marker inside constructor arguments
-
-**Status:** OPEN — cause confirmed for the observed path. **Observed:**
-2026-11-12, macOS debug native TeX parser. **Script TeX-port blocker:** yes for
-native-compatible handling of custom environments inside constructor arguments.
-
-For `\newenvironment{foo}{B}{E}\begin{document}\textbf{A\begin{foo}X\end{foo}Z}\end{document}`,
-native TeX output contains `\textbf{ABXE\.nvendZ}`. The reproduction and
-native output are in `temp/expl3-script/constructor-env-probe.ls` and `.out`;
-the staged Script result explicitly fails reconstruction for this case. In
-`lambda/input/input-tex-latex.cpp`, `latex_arg_mode_env` pushes the end macro
-and the internal environment-end primitive for a custom environment.
-`arg_mode` in `lambda/input/input-tex-main.cpp` emits that unexpandable
-primitive instead of executing it, leaking its internal control sequence into
-the output and leaving the environment group unclosed. The internal name uses
-`"\x02envend"`, whose C++ hexadecimal escape includes the `e` and produces
-the observed leading dot. The native argument-mode handling and group lifetime
-need correction before this case can be used as a parity reference.
-
-<a id="li-018"></a>
-
-### LI-018 — Native LaTeX environment scanning interprets raw inline verbatim
-
-**Status:** OPEN — cause confirmed for the observed examples. **Observed:**
-2026-11-12, macOS debug native LaTeX parser. **Script TeX-port blocker:** yes
-for native AST comparison of affected valid verbatim content.
-
-Native TeX preserves both `\begin{document}A\verb|x_%|B\end{document}` and
-`\begin{document}A\verb|\end{document}|B\end{document}` without diagnostics,
-but native LaTeX parsing reports an error for each; the same parser builds a
-`verb` node for `\verb|xyz|`. Reproduction and output are
-`temp/expl3-script/verb-native-digest-probe.ls` and `.out`. The document
-`find_environment_end` scan in `lambda/input/input-latex-c.cpp` skips the
-control word but does not skip its verbatim payload, so it treats `%` inside
-that payload as a comment and `\end{document}` inside it as an environment
-terminator. The scan needs to recognize raw inline spans before looking for
-comments and environment boundaries.
-
-<a id="li-019"></a>
-
-### LI-019 — Native TeX discard boundaries become stale after cross-boundary unskip
-
-**Status:** OPEN — root cause confirmed. **Observed:** 2026-11-12, macOS debug
-native TeX parser. **Script TeX-port blocker:** yes for native-compatible
-cross-boundary removal in discarded and nested box material.
-
-For `\begin{document}A \insert0{\vadjust{\unskip}X}B\end{document}`, native
-TeX emits `AXB`: the inner `\unskip` removes the preceding space, but `X`
-leaks from the outer discarded insert. A similar case leaks an echoed global
-macro definition. Reproduction and native output are
-`temp/expl3-script/discard-unskip-detail.ls` and `.out`. The native log also
-shows `arraylist_remove_oob` with a length of 4294967295; evidence is
-`temp/expl3-script/discard-unskip-detail.log`.
-
-`unskip` in `lambda/input/input-tex-main.cpp` removes the last output item
-without adjusting open groups' `out_start` values. `finish_box` in
-`lambda/input/input-tex-prims.cpp` subtracts those stale unsigned boundaries
-from the shorter output length; it can either leave subsequent items outside
-the intended discard slice or underflow. The array-list bounds check rejects
-the invalid removal. Update the native boundary accounting and qualify nested
-discarded groups before using these cases as port parity references.

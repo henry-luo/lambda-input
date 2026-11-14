@@ -248,6 +248,7 @@ public:
     NamePool* namePool() const { return name_pool_; }
     ArrayList* typeList() const { return type_list_; }
     bool ui_mode() const { return ui_mode_; }
+    bool dom_occurrence_mode() const { return ui_mode_ || copying_view_; }
 
     // ============================================================================
     // Deep Copy Methods (with smart ownership checking)
@@ -269,9 +270,10 @@ public:
      */
     Item deep_copy(Item item, bool force = false);
 
-    // DOM construction needs independent elements/content even within one arena
-    // (D5.5.3); ordinary evaluation keeps deep_copy's ownership optimization.
+    // dom construction needs independent elements/content even within one arena
+    // (D5.5.3 for views); ordinary evaluation keeps deep_copy's ownership optimization.
     Item deep_copy_for_view(Item item);
+    Item deep_copy_for_dom(Item item);
     // UI content adopts external containers while retaining owned render identities.
     Item copy_ui_content(Item item);
 

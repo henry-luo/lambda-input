@@ -366,14 +366,16 @@ static Item parse_value(InputContext& ctx, const char **json, int depth, bool js
 }
 
 void parse_json(Input* input, const char* json_string) {
-    if (!json_string || !*json_string) {
-        input->root = {.item = ITEM_NULL};
-        return;
-    }
+    if (!json_string) json_string = "";
 
     InputContext ctx(input, json_string, strlen(json_string));
 
     input->root = parse_value(ctx, &json_string, 0);
+    json_skip_whitespace(&json_string);
+    if (*json_string) {
+        ctx.syncTo(json_string);
+        ctx.addError("Unexpected content after JSON value");
+    }
 
     // Log any errors that occurred during parsing
     if (ctx.hasErrors()) {

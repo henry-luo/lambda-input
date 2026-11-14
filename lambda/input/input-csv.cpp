@@ -78,10 +78,19 @@ char detect_csv_separator(const char* csv_string) {
     int comma_count = 0;
     int tab_count = 0;
 
-    // Count separators in first line
-    while (*ptr && *ptr != '\n' && *ptr != '\r') {
-        if (*ptr == ',') comma_count++;
-        else if (*ptr == '\t') tab_count++;
+    // a quoted field may contain delimiters and physical line breaks.
+    bool quoted = false;
+    bool field_start = true;
+    while (*ptr) {
+        if (quoted && *ptr == '"' && ptr[1] == '"') { ptr += 2; continue; }
+        if (*ptr == '"' && (quoted || field_start)) quoted = !quoted;
+        else if (!quoted) {
+            if (*ptr == '\n' || *ptr == '\r') break;
+            if (*ptr == ',') comma_count++;
+            else if (*ptr == '\t') tab_count++;
+        }
+        if (!quoted) field_start = *ptr == ',' || *ptr == '\t';
+        else field_start = false;
         ptr++;
     }
 

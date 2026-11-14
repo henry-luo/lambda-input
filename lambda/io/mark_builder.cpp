@@ -414,8 +414,8 @@ ElementBuilder::ElementBuilder(MarkBuilder* builder, const char* tag_name)
     Input* input = builder_->input();
     Element* element = nullptr;
 
-    if (builder->ui_mode()) {
-        // UI mode: allocate DomElement (contains DomNode + Element + CSS fields)
+    if (builder->dom_occurrence_mode()) {
+        // dom occurrences embed the element in its native node storage.
         DomElement* dom = DomElement::create_in(input->arena);
         if (!dom) return;
         element = dom_element_to_element(dom);
@@ -915,7 +915,10 @@ Item MarkBuilder::deep_copy(Item item, bool force) {
 }
 
 Item MarkBuilder::deep_copy_for_view(Item item) {
-    if (!ui_mode_) return deep_copy(item);
+    return ui_mode_ ? deep_copy_for_dom(item) : deep_copy(item);
+}
+
+Item MarkBuilder::deep_copy_for_dom(Item item) {
     copying_view_ = true;
     Item copied = deep_copy_internal(item);
     copying_view_ = false;

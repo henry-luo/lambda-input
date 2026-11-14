@@ -279,6 +279,7 @@ void parse_ics(Input* input, const char* ics_string) {
         // Parse property name
         String* property_name = parse_property_name(ctx, &ics);
         if (!property_name) {
+            ctx.addError("iCalendar content line has no property name");
             skip_to_newline(&ics);
             continue;
         }
@@ -299,6 +300,8 @@ void parse_ics(Input* input, const char* ics_string) {
         // Parse property value
         String* property_value = parse_property_value(ctx, &ics);
         if (!property_value) {
+            ctx.addError("iCalendar content line has no value separator");
+            skip_to_newline(&ics);
             continue;
         }
 

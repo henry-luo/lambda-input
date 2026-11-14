@@ -5,11 +5,12 @@ static void core_release_node(void* node) {
 }
 
 static void ensure_core_release_hooks(void) {
-    static bool installed = false;
-    if (!installed) {
+    // function-local initialization publishes the hook before other callers proceed.
+    static const bool installed = [] {
         name_pool_set_node_release_hook(core_release_node);
-        installed = true;
-    }
+        return true;
+    }();
+    (void)installed;
 }
 
 static bool name_pool_stat_fn(void* a, MemStatSample* s) {

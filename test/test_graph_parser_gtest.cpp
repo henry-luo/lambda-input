@@ -1,12 +1,16 @@
 #include <gtest/gtest.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <filesystem>
+#include <fstream>
 #include "lambda/core/data.hpp"
 #include "lambda/core/mark_reader.hpp"
 #include "lambda/input/input.hpp"
 #include "lambda/input/input-graph.h"
+#include "lambda/io/security_io.h"
 #include "lib/arraylist.h"
 #include "lib/file.h"
 #include "lib/mempool.h"
@@ -90,6 +94,137 @@ TEST_F(GraphParserTest, ParserLocBudget) {
     EXPECT_LE(header, 107u);
     // the sequence-family audit and exact six-unit ceilings are recorded in §19.3.5.
     EXPECT_LE(dot + mermaid + structurizr + structurizr_resolver + shared + header, 4409u);
+}
+
+TEST_F(GraphParserTest, StructurizrDirectoryIncludeSkipsSymlinksAndKeepsLargeAmbientListings) {
+    namespace fs = std::filesystem;
+    char path[] = "./temp/graph-includes-XXXXXX";
+    ASSERT_NE(mkdtemp(path), nullptr);
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ignored; fs::remove_all(path, ignored); }
+    } cleanup{path};
+    fs::path base(path);
+    fs::path fragments = base / "fragments";
+    ASSERT_TRUE(fs::create_directory(fragments));
+    const char* source = "workspace {\n  model {\n    !include fragments\n  }\n}\n";
+    std::ofstream(base / "source.dsl") << source;
+    std::ofstream(fragments / "actual.dsl") << "person = person \"Actual\"\n";
+    fs::create_symlink("actual.dsl", fragments / "linked.dsl");
+    fs::create_symlink("missing.dsl", fragments / "dangling.dsl");
+    bool populated = true;
+    for (int i = 0; i < 4097; i++) {
+        std::ofstream entry(fragments / ("entry-" + std::to_string(i)));
+        if (!entry) { populated = false; break; }
+    }
+    ASSERT_TRUE(populated);
+    SecurityDirectory listing = {};
+    ASSERT_TRUE(security_io_enumerate(nullptr, fragments.c_str(), UINT32_MAX, &listing, nullptr));
+    EXPECT_GT(listing.count, SECURITY_IO_DIRECTORY_LIMIT);
+    bool dangling_classified = false;
+    for (uint32_t i = 0; i < listing.count; i++) {
+        const SecurityDirectoryEntry& entry = listing.entries[i];
+        if (strcmp(entry.name, "dangling.dsl") == 0)
+            dangling_classified = !entry.has_metadata && entry.metadata.is_symlink;
+    }
+    security_io_directory_free(&listing);
+    EXPECT_TRUE(dangling_classified);
+
+    String* type = create_lambda_string("graph");
+    String* flavor = create_lambda_string("structurizr");
+    Input* input = input_from_source(source, nullptr, type, flavor);
+    ASSERT_NE(input, nullptr);
+    resolve_graph_structurizr_local_includes(input, (base / "source.dsl").c_str());
+    ElementReader workspace(input->root);
+    EXPECT_EQ(workspace.get_int_attr("include-file-count", -1), 1);
+    ElementReader model = workspace.findChildElement("model");
+    ASSERT_TRUE(model.isValid());
+    ElementReader include = model.findChildElement("statement");
+    ASSERT_TRUE(include.isValid());
+    EXPECT_TRUE(include.findChildElement("declaration").isValid());
+
+    const char* rejected = "workspace {\n  !include source.dsl\n"
+                           "  !include https://example.com/a.dsl\n}\n";
+    std::ofstream(base / "source.dsl") << rejected;
+    Input* rejected_input = input_from_source(rejected, nullptr, type, flavor);
+    ASSERT_NE(rejected_input, nullptr);
+    resolve_graph_structurizr_local_includes(rejected_input, (base / "source.dsl").c_str());
+    bool cycle = false, network = false;
+    ElementReader rejected_workspace(rejected_input->root), diagnostics, diagnostic;
+    auto outer = rejected_workspace.childElements();
+    while (outer.next(&diagnostics)) {
+        if (!diagnostics.hasTag("diagnostics")) continue;
+        auto inner = diagnostics.childElements();
+        while (inner.next(&diagnostic)) {
+            const char* code = diagnostic.get_attr_string("code");
+            if (code && strcmp(code, "structurizr.include-cycle") == 0) cycle = true;
+            if (code && strcmp(code, "structurizr.include-policy") == 0) network = true;
+        }
+    }
+    EXPECT_TRUE(cycle);
+    EXPECT_TRUE(network);
+    free_lambda_string(type);
+    free_lambda_string(flavor);
+}
+
+TEST_F(GraphParserTest, StructurizrDirectoryIncludeUsesBrokerAndStableOrder) {
+    struct Access { int reads; int enumerations; } access = {};
+    SecurityIOClient io = {};
+    io.version = 1;
+    io.context = &access;
+    io.input_kind = [](void*, const char* path, int32_t* kind) -> SecurityIOResult {
+        if (strcmp(path, "/virtual/fragments") != 0) return {SECURITY_DENIED, 0, false, {}};
+        *kind = SECURITY_OBJECT_DIRECTORY;
+        return {SECURITY_ALLOWED, 0, false, {}};
+    };
+    io.enumerate = [](void* context, const char* path, uint32_t limit,
+                      SecurityDirectory* directory) -> SecurityIOResult {
+        if (strcmp(path, "/virtual/fragments") != 0 || limit != SECURITY_IO_DIRECTORY_LIMIT)
+            return {SECURITY_DENIED, 0, false, {}};
+        ((Access*)context)->enumerations++;
+        const char* names[] = {"z.dsl", "skip.txt", "a.structurizr", "dir.dsl"};
+        directory->entries = (SecurityDirectoryEntry*)mem_calloc(4, sizeof(SecurityDirectoryEntry), MEM_CAT_INPUT_OTHER);
+        if (!directory->entries) return {SECURITY_DENIED, ENOMEM, false, {}};
+        directory->count = 4;
+        for (uint32_t i = 0; i < directory->count; i++)
+            directory->entries[i].name = mem_strdup(names[i], MEM_CAT_INPUT_OTHER);
+        directory->entries[3].is_directory = true;
+        return {SECURITY_ALLOWED, 0, false, {}};
+    };
+    io.read = [](void* context, const char* path, bool, uint64_t limit, MemCategory category,
+                 char** data, size_t* size) -> SecurityIOResult {
+        const char* value = strcmp(path, "/virtual/fragments/a.structurizr") == 0
+            ? "alpha = person \"Alpha\"\n" : strcmp(path, "/virtual/fragments/z.dsl") == 0
+            ? "zeta = person \"Zeta\"\n" : nullptr;
+        if (!value || strlen(value) > limit) return {SECURITY_DENIED, 0, false, {}};
+        *data = mem_strdup(value, category);
+        *size = strlen(value);
+        ((Access*)context)->reads++;
+        return {SECURITY_ALLOWED, 0, false, {}};
+    };
+    const char* source = "workspace {\n  model {\n    !include fragments\n  }\n}\n";
+    String* type = create_lambda_string("graph");
+    String* flavor = create_lambda_string("structurizr");
+    Input* input = input_from_source(source, nullptr, type, flavor);
+    ASSERT_NE(input, nullptr);
+    resolve_graph_structurizr_local_includes(input, "/virtual/source.dsl", &io);
+    ElementReader workspace(input->root);
+    EXPECT_EQ(workspace.get_int_attr("include-file-count", -1), 2);
+    EXPECT_EQ(access.enumerations, 1);
+    EXPECT_EQ(access.reads, 2);
+    ElementReader include = workspace.findChildElement("model").findChildElement("statement");
+    ASSERT_TRUE(include.isValid());
+    ElementReader declaration;
+    auto children = include.childElements();
+    int index = 0;
+    while (children.next(&declaration)) {
+        if (!declaration.hasTag("declaration")) continue;
+        ASSERT_LT(index, 2);
+        EXPECT_STREQ(declaration.get_attr_string("identifier"), index++ == 0 ? "alpha" : "zeta");
+    }
+    EXPECT_EQ(index, 2);
+    free_lambda_string(type);
+    free_lambda_string(flavor);
 }
 
 // Test DOT graph parsing

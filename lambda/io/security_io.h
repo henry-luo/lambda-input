@@ -31,6 +31,7 @@ typedef struct SecurityDirectoryEntry {
     char* name;
     bool is_directory;
     bool has_metadata;
+    // ambient enumeration retains the symlink bit even when target metadata is unavailable.
     FileStat metadata;
 } SecurityDirectoryEntry;
 typedef struct SecurityDirectory {

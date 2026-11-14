@@ -52,21 +52,56 @@ static bool kv_is_separator(char c, const char* seps) {
     return false;
 }
 
+static bool prop_space(char c) {
+    return c == ' ' || c == '\t' || c == '\f';
+}
+
+static void prop_parse_escape(const char** pos, StringBuf* sb) {
+    // properties drops the backslash before b instead of decoding backspace.
+    if (**pos == 'b') {
+        stringbuf_append_char(sb, *(*pos)++);
+    } else {
+        parse_escape_char(pos, sb);
+    }
+}
+
+static void kv_skip_horizontal(const char** pos, const KvConfig* cfg) {
+    if (cfg->support_escape) {
+        while (prop_space(**pos)) (*pos)++;
+    } else {
+        skip_tab_pace(pos);
+    }
+}
+
 // Parse a key name — stops at separator, whitespace, or end-of-line.
-static String* kv_parse_key(InputContext& ctx, const char** pos, bool allow_empty) {
+static String* kv_parse_key(InputContext& ctx, const char** pos, const KvConfig* cfg) {
     SourceTracker& tracker = ctx.tracker;
     SourceLocation key_loc = tracker.location();
     StringBuf* sb = ctx.sb;
     stringbuf_reset(sb);
 
     while (**pos && **pos != '=' && **pos != ':' &&
-           **pos != '\n' && **pos != '\r' && !str_char_is_ascii_space(**pos)) {
+           **pos != '\n' && **pos != '\r' &&
+           !(cfg->support_escape ? prop_space(**pos) : str_char_is_ascii_space(**pos))) {
+        if (cfg->support_escape && **pos == '\\') {
+            const char* start = *pos;
+            (*pos)++;
+            if (**pos == '\r' || **pos == '\n') {
+                if (**pos == '\r' && *(*pos + 1) == '\n') (*pos)++;
+                (*pos)++;
+                kv_skip_horizontal(pos, cfg);
+            } else {
+                prop_parse_escape(pos, sb);
+            }
+            tracker.advance(*pos - start);
+            continue;
+        }
         stringbuf_append_char(sb, **pos);
         tracker.advance(1);
         (*pos)++;
     }
 
-    if (sb->length == 0 && !allow_empty) {
+    if (sb->length == 0 && !cfg->allow_empty_key) {
         ctx.addError(key_loc, "kv parser: empty key name");
         return NULL;
     }
@@ -124,7 +159,7 @@ static String* prop_parse_raw_value(InputContext& ctx, const char** pos) {
     StringBuf* sb = ctx.sb;
     stringbuf_reset(sb);
 
-    skip_tab_pace(pos);
+    kv_skip_horizontal(pos, &PROP_CONFIG);
 
     while (**pos && **pos != '\n' && **pos != '\r') {
         if (**pos == '\\') {
@@ -134,11 +169,11 @@ static String* prop_parse_raw_value(InputContext& ctx, const char** pos) {
                 (*pos)++;
                 if (**pos == '\r' && *(*pos + 1) == '\n') (*pos) += 2;
                 else (*pos)++;
-                skip_tab_pace(pos);
+                kv_skip_horizontal(pos, &PROP_CONFIG);
                 continue;
             }
             (*pos)++;  // skip backslash
-            parse_escape_char(pos, sb);
+            prop_parse_escape(pos, sb);
             continue;
         }
         stringbuf_append_char(sb, **pos);
@@ -187,25 +222,27 @@ static void parse_kv_section(InputContext& ctx, const char** pos,
                               Map* target_map, const KvConfig* cfg) {
     SourceTracker& tracker = ctx.tracker;
     while (**pos) {
-        skip_tab_pace(pos);
+        kv_skip_horizontal(pos, cfg);
         if (!**pos) break;
         if (**pos == '\n' || **pos == '\r') { skip_to_newline(pos); continue; }
         if (kv_is_comment(**pos, cfg->comment_chars)) { skip_to_newline(pos); continue; }
         if (cfg->support_sections && **pos == '[') break;   // next section starts
 
-        String* key = kv_parse_key(ctx, pos, cfg->allow_empty_key);
+        String* key = kv_parse_key(ctx, pos, cfg);
         if (!key) { skip_to_newline(pos); continue; }
 
-        skip_tab_pace(pos);
-        if (!kv_is_separator(**pos, cfg->kv_separators)) {
+        bool space_separator = prop_space(**pos);
+        kv_skip_horizontal(pos, cfg);
+        if (kv_is_separator(**pos, cfg->kv_separators)) {
+            (*pos)++;
+            tracker.advance(1);
+        } else if (!cfg->support_escape || (!space_separator && **pos && **pos != '\n' && **pos != '\r')) {
             ctx.addError(tracker.location(),
                          "kv parser: expected separator after key '%.*s'",
                          (int)key->len, key->chars);
             skip_to_newline(pos);
             continue;
         }
-        (*pos)++;  // consume separator
-        tracker.advance(1);
 
         String* raw = cfg->support_escape ? prop_parse_raw_value(ctx, pos)
                                           : ini_parse_raw_value(ctx, pos);
@@ -228,7 +265,7 @@ static void parse_kv_document(InputContext& ctx, const char* src, const KvConfig
     bool global_added = false;
 
     while (*current) {
-        skip_tab_pace(&current);
+        kv_skip_horizontal(&current, cfg);
         if (!*current) break;
         if (*current == '\n' || *current == '\r') { skip_to_newline(&current); continue; }
         if (kv_is_comment(*current, cfg->comment_chars)) { skip_to_newline(&current); continue; }

@@ -31,6 +31,7 @@
 #include "../../io/mark_builder.hpp" // For MarkBuilder
 #include "../input.hpp"
 #include "../input-parsers.h"
+#include <limits.h>
 
 extern "C" uint64_t dom_mutation_epoch(DomDocument* doc) {
     return doc ? doc->mutation_epoch : 0;
@@ -61,34 +62,183 @@ DomElement* dom_create_backed_element_identity(DomDocument* document,
     return element;
 }
 
-static int64_t dom_backed_index_of_element(Element* parent, Element* handle) {
-    if (!parent || !handle) return -1;
-    for (int64_t i = 0; i < parent->length; i++) {
-        Item item = parent->items[i];
-        if (get_type_id(item) == LMD_TYPE_ELEMENT && item.element == handle) return i;
-    }
-    return -1;
+static const int MAX_DOM_BUILD_DEPTH = 512;
+
+static bool dom_backing_item_matches(Item item, DomNode* child) {
+    TypeId type = get_type_id(item);
+    if (child->is_element())
+        return type == LMD_TYPE_ELEMENT && item.element == dom_element_to_element(child->as_element());
+    if (child->is_comment())
+        return child->as_comment()->native_element && type == LMD_TYPE_ELEMENT &&
+            item.element == child->as_comment()->native_element;
+    if (child->is_text())
+        return child->as_text()->native_string && type == LMD_TYPE_STRING &&
+            item.get_string() == child->as_text()->native_string;
+    return false;
 }
 
 int64_t dom_backed_node_index(DomElement* parent, DomNode* child) {
     if (!parent || !child) return -1;
-    if (child->is_element()) {
-        if (!parent->doc || !parent->doc->input) return -1;
-        return dom_backed_index_of_element(dom_element_to_element(parent),
-                                           dom_element_to_element(child->as_element()));
-    }
+    if (child->is_element() && (!parent->doc || !parent->doc->input)) return -1;
     Element* parent_backing = dom_element_to_element(parent);
-    if (child->is_comment()) {
-        return dom_backed_index_of_element(parent_backing, ((DomComment*)child)->native_element);
-    }
-    if (!child->is_text()) return -1;
-    DomText* text = child->as_text();
-    if (!text || !text->native_string || !parent_backing) return -1;
+    if (!parent_backing || parent_backing->length < 0 ||
+            (parent_backing->length && !parent_backing->items)) return -1;
     for (int64_t i = 0; i < parent_backing->length; i++) {
-        Item item = parent_backing->items[i];
-        if (get_type_id(item) == LMD_TYPE_STRING && item.get_string() == text->native_string) return i;
+        if (dom_backing_item_matches(parent_backing->items[i], child)) return i;
     }
     return -1;
+}
+
+static int dom_find_nested_backing(Array* array, DomNode* child, int depth,
+                                   Array** owner, int64_t* index) {
+    if (!array || depth > MAX_DOM_BUILD_DEPTH || array->length < 0 || array->is_ndim || array->is_view ||
+            container_js_elements_kind(array) == JS_ELEMENTS_SPARSE_TAGGED ||
+            (array->length && !array->items)) return -1;
+    for (int64_t i = 0; i < array->length; i++) {
+        Item item = array_item_read(array, i);
+        if (dom_backing_item_matches(item, child)) { *owner = array; *index = i; return 1; }
+        if (get_type_id(item) == LMD_TYPE_ARRAY) {
+            int found = dom_find_nested_backing(item.array, child, depth + 1, owner, index);
+            if (found) return found;
+        }
+    }
+    return 0;
+}
+
+static int dom_find_nested_backing_in_parent(DomElement* parent, DomNode* child,
+                                            Array** owner, int64_t* index,
+                                            int64_t* top_index = nullptr) {
+    if (!parent->doc || !parent->doc->input || parent->is_synthetic()) return 0;
+    Element* backing = dom_element_to_element(parent);
+    if (backing->length < 0 || (backing->length && !backing->items)) return -1;
+    for (int64_t i = 0; i < backing->length; i++) {
+        Item item = backing->items[i];
+        if (get_type_id(item) != LMD_TYPE_ARRAY) continue;
+        int found = dom_find_nested_backing(item.array, child, 0, owner, index);
+        if (found > 0 && top_index) *top_index = i;
+        if (found) return found;
+    }
+    return 0;
+}
+
+static bool dom_nested_array_owned(DomElement* parent, Array* owner) {
+    Pool* pool = parent->doc->input->pool;
+    return (dom_document_owns_node_storage(parent->doc, owner) || pool_owns(pool, owner)) &&
+        (dom_document_owns_node_storage(parent->doc, owner->items) || pool_owns(pool, owner->items));
+}
+
+static Array* dom_copy_nested_array(DomElement* parent, Array* source) {
+    if (!dom_nested_array_owned(parent, source)) return nullptr;
+    Input* input = parent->doc->input;
+    Array* copy = array_arena(input->arena);
+    if (!copy) return nullptr;
+    copy->is_spreadable = source->is_spreadable;
+    copy->is_js_arguments = source->is_js_arguments;
+    copy->array_flags = source->array_flags;
+    copy->map_kind = source->map_kind;
+    if (array_has_native_lane(copy)) array_native_lane_clear(copy);
+    copy->type = source->type;
+    copy->data = source->data;
+    copy->data_cap = source->data_cap;
+    for (int64_t i = 0; i < source->length; i++) {
+        array_append(copy, array_item_read(source, i), input->pool, input->arena);
+        if (copy->length != i + 1) return nullptr;
+    }
+    return copy;
+}
+
+static int dom_copy_nested_path(DomElement* parent, Array* source, Array* target,
+                                int depth, bool copy_path, Array** copy, Array** target_copy) {
+    if (!source || depth > MAX_DOM_BUILD_DEPTH || source->length < 0 || source->is_ndim || source->is_view ||
+            container_js_elements_kind(source) == JS_ELEMENTS_SPARSE_TAGGED ||
+            (source->length && !source->items)) return -1;
+    if (source == target) {
+        if (!dom_nested_array_owned(parent, source)) return -1;
+        if (!copy_path) return 1;
+        *copy = dom_copy_nested_array(parent, source);
+        *target_copy = *copy;
+        return *copy ? 1 : -1;
+    }
+    for (int64_t i = 0; i < source->length; i++) {
+        Item item = array_item_read(source, i);
+        if (get_type_id(item) != LMD_TYPE_ARRAY) continue;
+        Array* child_copy = nullptr;
+        int found = dom_copy_nested_path(parent, item.array, target, depth + 1, copy_path,
+                                         &child_copy, target_copy);
+        if (found < 0) return -1;
+        if (found) {
+            if (!dom_nested_array_owned(parent, source)) return -1;
+            if (!copy_path) return 1;
+            *copy = dom_copy_nested_array(parent, source);
+            if (!*copy) return -1;
+            (*copy)->items[i] = {.array = child_copy};
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static bool dom_prepare_nested_edit(DomElement* parent, Array* owner, int64_t top_index,
+                                    Array** root_copy, Array** owner_copy) {
+    // retain old paths for document snapshots and shared readers until publication.
+    Element* backing = dom_element_to_element(parent);
+    if (top_index < 0 || top_index > INT_MAX || top_index >= backing->length) return false;
+    Item root = backing->items[top_index];
+    return get_type_id(root) == LMD_TYPE_ARRAY &&
+        dom_copy_nested_path(parent, root.array, owner, 0, root_copy && owner_copy,
+                             root_copy, owner_copy) == 1;
+}
+
+static bool dom_publish_nested_edit(MarkEditor& editor, DomElement* parent,
+                                    int64_t top_index, Array* root_copy) {
+    Element* backing = dom_element_to_element(parent);
+    Item result = editor.dom_replace_backing_child({.element = backing}, (int)top_index,
+                                                    {.array = root_copy});
+    return get_type_id(result) == LMD_TYPE_ELEMENT && result.element == backing;
+}
+
+static void dom_restore_backing_content(Element* backing, const Array& previous) {
+    backing->items = previous.items;
+    backing->length = previous.length;
+    backing->capacity = previous.capacity;
+    backing->extra = previous.extra;
+}
+
+// returns 1 after removal, 0 when there is no nested slot, and -1 on failure.
+static int dom_remove_nested_backed_child(DomElement* parent, DomNode* child) {
+    Array* owner = nullptr;
+    int64_t index = -1, top_index = -1;
+    int found = dom_find_nested_backing_in_parent(parent, child, &owner, &index, &top_index);
+    if (found <= 0) return found;
+    Array* root_copy = nullptr;
+    Array* owner_copy = nullptr;
+    if (!dom_prepare_nested_edit(parent, owner, top_index, &root_copy, &owner_copy)) return -1;
+    Element* backing = dom_element_to_element(parent);
+    Array previous = *(Array*)backing;
+    MarkEditor editor(parent->doc, EDIT_MODE_INLINE);
+    Item result = editor.array_delete({.array = owner_copy}, index);
+    if (get_type_id(result) != LMD_TYPE_ARRAY || result.array != owner_copy ||
+        !dom_publish_nested_edit(editor, parent, top_index, root_copy)) return -1;
+    if (!((DomNode*)parent)->remove_child(child)) {
+        dom_restore_backing_content(backing, previous);
+        return -1;
+    }
+    if (child->is_text() && !(child->node_flags & DOM_NODE_FLAG_TEXT_REINSERTABLE))
+        child->as_text()->native_string = nullptr;
+    if (child->is_comment()) child->as_comment()->native_element = nullptr;
+    return 1;
+}
+
+// find a nested backing slot before the first directly backed following sibling.
+static int dom_nested_insertion_position(DomElement* parent, DomNode* reference,
+                                         Array** owner, int64_t* index, int64_t* top_index) {
+    for (DomNode* candidate = reference; candidate; candidate = candidate->next_sibling) {
+        if (dom_backed_node_index(parent, candidate) >= 0) return 0;
+        int found = dom_find_nested_backing_in_parent(parent, candidate, owner, index, top_index);
+        if (found > 0 && !dom_prepare_nested_edit(parent, *owner, *top_index, nullptr, nullptr)) return -1;
+        if (found) return found;
+    }
+    return 0;
 }
 
 int64_t dom_backed_insertion_index(DomElement* parent, DomNode* reference) {
@@ -105,6 +255,25 @@ bool dom_insert_detached_backed_element(DomElement* parent, DomElement* child, D
     if (!parent || !child || child->parent || !parent->doc || !parent->doc->input ||
         parent->is_synthetic() || child->is_synthetic() ||
         (reference && reference->parent != (DomNode*)parent)) return false;
+    Array* nested = nullptr;
+    int64_t nested_index = -1, top_index = -1;
+    int position = dom_nested_insertion_position(parent, reference, &nested, &nested_index, &top_index);
+    if (position < 0) return false;
+    if (position > 0) {
+        Array* root_copy = nullptr;
+        Array* owner_copy = nullptr;
+        if (!dom_prepare_nested_edit(parent, nested, top_index, &root_copy, &owner_copy)) return false;
+        Element* backing = dom_element_to_element(parent);
+        Array previous = *(Array*)backing;
+        MarkEditor editor(parent->doc, EDIT_MODE_INLINE);
+        Item result = editor.dom_array_insert({.array = owner_copy}, nested_index,
+            {.element = dom_element_to_element(child)});
+        if (get_type_id(result) != LMD_TYPE_ARRAY || result.array != owner_copy ||
+                !dom_publish_nested_edit(editor, parent, top_index, root_copy)) return false;
+        if (((DomNode*)parent)->insert_before(child, reference)) return true;
+        dom_restore_backing_content(backing, previous);
+        return false;
+    }
     int64_t index = dom_backed_insertion_index(parent, reference);
     if (index < 0) return false;
     MarkEditor editor(parent->doc, EDIT_MODE_INLINE);
@@ -137,6 +306,10 @@ bool dom_remove_backed_element_item(DomElement* parent, DomElement* child, int64
 
 bool dom_remove_prepared_backed_child(DomElement* parent, DomNode* child) {
     if (!parent || !child || child->parent != parent) return false;
+    if (dom_backed_node_index(parent, child) < 0) {
+        int nested = dom_remove_nested_backed_child(parent, child);
+        if (nested) return nested > 0;
+    }
     if (!child->is_element()) {
         if (child->is_text()) {
             DomText* text = (DomText*)child;
@@ -178,7 +351,7 @@ static bool dom_detach_text_for_insertion(DomText* text) {
 bool dom_insert_prepared_backed_text(DomElement* parent, DomText* text,
                                       DomNode* ref_child) {
     if (!parent || !text || !text->native_string || !parent->doc ||
-        !parent->doc->input) return false;
+        !parent->doc->input || (ref_child && ref_child->parent != parent)) return false;
 
     // DocumentFragment nodes have no Element backing.  HTMX builds a
     // fragment in the main document and adopts text nodes from a parsed
@@ -190,11 +363,24 @@ bool dom_insert_prepared_backed_text(DomElement* parent, DomText* text,
         return ((DomNode*)parent)->insert_before((DomNode*)text, ref_child);
     }
 
+    if (text->parent == (DomNode*)parent &&
+            (ref_child == (DomNode*)text || text->next_sibling == ref_child)) return true;
+    Array* preflight = nullptr;
+    int64_t preflight_index = -1, preflight_top = -1;
+    if (dom_nested_insertion_position(parent, ref_child, &preflight, &preflight_index, &preflight_top) < 0) return false;
     if (!dom_detach_text_for_insertion(text)) return false;
     String* native_string = text->native_string;
 
+    Array* nested = nullptr;
+    int64_t nested_index = -1, top_index = -1;
+    int nested_position = dom_nested_insertion_position(parent, ref_child, &nested, &nested_index, &top_index);
+    if (nested_position < 0) return false;
+    Array* root_copy = nullptr;
+    Array* owner_copy = nullptr;
+    if (nested_position > 0 &&
+            !dom_prepare_nested_edit(parent, nested, top_index, &root_copy, &owner_copy)) return false;
     int64_t insert_index = dom_element_to_element(parent)->length;
-    if (ref_child) {
+    if (ref_child && !nested_position) {
         insert_index = -1;
         for (DomNode* candidate = ref_child; candidate;
              candidate = candidate->next_sibling) {
@@ -220,15 +406,18 @@ bool dom_insert_prepared_backed_text(DomElement* parent, DomText* text,
 
     MarkEditor editor(parent->doc, EDIT_MODE_INLINE);
     Element* parent_backing = dom_element_to_element(parent);
-    Item result = editor.dom_insert_child(
-        {.element = parent_backing},
-        (int)insert_index,
-        {.item = s2it(native_string)});
-    if (get_type_id(result) != LMD_TYPE_ELEMENT || result.element != parent_backing) {
+    Array previous = *(Array*)parent_backing;
+    Item value = {.item = s2it(native_string)};
+    Item result = nested_position > 0 ? editor.dom_array_insert({.array = owner_copy}, nested_index, value)
+        : editor.dom_insert_child({.element = parent_backing}, (int)insert_index, value);
+    if ((nested_position > 0 && (get_type_id(result) != LMD_TYPE_ARRAY || result.array != owner_copy ||
+                                !dom_publish_nested_edit(editor, parent, top_index, root_copy))) ||
+        (!nested_position && (get_type_id(result) != LMD_TYPE_ELEMENT || result.element != parent_backing))) {
         log_error("dom_insert_backed_text: inline insert changed backing identity");
         return false;
     }
-    String* inserted_string = parent_backing->items[insert_index].get_string();
+    String* inserted_string = (nested_position > 0 ? owner_copy->items[nested_index]
+        : parent_backing->items[insert_index]).get_string();
     if (!inserted_string) {
         log_error("dom_insert_backed_text: inserted backing child is not text");
         return false;
@@ -260,7 +449,11 @@ bool dom_insert_prepared_backed_text(DomElement* parent, DomText* text,
     if (text->parent != (DomNode*)parent) {
         // MarkEditor can update the backing list before the wrapper relink;
         // complete the DOM-side link without creating a second Mark string.
-        return ((DomNode*)parent)->insert_before((DomNode*)text, ref_child);
+        if (((DomNode*)parent)->insert_before((DomNode*)text, ref_child)) return true;
+        if (nested_position > 0) {
+            dom_restore_backing_content(parent_backing, previous);
+        }
+        return false;
     }
     bool at_requested_position = ref_child
         ? text->next_sibling == ref_child
@@ -1437,6 +1630,23 @@ DomElement* DomElement::create(DomDocument* doc, const char* tag_name,
     return create_in(create_in(doc->node_arena), doc, tag_name, native_element);
 }
 
+static bool dom_snapshot_backing(DomDocument* doc, Element* snapshot, Element* source) {
+    if (!elmt_clone_type_for_mutation(snapshot, doc->input->pool, true)) return false;
+    if (snapshot->data_cap > 0) {
+        snapshot->data = pool_alloc(doc->input->pool, snapshot->data_cap);
+        if (!snapshot->data) return false;
+        memcpy(snapshot->data, source->data, snapshot->data_cap);
+    }
+    if (snapshot->capacity > 0) {
+        snapshot->items = (Item*)arena_alloc(doc->input->arena,
+            (size_t)snapshot->capacity * sizeof(Item));
+        if (!snapshot->items) return false;
+        memcpy(snapshot->items, source->items, (size_t)snapshot->capacity * sizeof(Item));
+    }
+    snapshot->cow_state = 0;
+    return true;
+}
+
 DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
                                   const char* tag_name, Element* native_element) {
     if (!element || !doc || !tag_name) return nullptr;
@@ -1488,21 +1698,7 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
             element->elmt = *native_element;  // shallow copy (items[], type, data pointers are shared)
             if (doc->input && doc->input->ui_mode) {
                 // S12.1.3/D5.5.1: DOM writes and retirement cannot consume a retained pure value.
-                Element* snapshot = &element->elmt;
-                if (!elmt_clone_type_for_mutation(snapshot, doc->input->pool, true)) return nullptr;
-                if (snapshot->data_cap > 0) {
-                    snapshot->data = pool_alloc(doc->input->pool, snapshot->data_cap);
-                    if (!snapshot->data) return nullptr;
-                    memcpy(snapshot->data, native_element->data, snapshot->data_cap);
-                }
-                if (snapshot->capacity > 0) {
-                    snapshot->items = (Item*)arena_alloc(doc->input->arena,
-                        (size_t)snapshot->capacity * sizeof(Item));
-                    if (!snapshot->items) return nullptr;
-                    memcpy(snapshot->items, native_element->items,
-                        (size_t)snapshot->capacity * sizeof(Item));
-                }
-                snapshot->cow_state = 0;
+                if (!dom_snapshot_backing(doc, &element->elmt, native_element)) return nullptr;
             }
         }
     }
@@ -4550,8 +4746,10 @@ bool dom_text_remove(DomText* text_node) {
     }
 
     // Get current child index
-    int64_t child_idx = dom_text_get_child_index(text_node);
+    int64_t child_idx = dom_text_find_backed_child_index(text_node);
     if (child_idx < 0) {
+        int nested = dom_remove_nested_backed_child(parent, text_node);
+        if (nested) return nested > 0;
         log_error("dom_text_remove: failed to get child index");
         return false;
     }
@@ -4952,8 +5150,10 @@ bool dom_comment_remove(DomComment* comment_node) {
     }
 
     // Get current child index
-    int64_t child_idx = dom_comment_get_child_index(comment_node);
+    int64_t child_idx = dom_backed_node_index(parent, comment_node);
     if (child_idx < 0) {
+        int nested = dom_remove_nested_backed_child(parent, comment_node);
+        if (nested) return nested > 0;
         log_error("dom_comment_remove: failed to get child index");
         return false;
     }
@@ -5077,7 +5277,6 @@ void dom_rebind_equal_render_result(DomDocument* doc, Item previous, Item curren
         dom_rebind_equal_render_result(doc, before->items[i], after->items[i]);
 }
 
-static const int MAX_DOM_BUILD_DEPTH = 512;
 static thread_local int g_dom_build_depth = 0;
 
 static bool dom_element_has_embedded_storage(DomDocument* doc, Element* elem) {
@@ -5117,7 +5316,7 @@ static bool dom_build_content_occurrence(Item* slot, Item source, DomDocument* d
         // MarkBuilder already copied the whole graph; retain each evaluator source alongside it.
         DomElement* occurrence = build_dom_tree_from_element_impl(value, source.element, doc, parent, copied_for_view);
         // DOM readers must observe descendant edits through the mutable occurrence graph.
-        if (occurrence && doc->input && doc->input->ui_mode)
+        if (occurrence && doc->input && (copied_for_view || doc->input->ui_mode))
             *slot = {.element = dom_element_to_element(occurrence)};
         return true;  // declarations intentionally produce no layout element
     }
@@ -5155,12 +5354,11 @@ static DomElement* build_dom_tree_with_parent(Element* elem, DomDocument* doc,
     if (!elem || !doc) return nullptr;
     Element* source = elem;
     bool copied_for_view = false;
-    if (doc->input && doc->input->ui_mode &&
+    if (doc->input &&
             !(doc->page_kind == DOM_PAGE_KIND_HTML && dom_element_has_embedded_storage(doc, elem))) {
-        // D5.5.3: copy at the DOM boundary, after evaluation/render-map recording,
-        // so each occurrence owns its embedded links without changing Lambda values.
+        // copy each occurrence's content while retaining its source mapping (D5.5.2/D5.5.3).
         MarkBuilder builder(doc->input);
-        Item copied = builder.deep_copy_for_view({.element = elem});
+        Item copied = builder.deep_copy_for_dom({.element = elem});
         if (get_type_id(copied) != LMD_TYPE_ELEMENT) return nullptr;
         elem = copied.element;
         copied_for_view = true;

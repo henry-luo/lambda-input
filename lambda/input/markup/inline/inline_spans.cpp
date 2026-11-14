@@ -21,6 +21,24 @@ namespace markup {
 typedef Item (*InlineItemParser)(MarkupParser*, const char**);
 typedef Item (*EmphasisParser)(MarkupParser*, const char**, const char*);
 
+static Item parse_textile_span(MarkupParser* parser, const char** text, const char* start) {
+    const char* open = *text;
+    if (open > start && !str_is_space(open[-1]) && !strchr("([{", open[-1])) return Item{.item = ITEM_UNDEFINED};
+    const char* close = strchr(open + 1, '%');
+    if (!close || close == open + 1 || str_is_space(open[1]) || str_is_space(close[-1]) ||
+        (close[1] && !str_is_space(close[1]) && !strchr(".,;:!?)]}", close[1])))
+        return Item{.item = ITEM_UNDEFINED};
+    char* content = mem_strndup(open + 1, (size_t)(close - open - 1), MEM_CAT_INPUT_MARKUP);
+    if (!content) return Item{.item = ITEM_ERROR};
+    Element* span = create_element(parser, "span");
+    Item inner = parse_inline_spans(parser, content);
+    mem_free(content);
+    if (!span || inner.item == ITEM_ERROR) return Item{.item = ITEM_ERROR};
+    if (inner.item != ITEM_UNDEFINED) list_push((List*)span, inner);
+    *text = close + 1;
+    return Item{.element = span};
+}
+
 static bool try_parse_inline_item(MarkupParser* parser, Element* span, StringBuf* sb,
                                   const char** pos, InlineItemParser parse) {
     if (sb->length > 0) {
@@ -147,7 +165,11 @@ Item parse_inline_spans(MarkupParser* parser, const char* text) {
     const char* first_markup = text;
     bool extended_links = parser->config.format == Format::MARKDOWN &&
         parser->config.flavor != Flavor::COMMONMARK && !parser->state.link_depth;
+    bool org = parser->config.format == Format::ORG;
+    bool textile = parser->config.format == Format::TEXTILE;
     while (*first_markup && !markup[(unsigned char)*first_markup] &&
+        !(org && (*first_markup == '/' || *first_markup == '=' || *first_markup == '+')) &&
+        !(textile && *first_markup == '%') &&
         !(extended_links && strncmp(first_markup, "www.", 4) == 0)) first_markup++;
     if (!*first_markup) {
         log_debug("parse_inline_spans: no markup chars, returning as plain string");
@@ -372,6 +394,11 @@ Item parse_inline_spans(MarkupParser* parser, const char* text) {
             continue;
         }
 
+        if (format == Format::TEXTILE && *pos == '%') {
+            parse_emphasis_item(parser, span, sb, &pos, text_copy, parse_textile_span, false);
+            continue;
+        }
+
         // RST-specific backtick handling - RST uses backticks for links, not code
         // EXCEPT: double backticks `` are inline literals (code)
         if (format == Format::RST && *pos == '`') {
@@ -558,6 +585,11 @@ Item parse_inline_spans(MarkupParser* parser, const char* text) {
         if (*pos == '\\') {
             char next = *(pos+1);
             log_debug("escape: found backslash, next char='%c' (0x%02x)", next, (unsigned char)next);
+
+            if (format == Format::MAN && next == '&') {
+                pos += 2;
+                continue;
+            }
 
             // Man page font escapes: \fB, \fI, \fR, \fP
             if (format == Format::MAN && next == 'f') {

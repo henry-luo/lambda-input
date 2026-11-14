@@ -313,8 +313,8 @@ void MarkupEmitter::emit_list(const ElementReader& elem, bool ordered, int depth
         }
     }
 
-    if (depth == 0 && rules_->list.use_depth_repetition) {
-        // Wiki/Textile: add a trailing newline after top-level list
+    if (depth == 0 && (rules_->list.use_depth_repetition || rules_ == &ORG_RULES)) {
+        // a following Org paragraph needs a blank line to leave the list.
         write_char('\n');
     }
 }
@@ -370,6 +370,11 @@ void MarkupEmitter::emit_list_item(const ElementReader& elem, bool ordered, int 
 void MarkupEmitter::emit_code_block(const ElementReader& elem) {
     String* lang_attr = elem.get_string_attr("language");
     bool has_lang = lang_attr && lang_attr->len > 0;
+    ElementReader content = elem;
+    if (elem.tagName() && strcmp(elem.tagName(), "pre") == 0 && elem.childCount() == 1 &&
+        elem.childAt(0).isElement() && elem.childAt(0).asElement().hasTag("code")) {
+        content = elem.childAt(0).asElement();
+    }
 
     const auto& cb = rules_->code_block;
 
@@ -379,17 +384,25 @@ void MarkupEmitter::emit_code_block(const ElementReader& elem) {
         write_text(cb.open_prefix);
         if (has_lang && cb.lang_after_open) write_text(lang_attr);
         write_char('\n');
-        format_children_raw(elem);
+        format_children_raw(content);
         write_char('\n');
         write_text(cb.close_text);
         break;
 
     case MarkupOutputRules::CodeBlockStyle::DIRECTIVE:
-        // .. code-block:: lang\n\n   content\n\n
         write_text(cb.open_prefix);
         if (has_lang && cb.lang_after_open) write_text(lang_attr);
-        write_text("\n\n   "); // 3-space indent for RST directive content
-        format_children(elem);
+        write_text("\n\n");
+        {
+            StringBuf* raw = stringbuf_new(pool());
+            MarkupEmitter nested(rules_, pool(), raw);
+            nested.format_children_raw(content);
+            for (size_t i = 0; i < raw->length; i++) {
+                if (i == 0 || raw->str->chars[i - 1] == '\n') write_text("   ");
+                write_char(raw->str->chars[i]);
+            }
+            stringbuf_free(raw);
+        }
         write_text(cb.close_text);
         break;
 
@@ -401,7 +414,8 @@ void MarkupEmitter::emit_code_block(const ElementReader& elem) {
             write_text(lang_attr);
         }
         write_char('\n');
-        format_children_raw(elem);
+        format_children_raw(content);
+        if (output()->length && output()->str->chars[output()->length - 1] != '\n') write_char('\n');
         write_text(cb.close_text);
         break;
 
@@ -409,7 +423,7 @@ void MarkupEmitter::emit_code_block(const ElementReader& elem) {
         // <pre>\n content </pre>\n\n
         write_text(cb.open_prefix);
         write_char('\n');
-        format_children_raw(elem);
+        format_children_raw(content);
         write_char('\n');
         write_text(cb.close_text);
         break;
@@ -424,7 +438,7 @@ void MarkupEmitter::emit_code_block(const ElementReader& elem) {
         } else {
             write_char(' ');
         }
-        format_children_raw(elem);
+        format_children_raw(content);
         write_text(cb.close_text);
         break;
     }
@@ -551,7 +565,8 @@ void MarkupEmitter::format_element(const ElementReader& elem) {
     if (tn.code_tag && strcmp(tag, tn.code_tag) == 0) {
         // check if it's a code block (has "language" attribute) or inline code
         String* lang = elem.get_string_attr("language");
-        if (lang && lang->len > 0) {
+        String* code_type = elem.get_string_attr("type");
+        if ((lang && lang->len > 0) || (code_type && strcmp(code_type->chars, "block") == 0)) {
             emit_code_block(elem);
         } else {
             // inline code: emit raw children (no escaping inside backticks)
@@ -1133,6 +1148,14 @@ void emit_table_textile(StringBuf* sb, const ElementReader& elem, void* emitter_
 // Org table handler (uses child elements directly, not iterate_table_rows)
 void emit_table_org(StringBuf* sb, const ElementReader& elem, void* emitter_ctx) {
     MarkupEmitter* em = (MarkupEmitter*)emitter_ctx;
+
+    if (elem.childCount() && elem.childAt(0).isElement()) {
+        const char* tag = elem.childAt(0).asElement().tagName();
+        if (tag && (strcmp(tag, "thead") == 0 || strcmp(tag, "tbody") == 0 || strcmp(tag, "tr") == 0)) {
+            emit_table_pipe(sb, elem, emitter_ctx);
+            return;
+        }
+    }
 
     bool first_row = true;
     for (int64_t i = 0; i < elem.childCount(); i++) {

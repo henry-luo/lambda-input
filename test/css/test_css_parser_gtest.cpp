@@ -53,6 +53,15 @@ TEST_F(CssParserTest, WhiteSpaceRejectsInvalidDeclarationsBeforeTheCascade) {
         EXPECT_EQ(css_parse_declaration_text(source, strlen(source), pool), nullptr) << source;
 }
 
+TEST_F(CssParserTest, SingleVariableBlockRetainsItsDeclaration) {
+    for (const char* text : {"width:{var(--size)}", "color:{var(--color)}"}) {
+        EXPECT_NE(css_parse_declaration_text(text, strlen(text), pool), nullptr) << text;
+    }
+    for (const char* text : {"width:{1px}", "width:{var(--size)} 2px", "width:1px 2px"}) {
+        EXPECT_EQ(css_parse_declaration_text(text, strlen(text), pool), nullptr) << text;
+    }
+}
+
 TEST_F(CssParserTest, HyphenateCharacterLimitsValidateEveryComponent) {
     const char* valid[] = {
         "hyphenate-limit-chars: auto", "hyphenate-limit-chars: 0",
@@ -1761,6 +1770,18 @@ TEST_F(CssEngineParserTest, NestedCustomPropertyBlocksDoNotBecomeQualifiedRules)
     ASSERT_EQ(outer->data.style_rule.nested_rule_count, 2u);
     EXPECT_EQ(outer->data.style_rule.nested_rules[0]->type, CSS_RULE_STYLE);
     EXPECT_EQ(outer->data.style_rule.nested_rules[1]->type, CSS_RULE_STYLE);
+}
+
+TEST_F(CssEngineParserTest, NestedCustomBlockKeepsDeferredWidthDeclaration) {
+    CssStylesheet* sheet = css_parse_stylesheet(engine,
+        ".outer{--tokens:{a:hover{width:1px}};"
+        "width:{var(--size)};a:hover{color:green}.tail{height:2px}}", nullptr);
+    ASSERT_NE(sheet, nullptr);
+    ASSERT_EQ(sheet->rule_count, 1u);
+    CssRule* outer = sheet->rules[0];
+    ASSERT_EQ(outer->data.style_rule.declaration_count, 2u);
+    EXPECT_EQ(outer->data.style_rule.declarations[1]->property_code, CSS_PROPERTY_WIDTH);
+    EXPECT_EQ(outer->data.style_rule.nested_rule_count, 2u);
 }
 
 TEST_F(CssEngineParserTest, NestedDeclarationsKeepInterleavedRuleOrder) {

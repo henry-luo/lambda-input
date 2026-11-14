@@ -1218,6 +1218,7 @@ static Item parse_flow_sequence(YamlParser* p) {
     advance(p); // skip [
 
     ArrayBuilder arr = p->ctx->builder.array();
+    bool closed = false;
 
     while (!at_end(p)) {
         int loop_guard = p->pos;
@@ -1227,7 +1228,7 @@ static Item parse_flow_sequence(YamlParser* p) {
         skip_spaces_and_comments(p);
 
         if (at_end(p)) break;
-        if (peek(p) == ']') { advance(p); break; }
+        if (peek(p) == ']') { advance(p); closed = true; break; }
 
         // handle explicit key in flow sequence: ? key : value
         bool explicit_key = false;
@@ -1282,6 +1283,7 @@ static Item parse_flow_sequence(YamlParser* p) {
         if (p->pos == loop_guard && !at_end(p)) advance(p);
     }
 
+    if (!closed) p->ctx->addError("yaml: unterminated flow sequence");
     return arr.final();
 }
 
@@ -1293,6 +1295,7 @@ static Item parse_flow_mapping(YamlParser* p) {
     advance(p); // skip {
 
     MapBuilder map = p->ctx->builder.map();
+    bool closed = false;
 
     while (!at_end(p)) {
         int loop_guard = p->pos;
@@ -1302,7 +1305,7 @@ static Item parse_flow_mapping(YamlParser* p) {
         skip_spaces_and_comments(p);
 
         if (at_end(p)) break;
-        if (peek(p) == '}') { advance(p); break; }
+        if (peek(p) == '}') { advance(p); closed = true; break; }
 
         if (peek(p) == '?') {
             char next = peek_at(p, 1);
@@ -1391,6 +1394,7 @@ static Item parse_flow_mapping(YamlParser* p) {
         if (p->pos == loop_guard && !at_end(p)) advance(p);
     }
 
+    if (!closed) p->ctx->addError("yaml: unterminated flow mapping");
     return map.final();
 }
 

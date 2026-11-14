@@ -31,7 +31,7 @@ enum class TableAlign {
 /**
  * is_separator_row - Check if a table row is a separator (---|---|---)
  */
-static bool is_separator_row(const char* line) {
+static bool is_separator_row(const char* line, bool org = false) {
     if (!line) return false;
 
     const char* pos = line;
@@ -45,7 +45,7 @@ static bool is_separator_row(const char* line) {
     while (*pos) {
         if (*pos == '-' || *pos == ':') {
             has_dash = true;
-        } else if (*pos == '|') {
+        } else if (*pos == '|' || (org && *pos == '+')) {
             // Cell separator, continue
         } else if (*pos != ' ' && *pos != '\t') {
             // Non-separator character
@@ -62,7 +62,7 @@ static bool is_separator_row(const char* line) {
  * Returns an ArrayList of alignments (TableAlign cast to ArrayListValue), one per column.
  * Caller must free the returned ArrayList.
  */
-static ArrayList* parse_separator_alignments(const char* line) {
+static ArrayList* parse_separator_alignments(const char* line, bool org = false) {
     ArrayList* alignments = arraylist_new(8);
     if (!line) return alignments;
 
@@ -111,7 +111,7 @@ static ArrayList* parse_separator_alignments(const char* line) {
         arraylist_append(alignments, (ArrayListValue)(intptr_t)align);
         
         // Skip to next cell
-        if (*pos == '|') pos++;
+        if (*pos == '|' || (org && *pos == '+')) pos++;
         else break;
     }
 
@@ -183,7 +183,7 @@ static Item parse_table_row_with_type(MarkupParser* parser, const char* line,
     }
 
     // Skip separator rows (---|---|---)
-    if (is_separator_row(line)) {
+    if (is_separator_row(line, parser->config.format == Format::ORG)) {
         parser->current_line++;
         return Item{.item = ITEM_UNDEFINED};
     }
@@ -740,10 +740,10 @@ Item parse_table(MarkupParser* parser, const char* line) {
     // Check if this is a GFM table with header
     if (!is_asciidoc_delimited && parser->current_line + 1 < parser->line_count) {
         const char* next_line = parser->lines[parser->current_line + 1];
-        if (is_separator_row(next_line)) {
+        if (is_separator_row(next_line, parser->config.format == Format::ORG)) {
             has_gfm_header = true;
             arraylist_free(column_alignments);
-            column_alignments = parse_separator_alignments(next_line);
+            column_alignments = parse_separator_alignments(next_line, parser->config.format == Format::ORG);
         }
     }
 
@@ -762,7 +762,7 @@ Item parse_table(MarkupParser* parser, const char* line) {
         
         // Skip separator row
         if (parser->current_line < parser->line_count && 
-            is_separator_row(parser->lines[parser->current_line])) {
+            is_separator_row(parser->lines[parser->current_line], parser->config.format == Format::ORG)) {
             parser->current_line++;
         }
         

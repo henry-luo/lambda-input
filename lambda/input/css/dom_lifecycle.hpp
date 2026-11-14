@@ -70,6 +70,8 @@ void dom_node_registry_set_backing_source(DomDocument* doc, DomNode* node,
 void dom_node_registry_set_backing_value(DomDocument* doc, DomNode* node,
                                          Item backing_value);
 Element* dom_node_registry_backing_source(DomDocument* doc, DomNode* node);
+void dom_node_registry_shared_source_storage(DomDocument* doc, DomNode* node,
+                                             bool* shared_type, bool* shared_data);
 Pool* dom_node_registry_owned_string_pool(DomDocument* doc, DomNode* node);
 void dom_node_registry_set_owned_string_pool(DomDocument* doc, DomNode* node, Pool* pool);
 void dom_node_registry_refresh_backing(DomDocument* doc, DomNode* node);

@@ -62,6 +62,8 @@ static SecurityIOResult security_io_ambient_directory(const char* path,
             item->name = mem_strdup(entry->name, MEM_CAT_INPUT_OTHER);
             char* full = file_path_join(path, entry->name);
             item->metadata = full ? file_stat(full) : FileStat{};
+            // directory classification also identifies dangling symlinks.
+            item->metadata.is_symlink = entry->is_symlink;
             item->has_metadata = item->metadata.exists;
             item->is_directory = entry->is_dir;
             mem_free(full);

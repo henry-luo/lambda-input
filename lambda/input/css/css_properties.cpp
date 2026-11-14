@@ -3827,6 +3827,8 @@ bool css_property_validate_value_mode(CssPropertyCode id,
         case CSS_PROPERTY_MIN_HEIGHT:
         case CSS_PROPERTY_MAX_WIDTH:
         case CSS_PROPERTY_MAX_HEIGHT: {
+            // variable substitution determines the final single-value grammar.
+            if (css_value_contains_pending_substitution(value)) return true;
             // These properties accept a single value only
             if (value->type == CSS_VALUE_TYPE_LIST) return false;
             // Width and height must be non-negative (per CSS spec)

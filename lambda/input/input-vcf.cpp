@@ -153,6 +153,7 @@ void parse_vcf(Input* input, const char* vcf_string) {
         // Parse property name
         String* property_name = parse_property_name(ctx, &vcf);
         if (!property_name) {
+            ctx.addError("vCard content line has no property name");
             skip_to_newline(&vcf);
             continue;
         }
@@ -173,6 +174,8 @@ void parse_vcf(Input* input, const char* vcf_string) {
         // Parse property value
         String* property_value = parse_property_value(ctx, &vcf);
         if (!property_value) {
+            ctx.addError("vCard content line has no value separator");
+            skip_to_newline(&vcf);
             continue;
         }
 

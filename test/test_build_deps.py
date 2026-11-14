@@ -28,6 +28,21 @@ class DependencyBuildTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.work = Path(self.temporary.name)
 
+    def test_parallel_native_tests_use_one_dependency_build_graph(self):
+        env = dict(os.environ, TMPDIR=str(self.work))
+        env.pop('MAKEFLAGS', None)
+        env.pop('MFLAGS', None)
+        # Suppress recursive make execution in a dry run, including on clean checkouts.
+        result = subprocess.run(['make', '-n', '-j4', 'MAKE=true', 'test-native', 'check-boundary'],
+                                cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        lines = result.stdout.splitlines()
+        for command in ('scripts/build_vendor.py', 'scripts/build_curl.py',
+                        'scripts/generate_native_deps_premake.py'):
+            self.assertEqual(sum(command in line for line in lines), 1, command)
+        self.assertNotIn('scripts/quiet_build.py', result.stdout)
+
     def test_imports_preserve_sources_and_reject_cycles_and_duplicates(self):
         leaf = self.work / 'leaf.json'
         main = self.work / 'main.json'

@@ -263,6 +263,8 @@ public:
     Item dom_insert_child(Item element, int index, Item child);
     Item dom_delete_child(Item element, int index);
     Item dom_replace_child(Item element, int index, Item child);
+    // publish a staged backing replacement without rebuilding the DOM links.
+    Item dom_replace_backing_child(Item element, int index, Item child);
     Item dom_append_child(Item element, Item child) {
         return dom_insert_child(element, -1, child);
     }
@@ -286,6 +288,8 @@ public:
      * Insert element at index
      */
     Item array_insert(Item array, int64_t index, Item value);
+    // retain a registered DOM node or text identity in an array slot.
+    Item dom_array_insert(Item array, int64_t index, Item value);
     
     /**
      * Delete element at index
@@ -380,10 +384,11 @@ private:
     Item import_child(Item child, bool preserve_ui_nodes = false);
     bool prepare_child_edit(Item element, int64_t index, int64_t delete_count,
                             int64_t count, Item* children, Array* edited);
-    Item publish_child_edit(Element* old_elmt, const Array* edited);
+    Item publish_child_edit(Element* old_elmt, const Array* edited, bool relink = true);
     Item elmt_edit_children(Item element, int64_t index, int64_t delete_count,
                             int64_t count, Item* children);
     Item dom_edit_child(Item element, int64_t index, int64_t delete_count, Item* child);
+    Item array_insert_internal(Item array, int64_t index, Item value, bool preserve_ui_nodes);
     
     // Version helpers
     EditVersion* create_version(Item root, const char* description);
