@@ -19,6 +19,142 @@ under LI-012. Existing evidence filenames keep their historical prefixes.
 
 ## Open issues
 
+<a id="li-045"></a>
+
+### LI-045 — Properties parser treats escaped key separators as delimiters
+
+**Status:** OPEN. **Lambda task blocker:** yes for correct property editing of
+Java properties with escaped key separators or spaces. D9.3.4 governs document
+processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/property-escape-probe.ls`.
+For `a\=b=c`, parsing as `properties` currently returns key `a\` and value
+`b=c`; Java's `Properties.load(Reader)` rules specify key `a=b` and value `c`.
+The editor's current source-span scanner makes the same split and thus presents
+this file incorrectly. A separate probe of `key\ space=value` produces a parse
+error. The Input implementation cause is unconfirmed. Once the Input provider
+is corrected, the Lambda editor's span scanner also needs to recognize escaped
+separators and preserve their spelling; do not patch around the Input parser.
+Evidence: `Lambda-opus/temp/edit-viewer/property-escape-probe.log`. Reference:
+[Java Properties.load documentation](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Properties.html#load(java.io.Reader)).
+
+
+<a id="li-044"></a>
+
+### LI-044 — Markdown parser drops trailing spaces inside link labels
+
+**Status:** OPEN. **Lambda task blocker:** yes for lossless rich editing of
+links whose selected label ends in whitespace. D9.3.4 governs document
+processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/md-link-label-probe.ls`.
+Parsing `[ leading and trailing ](https://example.org)` yields an `<a>` whose
+text is ` leading and trailing`, missing the trailing space; formatting that
+model confirms the lost space. The Markdown source spells the trailing space
+inside the link and it is visible before adjacent text. The editor's rich
+link command can produce this valid source when a selection ends in a space;
+its preservation check must refuse the save while reparsing changes the model.
+The cause within the Input implementation is unconfirmed. Evidence:
+`Lambda-opus/temp/edit-viewer/md-link-label-probe.log` and
+`Lambda-opus/temp/edit-viewer/link-model-new.log`.
+
+
+<a id="li-043"></a>
+
+### LI-043 — Org parser treats slash emphasis as plain text
+
+**Status:** OPEN. **Lambda task blocker:** yes for rendering and rich editing
+of Org italic text. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/org-combine-census.ls`.
+Both `Hello /world/.\n` and `/world/\n` parse as plain paragraph strings
+containing the slash delimiters instead of an emphasized run. The viewer and
+editor both consume this input-owned parse result. The exact cause is not yet
+confirmed. Evidence: `Lambda-opus/temp/edit-viewer/org-combine-census.log`.
+
+<a id="li-042"></a>
+
+### LI-042 — Org writer merges a following paragraph into a list
+
+**Status:** OPEN. **Lambda task blocker:** yes for rich editing of Org files
+with a list followed by a paragraph. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/org-combined-probe.ls`.
+The source in `test/ui/edit/sample-org-list-followed.org` contains a two-item list followed
+by a separate paragraph with a link. The input-owned Org formatter emits the
+list and paragraph without a separating blank line, and reparsing places the
+paragraph inside the second list item. The editor falls back to source rather
+than changing the document structure. The precise formatter cause is not yet
+confirmed. Evidence: `Lambda-opus/temp/edit-viewer/org-combined-probe.log`.
+
+<a id="li-041"></a>
+
+### LI-041 — reStructuredText literal block changes content on round trip
+
+**Status:** OPEN. **Lambda task blocker:** yes for rich editing of affected
+RST literal blocks. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-structure-roundtrip.ls`.
+For `Example::\n\n  code\n`, the input parser returns a div with a
+paragraph `code` and a pre/code block also containing `code`; the `Example:`
+introduction is absent. Formatting its Markdown-equivalent Mark Doc back to
+RST yields a paragraph and inline-code syntax, which reparses to a different
+model. The input parser and formatter are both input-owned; the exact root
+causes have not been confirmed. The editor falls back to source to avoid
+changing the document. Evidence:
+`Lambda-opus/temp/edit-viewer/markup-structure-roundtrip.log`.
+
+<a id="li-040"></a>
+
+### LI-040 — Org table and source block round trips lose structure
+
+**Status:** OPEN. **Lambda task blocker:** yes for rich editing of affected
+Org tables and source blocks. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-structure-roundtrip.ls`.
+The Org input `| A | B |\n|---+---|\n| one | two |\n` is parsed with the
+separator as a data row; after Markdown conversion the input-owned Org writer
+returns an empty string. The source block `#+BEGIN_SRC\nhello\n#+END_SRC\n`
+parses as block code, but formatting its Markdown-equivalent model produces
+`~hello\n~`, which reparses as ordinary paragraph text. The responsible parser
+and formatter paths are input-owned; the exact causes remain unconfirmed. The
+editor falls back to source instead of losing table or code structure. Evidence:
+`Lambda-opus/temp/edit-viewer/markup-structure-roundtrip.log`.
+
+<a id="li-039"></a>
+
+### LI-039 — Textile formatter and parser disagree on ordinary spans
+
+**Status:** OPEN. **Lambda task blocker:** yes for rich editing of Textile
+paragraphs whose parsed model contains a span. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-roundtrip-probe.ls`.
+The Textile input `h1. Title\n\nHello _world_.\n` parses with paragraph text
+`Hello `, an emphasized `world`, and `.`. Formatting its Markdown-equivalent
+Mark Doc to Textile produces `h1. Title\n\n%Hello _world_.%\n\n`.
+Reparsing that output includes the surrounding `%` characters as visible text.
+The input-owned Textile formatter's custom `span` handler emits `%` delimiters;
+whether the formatter or parser should change is not yet confirmed. The editor
+cannot save this round trip without changing visible text and falls back to source.
+Evidence: `Lambda-opus/temp/edit-viewer/markup-roundtrip-probe.log`.
+
+<a id="li-038"></a>
+
+### LI-038 — AsciiDoc heading levels do not round-trip through the input parser
+
+**Status:** OPEN. **Lambda task blocker:** yes for rich editing of AsciiDoc
+headings. D9.3.4 governs document processing.
+
+From the Lambda checkout run `./lambda.exe temp/edit-viewer/markup-roundtrip-probe.ls`.
+The AsciiDoc source `= Title\n\nHello _world_.\n` parses its heading as h1.
+Formatting the equivalent Mark Doc with the Lambda AsciiDoc writer produces
+`== Title`, which the input parser reads as h2. The writer reserves `= Title`
+for document metadata and maps body h1 to `==`, while the input parser maps
+`==` to h2. This existing reader/writer mismatch is also documented in
+`doc/Script_Formats_Support.md` under the current round-trip results. The editor
+falls back to source instead of changing heading levels. Evidence:
+`Lambda-opus/temp/edit-viewer/markup-roundtrip-probe.log`.
+
 <a id="li-037"></a>
 
 ### LI-037 — Escaped dollar ends native inline math prematurely
