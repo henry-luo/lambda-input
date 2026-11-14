@@ -2,6 +2,8 @@
 #include "lambda/input/input.hpp"
 #include "lambda/network/http_client.h"
 #include "lambda/network/cookie_jar.h"
+#include "lambda/network/curl_multi_backend.h"
+#include "lambda/network/network_downloader.h"
 #include "lib/url.h"
 #include "lib/string.h"
 #include "lib/mempool.h"
@@ -12,6 +14,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef struct HttpHeaderCaptureServer {
@@ -23,7 +26,8 @@ typedef struct HttpHeaderCaptureServer {
 static bool http_header_capture_server_start(HttpHeaderCaptureServer* server,
                                              unsigned int response_delay_seconds = 0,
                                              const char* response_override = NULL,
-                                             size_t response_override_size = 0) {
+                                             size_t response_override_size = 0,
+                                             bool require_resource_headers = false) {
     if (!server) return false;
     memset(server, 0, sizeof(*server));
     server->request_fd = -1;
@@ -76,8 +80,14 @@ static bool http_header_capture_server_start(HttpHeaderCaptureServer* server,
         }
         if (request_size > 0) write(pipe_fds[1], request, request_size);
         const char default_response[] = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+        const char rejected_response[] = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
         const char* response = response_override ? response_override : default_response;
         size_t response_size = response_override ? response_override_size : sizeof(default_response) - 1;
+        if (require_resource_headers && (!strstr(request, "Referer: ") ||
+                !strstr(request, RADIANT_HTTP_DOCUMENT_LANGUAGE_HEADER))) {
+            response = rejected_response;
+            response_size = sizeof(rejected_response) - 1;
+        }
         if (client >= 0) {
             if (response_delay_seconds > 0) sleep(response_delay_seconds);
             send(client, response, response_size, 0);
@@ -203,6 +213,71 @@ TEST_F(HttpInputTest, SendsBrowserNavigationHeadersForDocumentDownloads) {
     EXPECT_NE(nullptr, strstr(request, RADIANT_HTTP_DOCUMENT_UPGRADE_HEADER));
     EXPECT_EQ(nullptr, strstr(request, "Radiant/1.0"));
     mem_free(content);
+}
+
+struct ResourceCompletion {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    bool done;
+    bool success;
+};
+
+static void resource_test_completed(void*, bool success, void* user_data) {
+    ResourceCompletion* completion = (ResourceCompletion*)user_data;
+    pthread_mutex_lock(&completion->mutex);
+    completion->success = success;
+    completion->done = true;
+    pthread_cond_signal(&completion->cond);
+    pthread_mutex_unlock(&completion->mutex);
+}
+
+TEST_F(HttpInputTest, ResourceDownloadsKeepRefererAndNavigationLanguage) {
+    for (bool multi : {false, true}) {
+        SCOPED_TRACE(multi ? "curl multi" : "synchronous downloader");
+        HttpHeaderCaptureServer server;
+        ASSERT_TRUE(http_header_capture_server_start(&server, 0, nullptr, 0, true));
+        char url[128], referer[128];
+        snprintf(url, sizeof(url), "http://127.0.0.1:%d/site.css", server.port);
+        snprintf(referer, sizeof(referer), "http://127.0.0.1:%d/document", server.port);
+        NetworkResource resource = {};
+        resource.url = url;
+        resource.referrer_url = referer;
+        resource.type = RESOURCE_CSS;
+        resource.timeout_ms = 5000;
+        bool success = false;
+        if (multi) {
+            ResourceCompletion completion = {};
+            ASSERT_EQ(pthread_mutex_init(&completion.mutex, nullptr), 0);
+            ASSERT_EQ(pthread_cond_init(&completion.cond, nullptr), 0);
+            CurlMultiBackend* backend = curl_multi_backend_create(resource_test_completed, &completion);
+            ASSERT_NE(backend, nullptr);
+            ASSERT_TRUE(curl_multi_backend_submit(backend, &resource, &resource));
+            timespec deadline;
+            ASSERT_EQ(clock_gettime(CLOCK_REALTIME, &deadline), 0);
+            deadline.tv_sec += 10;
+            pthread_mutex_lock(&completion.mutex);
+            int result = 0;
+            while (!completion.done && result == 0)
+                result = pthread_cond_timedwait(&completion.cond, &completion.mutex, &deadline);
+            pthread_mutex_unlock(&completion.mutex);
+            curl_multi_backend_destroy(backend);
+            EXPECT_TRUE(completion.done);
+            success = completion.success;
+            pthread_cond_destroy(&completion.cond);
+            pthread_mutex_destroy(&completion.mutex);
+        } else {
+            success = network_download_resource(&resource);
+        }
+        char request[8192] = {};
+        http_header_capture_server_finish(&server, request, sizeof(request));
+        EXPECT_TRUE(success);
+        EXPECT_EQ(resource.http_status_code, 200);
+        EXPECT_NE(strstr(request, RADIANT_HTTP_DOCUMENT_LANGUAGE_HEADER), nullptr);
+        EXPECT_NE(strstr(request, referer), nullptr);
+        EXPECT_NE(strstr(request, "Accept-Encoding:"), nullptr);
+        if (resource.local_path) { unlink(resource.local_path); mem_free(resource.local_path); }
+        if (resource.error_message) mem_free(resource.error_message);
+    }
 }
 
 TEST_F(HttpInputTest, KeepsRedirectCookiesWithoutSessionJar) {

@@ -756,6 +756,126 @@ TEST_F(FormatAdapterTest, AsciiDocSingleAsteriskIsStrong) {
     EXPECT_TRUE(json_contains(json->chars, "\"$\": \"em\""));
 }
 
+TEST_F(FormatAdapterTest, AsciiDocTitleAndSectionsSurviveMarkdownBridge) {
+    const char* source = "= A &amp; B \\*literal\\*\n\n== Chapter\n\nText.\n\n=== Subsection\n";
+    MarkupTestInput parsed = parse_test_markup(source, "document.adoc");
+    ASSERT_NE(parsed.input, nullptr);
+    ElementReader document(parsed.input->root);
+    ElementReader metadata = document.findChildElement("meta");
+    ASSERT_TRUE(metadata.isValid());
+    ASSERT_NE(metadata.get_attr_string("title"), nullptr);
+    EXPECT_STREQ(metadata.get_attr_string("title"), "A & B *literal*");
+    ElementReader body = document.findChildElement("body");
+    ASSERT_TRUE(body.isValid());
+    ASSERT_GE(body.childCount(), 3);
+    ASSERT_TRUE(body.childAt(0).isElement());
+    EXPECT_STREQ(body.childAt(0).asElement().tagName(), "h1");
+    EXPECT_STREQ(body.childAt(2).asElement().tagName(), "h2");
+
+    String* markdown = format_data(parsed.input->root, create_lambda_string("markdown"), nullptr, parsed.input->pool);
+    ASSERT_NE(markdown, nullptr);
+    EXPECT_EQ(strncmp(markdown->chars, "---\n", 4), 0);
+    MarkupTestInput reparsed = parse_test_markup(markdown->chars, "bridge.md");
+    ASSERT_NE(reparsed.input, nullptr);
+    ElementReader second(reparsed.input->root);
+    ElementReader second_meta = second.findChildElement("meta");
+    ASSERT_TRUE(second_meta.isValid());
+    ASSERT_NE(second_meta.get_attr_string("title"), nullptr);
+    EXPECT_STREQ(second_meta.get_attr_string("title"), "A & B *literal*");
+    ElementReader second_body = second.findChildElement("body");
+    ASSERT_GE(second_body.childCount(), 3);
+    EXPECT_STREQ(second_body.childAt(0).asElement().tagName(), "h1");
+    EXPECT_STREQ(second_body.childAt(2).asElement().tagName(), "h2");
+    free(parsed.source);
+    free(reparsed.source);
+}
+
+TEST_F(FormatAdapterTest, MarkdownFrontMatterKeepsMetadataAndBodyPositions) {
+    MarkupTestInput parsed = parse_test_markup(
+        "---\ntitle: \"A: title\"\ntags: [one, two]\n---\n\n# Section\n", "front.md");
+    ASSERT_NE(parsed.input, nullptr);
+    ElementReader document(parsed.input->root);
+    ElementReader metadata = document.findChildElement("meta");
+    ASSERT_TRUE(metadata.isValid());
+    ASSERT_NE(metadata.get_attr_string("title"), nullptr);
+    EXPECT_STREQ(metadata.get_attr_string("title"), "A: title");
+    ASSERT_TRUE(metadata.get_attr("tags").isArray());
+    EXPECT_EQ(metadata.get_attr("tags").asArray().length(), 2);
+    EXPECT_STREQ(metadata.get_attr("tags").asArray().get(0).cstring(), "one");
+    EXPECT_STREQ(metadata.get_attr("tags").asArray().get(1).cstring(), "two");
+    ElementReader body = document.findChildElement("body");
+    ASSERT_EQ(body.childCount(), 1);
+    EXPECT_STREQ(body.childAt(0).asElement().tagName(), "h1");
+
+    String* markdown = format_data(parsed.input->root, create_lambda_string("markdown"), nullptr, parsed.input->pool);
+    ASSERT_NE(markdown, nullptr);
+    MarkupTestInput reparsed = parse_test_markup(markdown->chars, "front-copy.md");
+    ASSERT_NE(reparsed.input, nullptr);
+    ElementReader second_meta = ElementReader(reparsed.input->root).findChildElement("meta");
+    ASSERT_TRUE(second_meta.isValid());
+    ASSERT_NE(second_meta.get_attr_string("title"), nullptr);
+    EXPECT_STREQ(second_meta.get_attr_string("title"), "A: title");
+    ASSERT_TRUE(second_meta.get_attr("tags").isArray());
+    EXPECT_EQ(second_meta.get_attr("tags").asArray().length(), 2);
+    EXPECT_STREQ(second_meta.get_attr("tags").asArray().get(0).cstring(), "one");
+    EXPECT_STREQ(second_meta.get_attr("tags").asArray().get(1).cstring(), "two");
+    free(parsed.source);
+    free(reparsed.source);
+}
+
+TEST_F(FormatAdapterTest, AsciiDocSectionLevelsAndUnderlinedTitle) {
+    MarkupTestInput parsed = parse_test_markup(
+        "Guide=\n======\n\n== First\n\n=== Second\n\n==== Third\n\n===== Fourth\n\n====== Fifth\n",
+        "levels.adoc");
+    ASSERT_NE(parsed.input, nullptr);
+    ElementReader document(parsed.input->root);
+    ElementReader metadata = document.findChildElement("meta");
+    ASSERT_TRUE(metadata.isValid());
+    ASSERT_NE(metadata.get_attr_string("title"), nullptr);
+    EXPECT_STREQ(metadata.get_attr_string("title"), "Guide=");
+    ElementReader body = document.findChildElement("body");
+    ASSERT_EQ(body.childCount(), 5);
+    const char* expected[] = {"h1", "h2", "h3", "h4", "h5"};
+    for (int i = 0; i < 5; i++) {
+        ASSERT_TRUE(body.childAt(i).isElement());
+        EXPECT_STREQ(body.childAt(i).asElement().tagName(), expected[i]);
+    }
+    free(parsed.source);
+}
+
+TEST_F(FormatAdapterTest, MarkdownFrontMatterRespectsCommonMarkAndSourcePositions) {
+    const char* source = "---\ntitle: Guide\n---\n\n# Body\n";
+    String* markdown = create_lambda_string("markdown");
+    Input* positioned = input_from_source_with_positions(source, nullptr, markdown, nullptr);
+    ASSERT_NE(positioned, nullptr);
+    ElementReader doc(positioned->root);
+    ASSERT_TRUE(doc.findChildElement("meta").isValid());
+    ElementReader body = doc.findChildElement("body");
+    ASSERT_EQ(body.childCount(), 1);
+    EXPECT_STREQ(body.childAt(0).asElement().get_attr_string("sourcepos"), "5:1-5:6");
+
+    Input* commonmark = input_from_source(source, nullptr, create_lambda_string("markup"), create_lambda_string("commonmark"));
+    ASSERT_NE(commonmark, nullptr);
+    EXPECT_FALSE(ElementReader(commonmark->root).findChildElement("meta").isValid());
+
+    Input* empty = input_from_source("---\n---\n\n# Body\n", nullptr, markdown, nullptr);
+    ASSERT_NE(empty, nullptr);
+    EXPECT_FALSE(empty->parse_failed);
+    EXPECT_STREQ(ElementReader(empty->root).findChildElement("body").childAt(0).asElement().tagName(), "h1");
+}
+
+TEST_F(FormatAdapterTest, ExplicitMarkdownTakesPrecedenceOverFilename) {
+    Url* url = parse_url(get_current_dir(), "ambiguous.wiki");
+    Input* input = input_from_source("= Title =\n\n== Section ==\n", url,
+                                     create_lambda_string("markdown"), nullptr);
+    ASSERT_NE(input, nullptr);
+    ElementReader body = ElementReader(input->root).findChildElement("body");
+    ASSERT_TRUE(body.isValid());
+    ASSERT_EQ(body.childCount(), 2);
+    EXPECT_STREQ(body.childAt(0).asElement().tagName(), "p");
+    EXPECT_STREQ(body.childAt(1).asElement().tagName(), "p");
+}
+
 TEST_F(FormatAdapterTest, ManMacrosKeepSectionsAndTaggedTerms) {
     const char* content = ".TH SAMPLE 1\n.SH NAME\nsample \\- utility\n"
                           ".SH OPTIONS\n.TP\n.B \\-h\nShow help.\n"

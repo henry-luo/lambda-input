@@ -20,8 +20,8 @@ void wiki_record_tag(MarkupParser* parser, const char* tag, size_t length) {
     // tags belong to the Input arena, including in standalone parser builds.
     array_append(parser->wiki_tags_, wiki_text(parser, tag, length),
         parser->builder.pool(), parser->builder.arena());
-    if (!parser->wiki_metadata_) parser->wiki_metadata_ = create_element(parser, "meta");
-    parser->builder.putToElement(lam::gc_borrow(parser->wiki_metadata_),
+    if (!parser->document_metadata_) parser->document_metadata_ = create_element(parser, "meta");
+    parser->builder.putToElement(lam::gc_borrow(parser->document_metadata_),
         parser->builder.createName("tags"), Item{.array = parser->wiki_tags_});
 }
 
@@ -366,8 +366,8 @@ Item parse_wiki_block(MarkupParser* parser) {
     Flavor flavor = wiki_syntax(parser->config.flavor)->flavor;
     if (flavor == Flavor::ZIMWIKI && parser->wiki_header_ &&
         (!strncmp(p, "Content-Type: text/x-zim-wiki", strlen("Content-Type: text/x-zim-wiki")) || !strncmp(p, "Wiki-Format:", 12) || !strncmp(p, "Creation-Date:", 14))) {
-        if (!parser->wiki_metadata_) parser->wiki_metadata_ = create_element(parser, "meta");
-        if (!strncmp(p, "Creation-Date:", 14)) add_attribute_to_element(parser, parser->wiki_metadata_, "created", str_skip_line_space(p + 14));
+        if (!parser->document_metadata_) parser->document_metadata_ = create_element(parser, "meta");
+        if (!strncmp(p, "Creation-Date:", 14)) add_attribute_to_element(parser, parser->document_metadata_, "created", str_skip_line_space(p + 14));
         parser->current_line++; return Item{.item = ITEM_UNDEFINED};
     }
     parser->wiki_header_ = false;

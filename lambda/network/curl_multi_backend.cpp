@@ -39,6 +39,7 @@ typedef struct CurlMultiTransfer {
     void* request_data;
     CURL* easy;
     HeaderCallbackCtx* header_ctx;
+    struct curl_slist* request_headers;
     ByteBuilder body;
 } CurlMultiTransfer;
 
@@ -236,6 +237,7 @@ static void transfer_free(CurlMultiTransfer* transfer) {
     if (!transfer) return;
     if (transfer->header_ctx) mem_free(transfer->header_ctx);
     if (transfer->easy) curl_easy_cleanup(transfer->easy);
+    curl_slist_free_all(transfer->request_headers);
     byte_builder_destroy(&transfer->body);
     mem_free(transfer);
 }
@@ -249,6 +251,11 @@ static bool configure_transfer(CurlMultiTransfer* transfer) {
     }
 
     transfer->easy = easy;
+    transfer->request_headers = http_resource_request_headers(easy);
+    if (!transfer->request_headers) {
+        set_resource_error(res, "Failed to configure resource request headers");
+        return false;
+    }
     curl_easy_setopt(easy, CURLOPT_URL, res->url);
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_response_callback);
     curl_easy_setopt(easy, CURLOPT_WRITEDATA, transfer);

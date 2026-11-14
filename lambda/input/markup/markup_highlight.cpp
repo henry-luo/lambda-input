@@ -18,6 +18,7 @@
 #include "../html5/html5_parser.h"
 #include "lib/mem_factory.h"
 #include "lib/strbuf.h"
+#include "lib/str.h"
 #include "lib/log.h"
 #include <string.h>
 
@@ -45,9 +46,9 @@ static int line_indent(const char* s) {
     return n;
 }
 
-// YAML front matter opens with `---` on the first line and closes with `---`
-// or `...`; the markup engine leaves it to its callers, the walker colors it.
-static bool front_matter_delimiter(const char* s, bool closing) {
+// yaml front matter opens with `---` and closes with `---` or `...`.
+bool front_matter_delimiter(const char* s, bool closing) {
+    s = str_skip_line_space(s);
     bool dashes = strncmp(s, "---", 3) == 0;
     bool dots = closing && strncmp(s, "...", 3) == 0;
     return (dashes || dots) && line_blank(s + 3);

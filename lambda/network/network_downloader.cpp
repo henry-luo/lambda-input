@@ -177,6 +177,14 @@ bool network_download_resource(NetworkResource* res) {
         curl_easy_cleanup(curl);
         return false;
     }
+    struct curl_slist* request_headers = http_resource_request_headers(curl);
+    if (!request_headers) {
+        if (res->error_message) mem_free(res->error_message);
+        res->error_message = mem_strdup("Failed to configure resource request headers", MEM_CAT_NETWORK);
+        byte_builder_destroy(&response.body);
+        curl_easy_cleanup(curl);
+        return false;
+    }
     DownloadProgressCtx progress_ctx = { .resource = res };
     CURLcode curl_res;
     
@@ -286,6 +294,7 @@ bool network_download_resource(NetworkResource* res) {
         
         byte_builder_destroy(&response.body);
         curl_easy_cleanup(curl);
+        curl_slist_free_all(request_headers);
         return false;
     }
     
@@ -311,6 +320,7 @@ bool network_download_resource(NetworkResource* res) {
         
         byte_builder_destroy(&response.body);
         curl_easy_cleanup(curl);
+        curl_slist_free_all(request_headers);
         return false;
     }
     
@@ -356,6 +366,7 @@ bool network_download_resource(NetworkResource* res) {
     
     byte_builder_destroy(&response.body);
     curl_easy_cleanup(curl);
+    curl_slist_free_all(request_headers);
     
     return true;
 }

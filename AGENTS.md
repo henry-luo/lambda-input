@@ -20,8 +20,9 @@ native-stack GC scanning. D9.1.5 governs the JSON-driven build pipeline.
 Do not change Lambda or Radiant implementation, headers, tests, or build files
 as part of input work. If an issue belongs to a sibling project, record it in
 that owner's ledger: Lambda's `vibe/Lambda_Issue_Ledger.md` or Radiant's
-`vibe/Radiant_Issue_Ledger.md`. For input-owned issues, use
-[Lib and Input Issue Ledger](vibe/Lib_Input_Issue_Ledger.md). Include the
+`vibe/Radiant_Issue_Ledger.md`. For input-owned issues, use the
+[Lib and Input Issue Ledger](vibe/Lib_Input_Issue_Ledger.md). Move completed records to the
+[Lib and Input Fixed Issue Ledger](vibe/Lib_Input_Issue_Ledger%20%28fixed%29.md). Include
 observed behavior, reproduction, evidence, and whether it blocks the dependent
 task. Mark unconfirmed causes as unconfirmed. If an issue blocks the task,
 record it and stop the affected work; continue independent work when possible.
@@ -89,4 +90,5 @@ separate from the local baseline.
 | Formatters | `lambda/format/` |
 | Shared support | `lib/` |
 | Native tests | `test/`, `make test-input-baseline` |
-| Issue records | `vibe/Lib_Input_Issue_Ledger.md` |
+| Open issue records | `vibe/Lib_Input_Issue_Ledger.md` |
+| Fixed issue records | `vibe/Lib_Input_Issue_Ledger (fixed).md` |

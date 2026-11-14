@@ -15,11 +15,39 @@
 #include "lib/stringbuf.h"
 #include "lib/str.h"
 #include "lib/emoji_shortcodes.h"
+#include "lib/escape.h"
 #include "lib/log.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+void markdown_format_metadata(StringBuf* sb, Item root_item) {
+    ItemReader root(root_item.to_const());
+    if (root.isElement()) {
+        ElementReader document = root.asElement();
+        if (document.hasTag("doc")) {
+            ElementReader metadata = document.findChildElement("meta");
+            if (metadata.isValid() && metadata.attrCount() > 0) {
+                // json flow mappings are yaml and survive the editor's front-matter envelope.
+                stringbuf_append_str(sb, "---\n{");
+                auto attributes = metadata.attrs();
+                const char* key;
+                ItemReader value;
+                bool first = true;
+                while (attributes.next(&key, &value)) {
+                    if (!key) continue;
+                    if (!first) stringbuf_append_str(sb, ", ");
+                    escape_append_json_stringbuf(sb, key, strlen(key), true, false);
+                    stringbuf_append_str(sb, ": ");
+                    format_json_to_strbuf(sb, value.item());
+                    first = false;
+                }
+                stringbuf_append_str(sb, "}\n---\n\n");
+            }
+        }
+    }
+}
 
 void format_markdown(StringBuf* sb, Item root_item) {
     format_markup(sb, root_item, &MARKDOWN_RULES);

@@ -179,7 +179,7 @@ It also handles `\shipout` of inline boxes using the native input engine's
 discard model, including assignment and message effects. Registered boxes,
 cross-boundary `\unskip`, and movement or shipout AST source mapping remain
 unsupported; native discard-boundary parity is blocked by
-[LI-019](../Lib_Input_Issue_Ledger.md#li-019).
+[LI-019](../Lib_Input_Issue_Ledger%20%28fixed%29.md#li-019).
 `\vcenter` scans its box specification and executes its body with the tested
 grouping behavior; its math and document AST source mapping remains guarded.
 For numeric `\mathchar`, `\delimiter`, `\radical`, and `\mathaccent`, the
@@ -219,7 +219,7 @@ unsupported. Direct-source `\verb` captures terminated raw text with an ASCII
 delimiter in main and included files; malformed input, macro-sourced commands,
 other verbatim forms and raw-inline AST mapping remain unsupported. Native AST
 comparison for some valid raw content is blocked by
-[LI-018](../Lib_Input_Issue_Ledger.md#li-018). An experimental Script
+[LI-018](../Lib_Input_Issue_Ledger%20%28fixed%29.md#li-018). An experimental Script
 reconstructor preserves source spans and native token
 serialization for tested text cases; it is not yet wired into the production
 path. AST source mapping for some
@@ -228,7 +228,7 @@ release performance remain open (S1.8, D10.2.2).
 The installed engine also executes assignments inside some constructor and
 unknown-command arguments that native TeX passes through. A corrected argument
 mode remains staged because existing reference results expect the old behavior;
-custom environments inside arguments additionally expose [LI-017](../Lib_Input_Issue_Ledger.md#li-017).
+custom environments inside arguments additionally expose [LI-017](../Lib_Input_Issue_Ledger%20%28fixed%29.md#li-017).
 The digester reports `complete: false`, and the remaining definition-echo parity gap remains visible
 in its test. It does not yet cover the full LaTeX grammar or source reconstruction.
 

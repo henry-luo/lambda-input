@@ -292,14 +292,15 @@ public:
         HeaderInfo info;
         const char* p = line;
 
-        // AsciiDoc ATX-style: = Header (one = per level)
+        // one equals sign is the document title; sections start at two.
         if (*p == '=') {
             int level = 0;
             while (*p == '=') { level++; p++; }
 
             if (*p == ' ' || *p == '\t') {
                 p = str_skip_line_space(p);
-                info.level = level > 6 ? 6 : level;
+                info.level = level > 1 ? level - 1 : 1;
+                if (info.level > 5) info.level = 5;
                 info.text_start = p;
                 info.text_end = p + strlen(p);
                 while (info.text_end > info.text_start &&
@@ -307,13 +308,14 @@ public:
                         *(info.text_end-1) == ' ' || *(info.text_end-1) == '\t')) {
                     info.text_end--;
                 }
-                // Strip trailing =
-                while (info.text_end > info.text_start && *(info.text_end-1) == '=') {
-                    info.text_end--;
-                }
-                while (info.text_end > info.text_start &&
-                       (*(info.text_end-1) == ' ' || *(info.text_end-1) == '\t')) {
-                    info.text_end--;
+                // a closing delimiter is separated from the title text by space.
+                const char* ending = info.text_end;
+                while (ending > info.text_start && ending[-1] == '=') ending--;
+                if (ending < info.text_end && ending > info.text_start &&
+                    (ending[-1] == ' ' || ending[-1] == '\t')) {
+                    info.text_end = ending;
+                    while (info.text_end > info.text_start &&
+                           (info.text_end[-1] == ' ' || info.text_end[-1] == '\t')) info.text_end--;
                 }
                 info.valid = true;
             }
@@ -332,8 +334,8 @@ public:
                 if (ul_len >= 2) {
                     static const char levels[] = "=-~^+";
                     const char* lp = strchr(levels, ul_char);
-                    info.level = lp ? (int)(lp - levels + 1) : 1;
-                    if (info.level > 6) info.level = 6;
+                    int level = lp ? (int)(lp - levels + 1) : 1;
+                    info.level = level > 1 ? level - 1 : 1;
                     info.text_start = line;
                     info.text_end = line + strlen(line);
                     while (info.text_end > info.text_start &&

@@ -7,6 +7,8 @@
 #include "block_common.hpp"
 #include "../wiki.hpp"
 #include "../markup_highlight.hpp"
+#include "../../input-parsers.h"
+#include "../../../core/mark_reader.hpp"
 #include "lib/mem.h"
 #include "lib/hashmap_typed.hpp"
 #include "lib/arena.h"
@@ -46,6 +48,80 @@ typedef TypedHashMap<FootnoteDefinition,
     HashMapCStrMemberKeyOps<FootnoteDefinition, &FootnoteDefinition::label>> FootnoteMap;
 
 static void record_source_position(MarkupParser* parser, Item block, int start, int end);
+
+void parse_document_metadata(MarkupParser* parser) {
+    if (!parser->config.collect_metadata || parser->current_line != 0 || !parser->line_count) return;
+
+    if (parser->config.format == Format::ASCIIDOC) {
+        const char* line = parser->lines[0];
+        const char* next = parser->line_count > 1 ? parser->lines[1] : nullptr;
+        bool explicit_title = line[0] == '=' && (line[1] == ' ' || line[1] == '\t');
+        HeaderInfo info = parser->adapter()->detectHeader(line, next);
+        bool underlined_title = info.uses_underline && next && *str_skip_line_space(next) == '=';
+        if (!explicit_title && !underlined_title) return;
+        if (!info.valid || !info.text_start || info.text_end <= info.text_start) return;
+        char* source = mem_dup_n(info.text_start, (size_t)(info.text_end - info.text_start), MEM_CAT_INPUT_MARKUP);
+        if (!source) return;
+        Item title = parse_inline_spans(parser, source);
+        mem_free(source);
+        ItemReader value(title.to_const());
+        StringBuf* text = stringbuf_new(parser->input()->pool);
+        if (!text) return;
+        if (value.isString()) {
+            String* string = value.asString();
+            if (string) stringbuf_append_str_n(text, string->chars, string->len);
+        } else if (value.isElement()) {
+            value.asElement().textContent(text);
+        }
+        parser->document_metadata_ = create_element(parser, "meta");
+        if (!parser->document_metadata_) return;
+        add_attribute_to_element(parser, parser->document_metadata_, "title",
+                                 text->str ? text->str->chars : "");
+        parser->current_line = info.uses_underline ? 2 : 1;
+        return;
+    }
+
+    if (parser->config.format != Format::MARKDOWN || parser->config.flavor == Flavor::COMMONMARK ||
+        !front_matter_delimiter(parser->lines[0], false)) return;
+    int end = 1;
+    while (end < parser->line_count && !front_matter_delimiter(parser->lines[end], true)) end++;
+    if (end == parser->line_count) return;
+
+    StrBuf* source = strbuf_new();
+    if (!source) return;
+    for (int i = 1; i < end; i++) {
+        strbuf_append_str(source, parser->lines[i]);
+        strbuf_append_char(source, '\n');
+    }
+    Input* input = parser->input();
+    Item saved_root = input->root;
+    int saved_count = input->doc_count;
+    parse_yaml(input, source->str);
+    Item metadata = input->root;
+    input->root = saved_root;
+    input->doc_count = saved_count;
+    strbuf_free(source);
+    if (input->parse_failed) return;
+    if (get_type_id(metadata) == LMD_TYPE_NULL) {
+        parser->current_line = end + 1;
+        return;
+    }
+    if (get_type_id(metadata) != LMD_TYPE_MAP) {
+        parser->addError("Markdown front matter must be a mapping");
+        return;
+    }
+    parser->document_metadata_ = create_element(parser, "meta");
+    if (!parser->document_metadata_) return;
+    MapReader map = MapReader::fromItem(metadata);
+    auto entries = map.entries();
+    const char* key;
+    ItemReader value;
+    while (entries.next(&key, &value)) {
+        if (key) parser->builder.putToElement(lam::gc_borrow(parser->document_metadata_),
+                                              parser->builder.createName(key), value.item());
+    }
+    parser->current_line = end + 1;
+}
 
 static const char* footnote_label(const char* line, const char** end) {
     const char* p = line;
@@ -392,7 +468,7 @@ Item parse_document(MarkupParser* parser) {
 
     parser->resolveFootnotes(body);
 
-    if (parser->wiki_metadata_) list_push((List*)doc, Item{.element = parser->wiki_metadata_});
+    if (parser->document_metadata_) list_push((List*)doc, Item{.element = parser->document_metadata_});
 
     // Add body to document
     list_push((List*)doc, Item{.item = (uint64_t)body});

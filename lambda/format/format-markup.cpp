@@ -1206,6 +1206,8 @@ void format_markup(StringBuf* sb, Item root_item, const MarkupOutputRules* rules
     if (!sb || !rules) return;
     if (root_item.item == ITEM_NULL) return;
 
+    if (rules == &MARKDOWN_RULES) markdown_format_metadata(sb, root_item);
+
     ScopedFormatPool pool("format.markup");
     MarkupEmitter emitter(rules, pool.get(), sb);
 

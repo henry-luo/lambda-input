@@ -85,6 +85,7 @@ bool org_custom_handler(void* ctx, StringBuf* sb, const ElementReader& elem);
 bool textile_custom_handler(void* ctx, StringBuf* sb, const ElementReader& elem);
 // CommonMark block layer and inline overrides (format-md.cpp).
 bool markdown_custom_handler(void* ctx, StringBuf* sb, const ElementReader& elem);
+void markdown_format_metadata(StringBuf* sb, Item root_item);
 
 // Context-aware text escaping (used in MarkupOutputRules.escape_text).
 void markdown_escape_text(StringBuf* sb, const char* s, size_t len);

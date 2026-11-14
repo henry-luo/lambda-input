@@ -22,6 +22,9 @@ namespace markup {
 
 class MarkupParser;
 
+// shared front-matter delimiter recognition for parsing and restart scanning.
+bool front_matter_delimiter(const char* line, bool closing);
+
 // The document's lines, read on demand (the editor's chunked buffer is never
 // flattened). `chunk_starts` are the first line of each chunk; the restart
 // cache keeps one state per chunk boundary.

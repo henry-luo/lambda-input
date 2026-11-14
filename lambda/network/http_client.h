@@ -2,6 +2,8 @@
 #ifndef LAMBDA_NETWORK_HTTP_CLIENT_H
 #define LAMBDA_NETWORK_HTTP_CLIENT_H
 
+#include <curl/curl.h>
+
 // primary documents and dependent resources use a browser-compatible profile;
 // bot-only product tokens are rejected by otherwise public documentation sites.
 #define RADIANT_HTTP_CLIENT_USER_AGENT \
@@ -24,5 +26,18 @@
 // An empty CURLOPT_ACCEPT_ENCODING value tells libcurl to advertise and decode
 // every codec compiled into this build, keeping the HTTP profile coherent.
 #define RADIANT_HTTP_ACCEPT_ENCODING ""
+
+// subresources use the same language preference as their document request.
+// the caller retains the list until after curl_easy_cleanup.
+static inline struct curl_slist* http_resource_request_headers(CURL* easy) {
+    if (!easy) return NULL;
+    struct curl_slist* headers = curl_slist_append(NULL, RADIANT_HTTP_DOCUMENT_LANGUAGE_HEADER);
+    if (!headers) return NULL;
+    if (curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers) != CURLE_OK) {
+        curl_slist_free_all(headers);
+        return NULL;
+    }
+    return headers;
+}
 
 #endif

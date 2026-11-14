@@ -2108,7 +2108,8 @@ Input* input_from_target_with_name_parent(Target* target, String* type,
 }
 #else
 static void parse_markdown_input(Input* input, const char* source) {
-    input->root = input_markup_modular(input, source);
+    // an explicit markdown type takes precedence over filename and content detection.
+    input->root = input_markup_with_format(input, source, MARKUP_MARKDOWN);
 }
 
 static void parse_rst_input(Input* input, const char* source) {

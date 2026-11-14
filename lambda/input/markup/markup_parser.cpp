@@ -19,6 +19,7 @@
 #include "lib/hashmap.h"
 #include "lib/hashmap_typed.hpp"
 #include "lib/arena.h"
+#include "lib/url.h"
 #include "../markup-format.h"
 #include "../../core/utf_string.h"
 #include "lib/log.h"
@@ -90,7 +91,7 @@ void markup_parser_destroy(MarkupParser* parser) {
 void MarkupParser::resetState() {
     state.reset();
     wiki_tags_ = nullptr;
-    wiki_metadata_ = nullptr;
+    document_metadata_ = nullptr;
     wiki_inline_depth_ = 0;
     wiki_header_ = true;
     if (footnote_defs_) hashmap_free(footnote_defs_);
@@ -207,6 +208,9 @@ Item MarkupParser::parseContent(const char* content) {
         const char* filename = nullptr;
         if (input() && input()->path) {
             filename = (const char*)input()->path;
+        } else if (input() && input()->url) {
+            // an input URL carries the filename when no legacy path is set.
+            filename = url_get_pathname((const Url*)input()->url);
         }
         adapter_ = FormatRegistry::detectAdapter(content, filename);
         // Update config with detected format so block parsers can check it
@@ -228,12 +232,15 @@ Item MarkupParser::parseContent(const char* content) {
     // Reset state
     resetState();
 
+    // metadata is outside the body and must not seed link definitions.
+    parse_document_metadata(this);
+
     // Pre-scan for link reference definitions at document level only
     // We need this for forward references (links before their definitions)
     // BUT we must skip code blocks and respect paragraph boundaries
     if (config.format == Format::MARKDOWN) {
         LinkPrescanState prescan;
-        prescanLinkDefinitions(0, line_count, &prescan);
+        prescanLinkDefinitions(current_line, line_count, &prescan);
         log_debug("markup_parser: pre-scanned %d link definitions", link_def_count_);
     }
 

@@ -168,7 +168,7 @@ public:
     struct hashmap* footnote_defs_;
     Element* footnotes_;
     Array* wiki_tags_ = nullptr;
-    Element* wiki_metadata_ = nullptr;
+    Element* document_metadata_ = nullptr;
     unsigned wiki_inline_depth_ = 0;
     unsigned wiki_block_depth_ = 0;
     size_t wiki_inline_line_ = 0;
@@ -440,6 +440,7 @@ void markup_parser_destroy(MarkupParser* parser);
  * Parse entire document, returns root element
  */
 Item parse_document(MarkupParser* parser);
+void parse_document_metadata(MarkupParser* parser);
 
 /**
  * Parse a single block element at current position
