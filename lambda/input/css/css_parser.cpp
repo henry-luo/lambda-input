@@ -3233,6 +3233,37 @@ static char* css_expand_nested_selector(const CssToken* tokens, int start, int e
     return result;
 }
 
+static bool css_nested_item_starts_rule(const CssToken* tokens, int pos, int count) {
+    CssTokenType first = tokens[pos].type;
+    bool name = first == CSS_TOKEN_IDENT || first == CSS_TOKEN_CUSTOM_PROPERTY;
+    if (!name && first != CSS_TOKEN_DELIM && first != CSS_TOKEN_HASH &&
+        first != CSS_TOKEN_LEFT_BRACKET && first != CSS_TOKEN_COLON) return false;
+    int next = css_skip_whitespace_tokens(tokens, pos + 1, count);
+    if (name && next < count && tokens[next].type == CSS_TOKEN_COLON) {
+        const char* identifier = tokens[pos].value;
+        // custom property blocks and single-block values stay declarations (CSS Syntax 3 §5.5.5).
+        if (first == CSS_TOKEN_CUSTOM_PROPERTY ||
+            (identifier && identifier[0] == '-' && identifier[1] == '-')) return false;
+        int value = css_skip_whitespace_tokens(tokens, next + 1, count);
+        if (value < count && tokens[value].type == CSS_TOKEN_LEFT_BRACE) return false;
+    }
+    // an ident-colon prefix can be a type plus pseudo selector; only a top-level block disambiguates it.
+    int parens = 0, brackets = 0;
+    for (int i = pos; i < count; i++) {
+        CssTokenType type = tokens[i].type;
+        if (type == CSS_TOKEN_FUNCTION || type == CSS_TOKEN_LEFT_PAREN) parens++;
+        else if (type == CSS_TOKEN_RIGHT_PAREN && parens > 0) parens--;
+        else if (type == CSS_TOKEN_LEFT_BRACKET) brackets++;
+        else if (type == CSS_TOKEN_RIGHT_BRACKET && brackets > 0) brackets--;
+        else if (!parens && !brackets) {
+            if (type == CSS_TOKEN_LEFT_BRACE) return true;
+            if (type == CSS_TOKEN_SEMICOLON || type == CSS_TOKEN_RIGHT_BRACE ||
+                type == CSS_TOKEN_EOF) return false;
+        }
+    }
+    return false;
+}
+
 static bool css_nesting_flush_declarations(Pool* pool, CssRule*** nested_rules,
                                             int* nested_count, int* nested_capacity,
                                             CssDeclaration*** pending,
@@ -3472,7 +3503,8 @@ static int css_parse_rule_from_tokens_with_context(const CssToken* tokens,
                         bool declaration_start =
                             (tokens[pos].type == CSS_TOKEN_IDENT ||
                              tokens[pos].type == CSS_TOKEN_CUSTOM_PROPERTY) &&
-                            next < token_count && tokens[next].type == CSS_TOKEN_COLON;
+                            next < token_count && tokens[next].type == CSS_TOKEN_COLON &&
+                            !css_nested_item_starts_rule(tokens, pos, token_count);
                         if (declaration_start) {
                             int before = pos;
                             CssDeclaration* decl = css_parse_declaration_from_tokens_mode(
@@ -4050,51 +4082,7 @@ static int css_parse_rule_from_tokens_with_context(const CssToken* tokens,
             continue;
         }
 
-        // Check if this looks like a nested qualified rule (CSS Nesting)
-        // A nested rule starts with tokens that can't begin a declaration:
-        //   DELIM (., #, >, ~, +, *, &), HASH, LEFT_BRACKET, COLON
-        // Also: IDENT not followed by COLON (e.g., nested "div { }")
-        bool looks_like_nested_rule = false;
-        CssTokenType cur_type = tokens[pos].type;
-        if (cur_type == CSS_TOKEN_DELIM || cur_type == CSS_TOKEN_HASH ||
-            cur_type == CSS_TOKEN_LEFT_BRACKET || cur_type == CSS_TOKEN_COLON) {
-            looks_like_nested_rule = true;
-        } else if (cur_type == CSS_TOKEN_IDENT) {
-            // IDENT followed by COLON = declaration; otherwise = nested rule
-            int peek = css_skip_whitespace_tokens(tokens, pos + 1, token_count);
-            if (peek >= token_count || tokens[peek].type != CSS_TOKEN_COLON) {
-                looks_like_nested_rule = true;
-            }
-        }
-
-        if (looks_like_nested_rule) {
-            bool has_nested_block = false;
-            int probe = pos;
-            int probe_paren = 0;
-            int probe_bracket = 0;
-            while (probe < token_count) {
-                CssTokenType probe_type = tokens[probe].type;
-                if (probe_type == CSS_TOKEN_LEFT_PAREN) probe_paren++;
-                else if (probe_type == CSS_TOKEN_RIGHT_PAREN && probe_paren > 0) probe_paren--;
-                else if (probe_type == CSS_TOKEN_LEFT_BRACKET) probe_bracket++;
-                else if (probe_type == CSS_TOKEN_RIGHT_BRACKET && probe_bracket > 0) probe_bracket--;
-                else if (probe_type == CSS_TOKEN_LEFT_BRACE &&
-                         probe_paren == 0 && probe_bracket == 0) {
-                    has_nested_block = true;
-                    break;
-                }
-                if ((probe_type == CSS_TOKEN_SEMICOLON ||
-                     probe_type == CSS_TOKEN_RIGHT_BRACE) &&
-                    probe_paren == 0 && probe_bracket == 0) {
-                    break;
-                }
-                probe++;
-            }
-            // css syntax §5.4.5 drops an invalid declaration through its semicolon.
-            // Do not mistake legacy `*property` syntax for a nested rule and lose
-            // the valid declarations which follow it in the same declaration list.
-            if (!has_nested_block) looks_like_nested_rule = false;
-        }
+        bool looks_like_nested_rule = css_nested_item_starts_rule(tokens, pos, token_count);
 
         if (looks_like_nested_rule) {
             if (seen_nested_rule && !css_nesting_flush_declarations(pool,

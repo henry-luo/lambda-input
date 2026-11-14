@@ -10,18 +10,23 @@ and whether it blocks work in Lambda. Cite the applicable `S#` or `D#` ruling
 when one covers the issue. Record uncertain causes as unconfirmed, link any
 owner-side fix and verification, and retain the ID when the issue is resolved.
 
-Merge note (2026-11-13): parallel reports reused IDs already assigned in this
+Merge note (2026-11-14): parallel reports reused IDs already assigned in this
 ledger, so the incoming records use unique IDs: Empty POST is LI-020; GIF
 memory admission LI-021; online captures LI-022; Oklab/OkLCh colors LI-023;
 cookie header terminators LI-024; cookie domains LI-025; Calmind CDN LI-026;
-and the shared libuv loop LI-027. The tar follow-up remains consolidated
-under LI-012. Existing evidence filenames keep their historical prefixes.
+the shared libuv loop LI-027; unclosed math arguments LI-031; the shared
+signature verifier LI-032; escaped-dollar math LI-033; JSON trailing content
+LI-037; TOML numeric prefixes LI-038; YAML flow sequences LI-039; malformed
+calendar/contact lines LI-040; Markdown footnote source ranges LI-041; quoted
+CSV separator detection LI-042; and the zero-width man escape LI-043. The tar
+follow-up remains consolidated under LI-012. Existing evidence filenames keep
+their historical prefixes.
 
 ## Open issues
 
-<a id="li-045"></a>
+<a id="li-051"></a>
 
-### LI-045 — Properties parser treats escaped key separators as delimiters
+### LI-051 — Properties parser treats escaped key separators as delimiters
 
 **Status:** OPEN. **Lambda task blocker:** yes for correct property editing of
 Java properties with escaped key separators or spaces. D9.3.4 governs document
@@ -39,9 +44,9 @@ Evidence: `Lambda-opus/temp/edit-viewer/property-escape-probe.log`. Reference:
 [Java Properties.load documentation](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Properties.html#load(java.io.Reader)).
 
 
-<a id="li-044"></a>
+<a id="li-050"></a>
 
-### LI-044 — Markdown parser drops trailing spaces inside link labels
+### LI-050 — Markdown parser drops trailing spaces inside link labels
 
 **Status:** OPEN. **Lambda task blocker:** yes for lossless rich editing of
 links whose selected label ends in whitespace. D9.3.4 governs document
@@ -59,9 +64,9 @@ The cause within the Input implementation is unconfirmed. Evidence:
 `Lambda-opus/temp/edit-viewer/link-model-new.log`.
 
 
-<a id="li-043"></a>
+<a id="li-049"></a>
 
-### LI-043 — Org parser treats slash emphasis as plain text
+### LI-049 — Org parser treats slash emphasis as plain text
 
 **Status:** OPEN. **Lambda task blocker:** yes for rendering and rich editing
 of Org italic text. D9.3.4 governs document processing.
@@ -72,9 +77,9 @@ containing the slash delimiters instead of an emphasized run. The viewer and
 editor both consume this input-owned parse result. The exact cause is not yet
 confirmed. Evidence: `Lambda-opus/temp/edit-viewer/org-combine-census.log`.
 
-<a id="li-042"></a>
+<a id="li-048"></a>
 
-### LI-042 — Org writer merges a following paragraph into a list
+### LI-048 — Org writer merges a following paragraph into a list
 
 **Status:** OPEN. **Lambda task blocker:** yes for rich editing of Org files
 with a list followed by a paragraph. D9.3.4 governs document processing.
@@ -87,9 +92,9 @@ paragraph inside the second list item. The editor falls back to source rather
 than changing the document structure. The precise formatter cause is not yet
 confirmed. Evidence: `Lambda-opus/temp/edit-viewer/org-combined-probe.log`.
 
-<a id="li-041"></a>
+<a id="li-047"></a>
 
-### LI-041 — reStructuredText literal block changes content on round trip
+### LI-047 — reStructuredText literal block changes content on round trip
 
 **Status:** OPEN. **Lambda task blocker:** yes for rich editing of affected
 RST literal blocks. D9.3.4 governs document processing.
@@ -104,9 +109,9 @@ causes have not been confirmed. The editor falls back to source to avoid
 changing the document. Evidence:
 `Lambda-opus/temp/edit-viewer/markup-structure-roundtrip.log`.
 
-<a id="li-040"></a>
+<a id="li-046"></a>
 
-### LI-040 — Org table and source block round trips lose structure
+### LI-046 — Org table and source block round trips lose structure
 
 **Status:** OPEN. **Lambda task blocker:** yes for rich editing of affected
 Org tables and source blocks. D9.3.4 governs document processing.
@@ -121,9 +126,9 @@ and formatter paths are input-owned; the exact causes remain unconfirmed. The
 editor falls back to source instead of losing table or code structure. Evidence:
 `Lambda-opus/temp/edit-viewer/markup-structure-roundtrip.log`.
 
-<a id="li-039"></a>
+<a id="li-045"></a>
 
-### LI-039 — Textile formatter and parser disagree on ordinary spans
+### LI-045 — Textile formatter and parser disagree on ordinary spans
 
 **Status:** OPEN. **Lambda task blocker:** yes for rich editing of Textile
 paragraphs whose parsed model contains a span. D9.3.4 governs document processing.
@@ -138,9 +143,9 @@ whether the formatter or parser should change is not yet confirmed. The editor
 cannot save this round trip without changing visible text and falls back to source.
 Evidence: `Lambda-opus/temp/edit-viewer/markup-roundtrip-probe.log`.
 
-<a id="li-038"></a>
+<a id="li-044"></a>
 
-### LI-038 — AsciiDoc heading levels do not round-trip through the input parser
+### LI-044 — AsciiDoc heading levels do not round-trip through the input parser
 
 **Status:** OPEN. **Lambda task blocker:** yes for rich editing of AsciiDoc
 headings. D9.3.4 governs document processing.
@@ -155,56 +160,9 @@ for document metadata and maps body h1 to `==`, while the input parser maps
 falls back to source instead of changing heading levels. Evidence:
 `Lambda-opus/temp/edit-viewer/markup-roundtrip-probe.log`.
 
-<a id="li-037"></a>
+<a id="li-043"></a>
 
-### LI-037 — Escaped dollar ends native inline math prematurely
-
-**Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
-**Lambda task blocker:** yes for native-reference comparison of dollar-delimited
-math containing an escaped dollar; other math cases can proceed. D10.2.2
-governs the current LaTeX input boundary.
-
-Parsing `\begin{document}$\$\%\#$\end{document}` with
-`parse(..., {type: "latex"})` reports a missing dollar delimiter, although
-the escaped dollar belongs to the math content. The dollar-math delimiter
-scan in `lambda/input/input-latex-c.cpp` stops at the first `$` byte without
-checking whether it is escaped. The expected result is one closed math node
-containing the escaped symbols.
-
-Reproduction and error evidence are in
-`temp/expl3-script/math-raw-probe.ls` and `math-raw-v4-interp.log`. The issue
-was found while qualifying the Lambda Script TeX engine. Native input source
-and existing reference results have not been modified for this report.
-
-<a id="li-036"></a>
-
-### LI-036 — Shared signature verifier requires OpenSSL during mbedCrypto-only migration
-
-**Status:** RESOLVED, 2026-11-13. The user explicitly authorized scoped
-input-owned source, header, tests and build/setup changes for this migration.
-**Lambda task blocker:** no; native provider migration and verification complete.
-Ownership: D9.1.1v4 / D9.1.3v2; native crypto boundary: D11.1.2.
-
-The previous `lib/signature.c` used OpenSSL EVP/provider APIs and the `lambda-lib`
-target required `openssl-crypto`. Replaced the provider with mbedCrypto RSA-PSS/
-SHA-256 and P-256/SHA-256 verification. Ed25519 remains an unsupported reserved
-ABI value. Raw SEC1 keys require canonical low-S P1363 signatures; SPKI keys use
-standard DER ECDSA. PEM/DER parsing rejects trailing data and extra key blocks.
-OpenSSL package/link requirements are removed from input build/setup configuration.
-
-Verification: input signature 4/4, digest 9/9, dependency configuration 11/11;
-Lambda baseline 7,473/7,473; 85 sync goldens per AUTO/interpreter/JIT; 42 focused
-ordinary/forced-GC crypto, identity, TUF and admission checks. Peer, DataChannel
-and LAN demo native process gates pass. Native Lambda host and input archive
-symbol/linkage audit finds no OpenSSL dependency. Tests retain the external
-OpenSSL CLI only as an independent fixture/certificate oracle. Runtime and setup
-need no OpenSSL provider. Evidence: Lambda's `temp/mbedcrypto-only/` and its
-`vibe/impl/Lambda_Impl_MbedCrypto_Only (done).md` completion record. The user
-subsequently authorized the Lambda-owned optional Node provider removal; that
-module is also mbedCrypto-only.
-<a id="li-035"></a>
-
-### LI-035 — Man parser renders the zero-width `\&` escape as text
+### LI-043 — Man parser renders the zero-width `\&` escape as text
 
 **Status:** Open. **Blocks:** rich editing of man pages in `lambda edit`.
 
@@ -219,7 +177,9 @@ observable behavior rather than an implementation cause. The Lambda man writer
 uses `\&` to protect text, so its output cannot currently round-trip through
 the input parser. The editor retains source mode until the input owner fixes it.
 
-### LI-034 — CSV separator detection counts tabs inside quoted fields
+<a id="li-042"></a>
+
+### LI-042 — CSV separator detection counts tabs inside quoted fields
 
 **Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
 `8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
@@ -242,9 +202,9 @@ should ignore delimiters inside quoted fields, including escaped quotes and
 multiline quoted records. No input implementation or reference was changed
 by this report.
 
-<a id="li-033"></a>
+<a id="li-041"></a>
 
-### LI-033 — Markdown footnote definitions lack source ranges
+### LI-041 — Markdown footnote definitions lack source ranges
 
 **Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
 `8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
@@ -272,9 +232,9 @@ The input owner should retain each definition's original span when source
 positions are requested, including multiline, duplicate and unused definitions.
 No input implementation or reference was changed by this report.
 
-<a id="li-032"></a>
+<a id="li-040"></a>
 
-### LI-032 — iCalendar and vCard parsers silently drop malformed content lines
+### LI-040 — iCalendar and vCard parsers silently drop malformed content lines
 
 **Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
 `8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
@@ -287,9 +247,9 @@ Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-inv
 A malformed document must produce an error rather than a successful partial
 value. No input implementation or reference was changed by this report.
 
-<a id="li-031"></a>
+<a id="li-039"></a>
 
-### LI-031 — YAML parser accepts an unterminated flow sequence
+### LI-039 — YAML parser accepts an unterminated flow sequence
 
 **Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
 `8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
@@ -302,9 +262,9 @@ Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-inv
 A malformed document must produce an error rather than a successful partial
 value. No input implementation or reference was changed by this report.
 
-<a id="li-030"></a>
+<a id="li-038"></a>
 
-### LI-030 — TOML parser accepts a numeric prefix followed by invalid text
+### LI-038 — TOML parser accepts a numeric prefix followed by invalid text
 
 **Status:** OPEN, reproduced 2026-11-13 on macOS with the Lambda-opus
 `8b5ebe56e` debug snapshot plus editor work. **Lambda task blocker:** yes for
@@ -317,9 +277,9 @@ Reproduce from the Lambda checkout with `./lambda.exe temp/edit-viewer/other-inv
 A malformed document must produce an error rather than a successful partial
 value. No input implementation or reference was changed by this report.
 
-<a id="li-029"></a>
+<a id="li-037"></a>
 
-### LI-029 — JSON top-level parser accepts trailing non-whitespace
+### LI-037 — JSON top-level parser accepts trailing non-whitespace
 
 **Status:** OPEN, reproduced 2026-11-13 on macOS with Lambda-opus debug
 `8b5ebe56e` plus the editor work. **Lambda task blocker:** yes for safely
@@ -342,9 +302,134 @@ returns without checking the remaining cursor; the existing native
 confirmed by the input owner. This report does not change input sources or
 reference results.
 
-<a id="li-028"></a>
 
-### LI-028 — Unclosed optional math argument stalls native LaTeX parsing
+<a id="li-036"></a>
+
+### LI-036 — Resource capacity rejects already-admitted consumers
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns the resource manager under D9.1.1v4 / D9.1.3v2.
+
+At 500 retained resources, `resource_manager_load` rejected every request before
+checking the URL map. CSS, script and image consumers could no longer reuse
+already-cached or pending bytes. Conductor's capture exposed this after unrelated
+CSS icon prefetch exhausted the budget (Radiant RI-079).
+
+The existing capacity check now follows existing-resource reuse and still
+precedes acquisition of every new identity. Document admission still precedes
+both paths; the cap remains 500. No caller reference, retry or ownership rule is
+changed. The new offline unit actually stores and admits 500 cached identities,
+reuses the first as an image consumer, rejects a new 501st URL and checks the
+unchanged total. It and two neighboring cache/lifetime units pass.
+
+Evidence: Lambda's `temp/online-visual-round31/input-focused.log`; test
+`NetworkResourceManager.CapacityKeepsExistingConsumersAndRejectsNewResources`
+in `test/test_network_scheduler_gtest.cpp`. Full input baseline deferred under
+the user's focused-verification instruction.
+
+
+<a id="li-035"></a>
+
+### LI-035 — Grid auto-flow discards pending custom properties
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns declaration validation under D9.1.1v4 / D9.1.3v2.
+
+Ahrefs' saved tablet promotion used `grid-auto-flow:var(--directionTablet-12pdsr3)`
+with `column`, but laid out vertically. The `CSS_PROPERTY_GRID_AUTO_FLOW`
+validator rejected pending values before the existing Radiant substitution pass.
+`css_properties.cpp` now admits pending substitution, as neighboring keyword
+properties already do. Substituted values still pass ordinary grammar validation;
+an invalid winning variable resets at computed-value time rather than reviving
+an older declaration. No page selectors or replacement values are introduced.
+
+Qualification: the new `SupportsGridAutoFlowRetainsPendingSubstitution` case
+passes within 32 selected media/supports units. Five exported PNG controls cover
+whole-value/list variables, fallback, dense packing and invalid computed values;
+all five fail before and pass after, and independently pass Chromium. Evidence:
+Lambda's `temp/online-visual-round30/`; tracked reductions are
+`test/online/grid_flow_variable_fixtures.cjs` in Lambda. Full input baseline was
+deferred under the user's focused-verification instruction.
+
+<a id="li-034"></a>
+
+### LI-034 — Compact logical conditions lose valid token boundaries
+
+**Status:** RESOLVED, 2026-11-14. **Lambda task blocker:** no after repair.
+Input owns CSS condition evaluation under D9.1.1v4 / D9.1.3v2.
+
+Ahrefs' minified tablet queries use `(min-width:768px)and (max-width:1279px)`.
+`css_condition_find_operator` incorrectly required whitespace before `and`/`or`,
+so both device variants painted and the hero lost its tablet width. A closing
+parenthesis now supplies that token boundary. Whitespace after the keyword
+remains required; `and(` stays a function token rather than a logical operator,
+as specified by [Media Queries 4](https://www.w3.org/TR/mediaqueries-4/#mq-syntax).
+The related supports evaluator now unwraps enclosing groups before scanning
+operators, fixing nested supported declarations previously sent to the atom parser.
+
+Qualification: two new native cases exercise compact and/or, nesting, case,
+comment-separated stylesheet parsing, viewport invalidation and invalid controls.
+All 32 selected media/supports cases pass. Six PNG controls improve from 1/6 to
+6/6 and independently pass Chromium. The exact saved Ahrefs source removes the
+duplicate promotion and restores the hero width. Lambda's
+`temp/online-visual-round30/` pins sources/binaries and before/after evidence;
+tracked reductions are `test/online/compact_condition_fixtures.cjs` in Lambda.
+No admission, URL, stylesheet, viewport or snapshot-time workaround is used.
+
+
+<a id="li-033"></a>
+
+### LI-033 — Escaped dollar ends native inline math prematurely
+
+**Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
+**Lambda task blocker:** yes for native-reference comparison of dollar-delimited
+math containing an escaped dollar; other math cases can proceed. D10.2.2
+governs the current LaTeX input boundary.
+
+Parsing `\begin{document}$\$\%\#$\end{document}` with
+`parse(..., {type: "latex"})` reports a missing dollar delimiter, although
+the escaped dollar belongs to the math content. The dollar-math delimiter
+scan in `lambda/input/input-latex-c.cpp` stops at the first `$` byte without
+checking whether it is escaped. The expected result is one closed math node
+containing the escaped symbols.
+
+Reproduction and error evidence are in
+`temp/expl3-script/math-raw-probe.ls` and `math-raw-v4-interp.log`. The issue
+was found while qualifying the Lambda Script TeX engine. Native input source
+and existing reference results have not been modified for this report.
+
+
+<a id="li-032"></a>
+
+### LI-032 — Shared signature verifier requires OpenSSL during mbedCrypto-only migration
+
+**Status:** RESOLVED, 2026-11-13. The user explicitly authorized scoped
+input-owned source, header, tests and build/setup changes for this migration.
+**Lambda task blocker:** no; native provider migration and verification complete.
+Ownership: D9.1.1v4 / D9.1.3v2; native crypto boundary: D11.1.2.
+
+The previous `lib/signature.c` used OpenSSL EVP/provider APIs and the `lambda-lib`
+target required `openssl-crypto`. Replaced the provider with mbedCrypto RSA-PSS/
+SHA-256 and P-256/SHA-256 verification. Ed25519 remains an unsupported reserved
+ABI value. Raw SEC1 keys require canonical low-S P1363 signatures; SPKI keys use
+standard DER ECDSA. PEM/DER parsing rejects trailing data and extra key blocks.
+OpenSSL package/link requirements are removed from input build/setup configuration.
+
+Verification: input signature 4/4, digest 9/9, dependency configuration 11/11;
+Lambda baseline 7,473/7,473; 85 sync goldens per AUTO/interpreter/JIT; 42 focused
+ordinary/forced-GC crypto, identity, TUF and admission checks. Peer, DataChannel
+and LAN demo native process gates pass. Native Lambda host and input archive
+symbol/linkage audit finds no OpenSSL dependency. Tests retain the external
+OpenSSL CLI only as an independent fixture/certificate oracle. Runtime and setup
+need no OpenSSL provider. Evidence: Lambda's `temp/mbedcrypto-only/` and its
+`vibe/impl/Lambda_Impl_MbedCrypto_Only (done).md` completion record. The user
+subsequently authorized the Lambda-owned optional Node provider removal; that
+module is also mbedCrypto-only.
+
+
+<a id="li-031"></a>
+
+### LI-031 — Unclosed optional math argument stalls native LaTeX parsing
 
 **Status:** OPEN, reproduced 2026-11-13 with the local macOS Lambda snapshot.
 **Lambda task blocker:** yes for malformed-input parity and safe full script
@@ -362,6 +447,59 @@ the script and `native-unclosed-math-bracket-result.txt` are in the same
 temporary directory. The behavior was discovered while qualifying the Lambda
 Script TeX engine. Native input ownership is unchanged, and no input source
 or reference result is modified by this report.
+
+
+<a id="li-030"></a>
+
+### LI-030 — Animated WebP cannot supply even the initial export frame
+
+**Status:** FIXED for initial-frame image decoding, 2026-11-14. Playback and
+later-frame selection remain unsupported. **Lambda blocker:** cleared for
+Maple 082's missing title. Native ownership **D9.1.1v4 / D9.1.3v2**;
+selected-frame contract **D10.1.7**, allocation ownership **D5.5.1**.
+
+The saved Maple title response is animated WebP despite its `.gif` URL.
+The shared decoder explicitly rejected every animated container, including
+ordinary image consumers asking only for frame zero. The existing WebP decoder
+now decodes the first demuxed subframe directly into a transparent, full-size
+canvas, retaining its offset and alpha. ANIM background and later frames are
+not composited. The manifest adds the pinned demux source; vendor code is
+unchanged. Existing scratch estimates, decoded-pixel and frame limits apply.
+Strict thumbnails refuse full-canvas fallback; permitted thumbnails use the
+shared reducer. Nonzero frame selection remains explicitly unsupported.
+
+Two new native cases fail before and pass after. They cover full/offset frames,
+alpha, transparent canvas, delay/loop metadata, frame/pixel/scratch limits,
+truncation, thumbnail policy and unsupported later selection. All five focused
+image cases pass, including static scaled WebP, format round trips and GIF.
+The unchanged saved Maple page now visibly displays its large Health Yeah title.
+Its original Chromium reference shows another animation phase and a cookie
+panel; neither page-wide parity nor playback is claimed. Aggregate suites are
+deferred under the user's focused-verification instruction.
+
+Evidence: Lambda `temp/online-visual-round26/webp-before.log`, `webp-after.log`,
+`maple-before.png` / `maple-after.png`; input `test/test_image_io_gtest.cpp`.
+Original source/headers and independent first-frame image remain in Lambda
+`temp/online-visual-round24/maple-title*` and `maple-static.html`.
+
+<a id="li-029"></a>
+
+### LI-029 — Deferred single-block width is omitted from a parsed style rule
+
+**Status:** OPEN observed discrepancy; source cause **unconfirmed**, 2026-11-13.
+**Lambda blocker:** no for LI-028's nested-selector repair. Ownership
+**D9.1.1v4 / D9.1.3v2**, parsed declaration ownership **D5.5.1**.
+
+For `.outer{--tokens:{a:hover{width:1px}};width:{var(--size)};a:hover{color:green}.tail{height:2px}}`,
+Chromium retains two declarations on the outer style, including the deferred
+single-block width. The native engine parser reports only one outer declaration
+before LI-028. This is distinct from losing the following pseudo/nested rules.
+The declaration parser already has a `css_value_is_single_var_block` path and
+focused color-block tests; the stage that drops this width is not yet isolated.
+No blanket acceptance or test masking is added. LI-028's custom-block control
+uses a supported definite width to test its selected nesting contract.
+Evidence: Lambda `temp/online-visual-round18/parser-before.log` and
+`browser-controls.json`/`.log`; no current-source resolution claim is made.
 
 <a id="li-027"></a>
 
@@ -697,6 +835,54 @@ D9.1.1v4, before deciding whether any defect remains. No behavioral regression
 has been reproduced in this review.
 
 ## Resolved issues
+
+<a id="li-028"></a>
+
+### LI-028 — Type-prefixed nested pseudo selectors consume following rules
+
+**Status:** FIXED, 2026-11-13; fresh online captures are running. **Lambda blocker:** the reduced DigitalOcean
+hero omission is repaired. Ownership **D9.1.1v4 / D9.1.3v2**, parsed source and
+scratch **D5.5.1**, selected export frame **D10.1.7** unchanged.
+
+DigitalOcean's authored `html[data-pdocs=home]` rule includes `body::before`
+before its home hero/media styles. `css_parser.cpp` treated any IDENT followed
+by COLON as a declaration in both style and nested conditional blocks. Thus
+`a:hover`, `p::before` and functional pseudo selectors consumed their blocks
+as malformed declarations, losing later nested rules. The saved script-free
+HTML/CSS and small type-pseudo controls reproduce it; explicit `&` and plain
+type selector controls work. CSS Syntax3§5.5.5/§5.5.6 requires a failed
+declaration to be reconsidered as a qualified rule.
+
+One shared `css_nested_item_starts_rule` helper now disambiguates a top-level
+rule block while retaining custom-property component blocks, single-block
+values, function/bracket contexts and semicolon recovery. Both parsing
+contexts reuse it; no authored CSS or selector is rewritten. The known-property
+names `font:hover` and `color:is(.active)` are covered too.
+
+The complete114-case native parser suite passes, including two new cases with
+16 selector/context variants and a custom-block control. Twenty real PNG cases
+improve2/20 to20/20; independent Chromium agrees on all20. Identical saved
+DigitalOcean HTML/CSS with scripts removed now restores the lighthouse image,
+paragraph width and hero spacing. Original online references remain fixed;
+independent cookie/navigation/background differences are not claimed repaired.
+111 online CLI/capture/comparator checks and17 recorded layout suites pass:
+630 JS layouts,4979 static passes,295 recorded partials,zero regressions/skips.
+Full Input aggregate records5223passes,one skip and the same independent
+GraphParserTest.ParserLocBudget, TransitionTreeExternalParentTest.InadmissibleParentsAreDeclined,
+and ZipTest.NativeTarVariantsCaptureExactBytesAndNames failures (LI-001 /
+LI-002 / LI-012). Those sources/fixtures are unchanged; the complete aggregate
+is not called green. Live nested-rule mutation and CSSOM identity add74 UI
+assertions with the pinned host.
+
+Evidence: Lambda `temp/online-visual-round18/`: `parser-before.log`,
+`parser-after.log`, `png-before.log`, `png-after.log`, `browser-controls.json`,
+`digitalocean-{before,after}.png`, frozen HTML/CSS and `layout-results.json`.
+Host SHA256 `2119303b51366ffd876710921373c88ea244d4cfe84f159572136e6cd1fe37fc`
+uses Lambda0c5c0ba0d / Radiant eb39862 plus RI-062 / Input4d1ad20 plus this
+parser repair. An initial native custom-block test also exposed an unrelated
+single-block width retention discrepancy; its control uses a definite width
+to isolate nesting, and that discrepancy is not claimed fixed.
+
 
 <a id="li-025"></a>
 

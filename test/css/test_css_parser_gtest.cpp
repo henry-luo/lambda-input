@@ -1707,6 +1707,62 @@ TEST_F(CssEngineParserTest, NestedRulesRetainDepthAndAuthoredSelector) {
     EXPECT_EQ(trailing->data.style_rule.declaration_count, 1u);
 }
 
+TEST_F(CssEngineParserTest, TypePrefixedPseudoRulesRetainFollowingNestedRules) {
+    const char* selectors[] = {"a:hover", "p::before", "div:is(.active,.other)",
+        "span:not(.other)", "input:checked", "svg:where(.active)",
+        "font:hover", "color:is(.active)"};
+    for (bool conditional : {false, true}) {
+        for (const char* selector : selectors) {
+            SCOPED_TRACE(selector);
+            SCOPED_TRACE(conditional);
+            char source[1024];
+            snprintf(source, sizeof(source),
+                ".outer{%s color:red;%s{color:green}"
+                "@media(min-width:1px){.tail{width:100px}}color:blue%s}",
+                conditional ? "@supports(display:block){" : "", selector,
+                conditional ? "}" : "");
+            CssStylesheet* sheet = css_parse_stylesheet(engine, source, nullptr);
+            ASSERT_NE(sheet, nullptr);
+            ASSERT_EQ(sheet->rule_count, 1u);
+            CssRule* outer = sheet->rules[0];
+            ASSERT_EQ(outer->type, CSS_RULE_STYLE);
+            CssRule** rules = outer->data.style_rule.nested_rules;
+            size_t count = outer->data.style_rule.nested_rule_count;
+            if (conditional) {
+                ASSERT_EQ(count, 1u);
+                ASSERT_EQ(rules[0]->type, CSS_RULE_SUPPORTS);
+                CssRule* group = rules[0];
+                rules = group->data.conditional_rule.rules;
+                count = group->data.conditional_rule.rule_count;
+                // group declarations precede its qualified rules in source order.
+                ASSERT_EQ(count, 4u);
+                EXPECT_EQ(rules[0]->type, CSS_RULE_NESTED_DECLARATIONS);
+                rules++;
+                count--;
+            }
+            ASSERT_EQ(count, 3u);
+            ASSERT_EQ(rules[0]->type, CSS_RULE_STYLE);
+            ASSERT_NE(rules[0]->data.style_rule.authored_selector_text, nullptr);
+            EXPECT_NE(strstr(rules[0]->data.style_rule.authored_selector_text, selector), nullptr);
+            EXPECT_EQ(rules[1]->type, CSS_RULE_MEDIA);
+            EXPECT_EQ(rules[2]->type, CSS_RULE_NESTED_DECLARATIONS);
+        }
+    }
+}
+
+TEST_F(CssEngineParserTest, NestedCustomPropertyBlocksDoNotBecomeQualifiedRules) {
+    CssStylesheet* sheet = css_parse_stylesheet(engine,
+        ".outer{--tokens:{a:hover{width:1px}};"
+        "width:20px;a:hover{color:green}.tail{height:2px}}", nullptr);
+    ASSERT_NE(sheet, nullptr);
+    ASSERT_EQ(sheet->rule_count, 1u);
+    CssRule* outer = sheet->rules[0];
+    ASSERT_EQ(outer->data.style_rule.declaration_count, 2u);
+    ASSERT_EQ(outer->data.style_rule.nested_rule_count, 2u);
+    EXPECT_EQ(outer->data.style_rule.nested_rules[0]->type, CSS_RULE_STYLE);
+    EXPECT_EQ(outer->data.style_rule.nested_rules[1]->type, CSS_RULE_STYLE);
+}
+
 TEST_F(CssEngineParserTest, NestedDeclarationsKeepInterleavedRuleOrder) {
     CssStylesheet* stylesheet = css_parse_stylesheet(engine,
         ".x { .one {} color:blue; .two {} color:green }", nullptr);

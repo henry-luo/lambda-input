@@ -513,13 +513,6 @@ NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
     if (!resource_manager_admits(mgr, url)) return NULL;
     pthread_mutex_lock(&mgr->mutex);
     
-    // enforce maximum resources per page (500) to prevent runaway loading
-    if (mgr->total_resources >= 500) {
-        log_warn("network: max resources per page (500) reached, rejecting: %s", url);
-        pthread_mutex_unlock(&mgr->mutex);
-        return NULL;
-    }
-    
     // check for existing resource (deduplication)
     ResourceEntry key = { .url = (char*)url, .res = NULL };
     const ResourceEntry* existing = ResourceMap::get((struct hashmap*)mgr->resources, key);
@@ -556,6 +549,13 @@ NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
         }
     }
     
+    // the limit admits new identities; existing consumers keep their shared resource at capacity.
+    if (mgr->total_resources >= 500) {
+        log_warn("network: max resources per page (500) reached, rejecting: %s", url);
+        pthread_mutex_unlock(&mgr->mutex);
+        return NULL;
+    }
+
     // check cache first
     if (mgr->file_cache) {
         char* cached_path = enhanced_cache_lookup(mgr->file_cache, url);

@@ -3985,6 +3985,8 @@ bool css_property_validate_value_mode(CssPropertyCode id,
         }
 
         case CSS_PROPERTY_GRID_AUTO_FLOW: {
+            // direction and packing keywords are validated after variable substitution.
+            if (css_value_contains_pending_substitution(value)) return true;
             if (value->type == CSS_VALUE_TYPE_KEYWORD) {
                 CssEnum keyword = value->data.keyword;
                 const CssEnumInfo* info = css_enum_info(keyword);

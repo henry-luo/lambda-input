@@ -1353,10 +1353,12 @@ static bool css_condition_find_operator(CssConditionSpan span, const char* op,
             continue;
         }
         if (depth != 0 || !str_ieq(span.start + i, op_len, op, op_len)) continue;
-        bool left_space = i == 0 || css_condition_is_space(span.start[i - 1]);
+        // a closing parenthesis already ends the preceding token; and( remains a function.
+        bool left_boundary = i == 0 || css_condition_is_space(span.start[i - 1]) ||
+            span.start[i - 1] == ')';
         size_t end = i + op_len;
         bool right_space = end == span.length || css_condition_is_space(span.start[end]);
-        if (left_space && right_space) {
+        if (left_boundary && right_space) {
             *out_pos = i;
             *out_len = op_len;
             return true;
@@ -1369,6 +1371,8 @@ static bool css_evaluate_supports_span(CssEngine* engine, CssConditionSpan span,
                                        Pool* scratch) {
     if (!engine || !scratch) return false;
     span = css_condition_trim(span);
+    // unwrap groups before looking for operators inside the enclosing condition.
+    while (css_condition_outer_parens(&span)) {}
     if (span.length == 0) return false;
 
     if (css_condition_starts_keyword(span, "not")) {
@@ -1393,7 +1397,6 @@ static bool css_evaluate_supports_span(CssEngine* engine, CssConditionSpan span,
             css_evaluate_supports_span(engine, right, scratch);
     }
 
-    css_condition_outer_parens(&span);
     span = css_condition_trim(span);
     if (span.length == 0) return false;
     if (span.length >= 10 &&

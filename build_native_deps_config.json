@@ -400,6 +400,7 @@
         "lib/image/libwebp/src/dec/vp8_dec.c",
         "lib/image/libwebp/src/dec/vp8l_dec.c",
         "lib/image/libwebp/src/dec/webp_dec.c",
+        "lib/image/libwebp/src/demux/demux.c",
         "lib/image/libwebp/src/dsp/alpha_processing.c",
         "lib/image/libwebp/src/dsp/cost.c",
         "lib/image/libwebp/src/dsp/cpu.c",
