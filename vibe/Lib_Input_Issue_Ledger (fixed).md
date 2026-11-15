@@ -6,6 +6,41 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-060"></a>
+
+### LI-060 — Length-bounded JSON input reads beyond a binary slice
+
+**Status:** FIXED 2026-11-15. **Lambda task blocker:** cleared for the
+`proc_sync_*` selection and bounded JSON parsing. Originally reproduced with
+Lambda `e55450ec8` and Input `3e14a05`. Input ownership is D9.1.1v4,
+document parsing is D9.3.4; S7.5.1v6 governs acknowledgement of parse errors.
+
+From the Lambda checkout, run
+`./lambda.exe temp/proc-sync-investigation/binary-json.ls`. It creates
+`slice(binary("1X")^, 0, 1)^`, whose length is one and content is valid JSON
+`1`. Parsing the text `"1"` succeeds, but parsing the binary slice produces
+E407 for `1X` (unexpected content at column 2); output is `[1, 'error', 1]`.
+The parser reads the `X` outside the slice. The focused sync run reports many
+E407 errors after apparently complete JSON followed by unrelated bytes;
+`proc_sync_local_repository` reproduces independently. Sync repository decode
+passes authenticated binary plaintext to `codec.decode`, which calls
+`parse(encoded, 'json')`.
+
+`fn_parse2` passes `binary_data` and `binary_length` to
+`input_from_source_n_with_name_parent`. Before the fix, the ordinary Input
+dispatch forwarded only the source pointer to the NUL-terminated JSON parser.
+Unlike a String, a Binary is a length-bounded span and a slice may end before
+its backing storage does. The owner fix routes length-bounded JSON dispatch
+through `parse_json_n`,
+parsing the existing InputContext-owned terminated copy and rejecting NULs
+within the supplied span. The IME resource path shares this implementation.
+`JsonTests.ParsesOnlyTheBoundedSourceAndRejectsEmbeddedNul` failed before
+and passed after the fix; all six `JsonTests` passed. The rebuilt Lambda host
+passed all 52 `proc_sync_*` cases outside the sandbox
+(`Lambda-opus/temp/proc-sync-investigation/focused-fixed.log`). The Input
+baseline completed with 5,290 passed, three skipped, and the existing three
+LI-002/LI-003 failures (`temp/li-060-input-baseline.log`).
+
 <a id="li-044"></a>
 
 ### LI-044 — AsciiDoc heading levels do not round-trip through the input parser

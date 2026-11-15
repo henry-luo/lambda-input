@@ -51,6 +51,7 @@
 
 extern "C" {
     Input* input_from_source(char* source, Url* abs_url, String* type, String* flavor);
+    Input* input_from_source_n(const char* source, size_t source_len, Url* abs_url, String* type, String* flavor);
     Input* input_from_url(String* url, String* type, String* flavor, Url* cwd);
     String* format_data(Item item, String* type, String* flavor, Pool *pool);
 
@@ -280,6 +281,30 @@ TEST_F(JsonTests, RejectsTrailingContentAndMissingValue) {
         ASSERT_NE(parsed, nullptr);
         EXPECT_FALSE(parsed->parse_failed);
     }
+}
+
+TEST_F(JsonTests, ParsesOnlyTheBoundedSourceAndRejectsEmbeddedNul) {
+    String* type = create_lambda_string("json");
+    const char source[] = {'1', 'X', '\0'};
+    Input* bounded = input_from_source_n(source, 1, nullptr, type, nullptr);
+    ASSERT_NE(bounded, nullptr);
+    EXPECT_FALSE(bounded->parse_failed);
+    EXPECT_EQ(get_type_id(bounded->root), LMD_TYPE_INT);
+
+    Input* trailing = input_from_source_n(source, 2, nullptr, type, nullptr);
+    ASSERT_NE(trailing, nullptr);
+    EXPECT_TRUE(trailing->parse_failed);
+
+    const char embedded_nul[] = {'1', '\0', '2'};
+    Input* embedded = input_from_source_n(embedded_nul, sizeof(embedded_nul), nullptr, type, nullptr);
+    ASSERT_NE(embedded, nullptr);
+    EXPECT_TRUE(embedded->parse_failed);
+
+    const char not_terminated[] = {'[', '1', ']'};
+    Input* exact = input_from_source_n(not_terminated, sizeof(not_terminated), nullptr, type, nullptr);
+    ASSERT_NE(exact, nullptr);
+    EXPECT_FALSE(exact->parse_failed);
+    EXPECT_EQ(get_type_id(exact->root), LMD_TYPE_ARRAY);
 }
 
 TEST_F(InputRoundtripTest, CalendarAndContactRejectMalformedContentLines) {

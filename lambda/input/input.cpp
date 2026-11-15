@@ -2004,18 +2004,9 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
         String* value = builder.createString(source, source_len);
         input->root = value ? (Item){.item = s2it(value)} : ItemError;
     } else {
-        if (memchr(source, 0, source_len)) {
-            log_error("macos-ime-input: JSON resource contains NUL");
-            input->root = ItemError;
-        } else {
-            char* json = mem_strndup(source, source_len, MEM_CAT_INPUT_OTHER);
-            if (json) {
-                parse_json(input, json);
-                mem_free(json);
-            } else input->root = ItemError;
-        }
+        parse_json_n(input, source, source_len);
     }
-    input->parse_failed = get_type_id(input->root) == LMD_TYPE_ERROR;
+    input->parse_failed |= get_type_id(input->root) == LMD_TYPE_ERROR;
     return input;
 }
 
@@ -2550,6 +2541,9 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
         }
         else if (input_parse_model(input, source, source_len, effective_type)) {}
         else if (input_parse_mesh(input, source, source_len, effective_type)) {}
+        else if (strcmp(effective_type, "json") == 0) {
+            parse_json_n(input, source, source_len);
+        }
         else if (input_parse_source_exact(effective_type, input, source)) {}
 #ifndef LAMBDA_NO_PDF
         else if (strcmp(effective_type, "pdf") == 0) {

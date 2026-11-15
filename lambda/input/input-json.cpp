@@ -365,22 +365,37 @@ static Item parse_value(InputContext& ctx, const char **json, int depth, bool js
     }
 }
 
+void parse_json_n(Input* input, const char* json_string, size_t length) {
+    if (!json_string) { json_string = ""; length = 0; }
+
+    InputContext ctx(input, json_string, length);
+    const char* source = ctx.source();
+    if (!source) {
+        input->parse_failed = true;
+        input->root = ItemError;
+        return;
+    }
+
+    // the binary source may be a slice; parse the context's bounded, terminated copy.
+    const char* nul = (const char*)memchr(source, 0, length);
+    if (nul) {
+        ctx.tracker.seek((size_t)(nul - source));
+        ctx.addError("Unexpected NUL byte in JSON");
+    } else {
+        const char* cursor = source;
+        input->root = parse_value(ctx, &cursor, 0);
+        json_skip_whitespace(&cursor);
+        if (*cursor) {
+            ctx.tracker.seek((size_t)(cursor - source));
+            ctx.addError("Unexpected content after JSON value");
+        }
+    }
+
+    if (ctx.hasErrors()) ctx.logErrors();
+}
+
 void parse_json(Input* input, const char* json_string) {
-    if (!json_string) json_string = "";
-
-    InputContext ctx(input, json_string, strlen(json_string));
-
-    input->root = parse_value(ctx, &json_string, 0);
-    json_skip_whitespace(&json_string);
-    if (*json_string) {
-        ctx.syncTo(json_string);
-        ctx.addError("Unexpected content after JSON value");
-    }
-
-    // Log any errors that occurred during parsing
-    if (ctx.hasErrors()) {
-        ctx.logErrors();
-    }
+    parse_json_n(input, json_string, json_string ? strlen(json_string) : 0);
 }
 
 // Parse a JSON string and return the result as an Item

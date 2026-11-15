@@ -15,6 +15,7 @@
 // ── Structured data parsers (C++ linkage) ──────────────────────────
 
 void parse_json(Input* input, const char* json_string);
+void parse_json_n(Input* input, const char* json_string, size_t length);
 Item parse_json_to_item(Input* input, const char* json_string);
 Item parse_json_to_item_strict(Input* input, const char* json_string, bool* ok);
 Item parse_json_to_item_strict(Input* input, const char* json_string, bool* ok, bool js_compat);
