@@ -3258,8 +3258,8 @@ bool css_shape_outside_components(const CssValue* value, const CssValue** shape,
     if (!value || !shape || !box) return false;
     *shape = nullptr; *box = CSS_VALUE_MARGIN_BOX;
     if (css_value_keyword_equals(value, CSS_VALUE_NONE)) return true;
-    if (value->type == CSS_VALUE_TYPE_URL || css_value_is_image_set(value)) {
-        if (css_value_is_image_set(value) && !css_image_set_valid(value)) return false;
+    // shape-outside accepts the same validated image values as other CSS image consumers.
+    if (css_value_is_supported_image(value)) {
         *shape = value;
         return true;
     }

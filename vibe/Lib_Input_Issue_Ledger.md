@@ -15,6 +15,13 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-071"></a>
+
+### LI-071 — FIXED
+
+`shape-outside` rejected supported gradients before contour construction.
+See the [shape-outside gradient admission repair](<Lib_Input_Issue_Ledger (fixed).md#li-071>).
+
 <a id="li-070"></a>
 
 ### LI-070 — FIXED

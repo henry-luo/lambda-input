@@ -6,6 +6,26 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-071"></a>
+
+### LI-071 — shape-outside rejects otherwise supported gradient images
+
+**Status:** FIXED, 2026-11-16. **Dependent task blocker:** resolved for
+Radiant's CSS Shapes WPT gradient contours. Ownership is D9.1.1v4 /
+D9.1.3v2; no formal ruling or dependency direction changed.
+
+`css_shape_outside_components` admitted only URL and image-set functions,
+rejecting valid linear/radial/conic gradients before Radiant could construct
+contours. It now calls the existing `css_value_is_supported_image` predicate,
+sharing the established image grammar and invalid-stop rejection. The existing
+Shapes parser test includes valid and malformed generated-image declarations.
+
+The CSS parser suite passes 117/117. The full Input baseline passes 5,312 tests
+with three skips across 109 executables. Radiant's final Shapes suite passes
+294/294 with the separate approved reference repairs recorded in RI-094.
+Evidence: `../Lambda-opus/temp/wpt-css-shapes/input-parser-final.log`,
+`input-baseline-continuation.log` and `completed-suite-final.log`.
+
 <a id="li-066"></a>
 
 ### LI-066 — Individual translation rejects CSS math arguments
