@@ -319,6 +319,54 @@ TEST_F(InputRoundtripTest, CalendarAndContactRejectMalformedContentLines) {
     }
 }
 
+TEST_F(InputRoundtripTest, CalendarAndContactRejectBrokenComponentBoundaries) {
+    struct Case { const char* type; const char* source; bool valid; };
+    const Case cases[] = {
+        {"vcf", "BEGIN:VCARD\nFN:Jane\n", false},
+        {"vcf", "BEGIN:VCARD\nFN:Jane\nEND:OTHER\n", false},
+        {"vcf", "FN:Jane\n", false},
+        {"vcf", "BEGIN:VCARD\nBEGIN:VCARD\nEND:VCARD\n", false},
+        {"vcf", "END:VCARD\n", false},
+        {"vcf", "BEGIN:VCARD\nFN:Jane\nEND:VCARD\n", true},
+        {"vcf", "BEGIN:VCARD\nFN:A\nEND:VCARD\nBEGIN:VCARD\nFN:B\nEND:VCARD\n", true},
+        {"ics", "BEGIN:VCALENDAR\nBEGIN:VEVENT\nEND:VCALENDAR\n", false},
+        {"ics", "BEGIN:VCALENDAR\nBEGIN:VEVENT\nEND:VTODO\nEND:VCALENDAR\n", false},
+        {"ics", "BEGIN:VCALENDAR\nBEGIN:VEVENT\n", false},
+        {"ics", "SUMMARY:Hi\n", false},
+        {"ics", "BEGIN:VEVENT\nEND:VEVENT\n", false},
+        {"ics", "BEGIN:VCALENDAR\nEND:VCALENDAR\nBEGIN:VCALENDAR\nEND:VCALENDAR\n", true},
+        {"ics", "BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:Hi\nEND:VEVENT\nEND:VCALENDAR\n", true},
+        {"ics", "BEGIN:VCALENDAR\nBEGIN:VEVENT\nBEGIN:VALARM\nEND:VALARM\nEND:VEVENT\nEND:VCALENDAR\n", true},
+    };
+    for (const Case& sample : cases) {
+        SCOPED_TRACE(sample.source);
+        Input* parsed = input_from_source(const_cast<char*>(sample.source), nullptr,
+                                          create_lambda_string(sample.type), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_EQ(parsed->parse_failed, !sample.valid);
+    }
+}
+
+TEST_F(InputRoundtripTest, CalendarStreamRetainsIndependentRoots) {
+    char source[] = "BEGIN:VCALENDAR\nX-NAME:A\nEND:VCALENDAR\n"
+                    "BEGIN:VCALENDAR\nX-NAME:B\nEND:VCALENDAR\n";
+    Input* parsed = input_from_source(source, nullptr, create_lambda_string("ics"), nullptr);
+    ASSERT_NE(parsed, nullptr);
+    ASSERT_FALSE(parsed->parse_failed);
+    ASSERT_EQ(get_type_id(parsed->root), LMD_TYPE_ARRAY);
+    ArrayReader calendars(parsed->root.array);
+    ASSERT_EQ(calendars.length(), 2);
+    for (int i = 0; i < 2; i++) {
+        Item root = calendars.get(i).item();
+        ASSERT_EQ(get_type_id(root), LMD_TYPE_MAP);
+        Item props = MapReader(root.map).get("properties").item();
+        ASSERT_EQ(get_type_id(props), LMD_TYPE_MAP);
+        String* value = MapReader(props.map).get("X-NAME").item().get_safe_string();
+        ASSERT_NE(value, nullptr);
+        EXPECT_STREQ(value->chars, i == 0 ? "A" : "B");
+    }
+}
+
 TEST_F(InputRoundtripTest, YamlAndTomlRejectIncompleteValues) {
     struct Case { const char* type; const char* text; };
     for (const Case& sample : {Case{"yaml", "a: [1,\n"}, Case{"yaml", "a: {b: 1\n"},
@@ -328,6 +376,182 @@ TEST_F(InputRoundtripTest, YamlAndTomlRejectIncompleteValues) {
         Input* parsed = input_from_source(const_cast<char*>(sample.text), nullptr, type, nullptr);
         ASSERT_NE(parsed, nullptr);
         EXPECT_TRUE(parsed->parse_failed);
+    }
+}
+
+TEST_F(InputRoundtripTest, TomlRejectsMalformedScalarsAndRedefinedTables) {
+    const char* invalid[] = {
+        "x = \"bad\\q\"\n", "x = \"bad\\ \"\n", "x = \"\\uD800\"\n", "x = \"\\U00110000\"\n",
+        "x = 01\n", "x = 1__2\n", "x = 12_\n", "x = 0_1\n", "x = 1_.2\n", "x = 1._2\n",
+        "x = 1.\n", "x = 1e_2\n", "x = 1e+\n", "x = +_1\n", "x = 0x_1\n", "x = 0x1__2\n",
+        "x = 0X12\n", "x = 1\nx = 2\n", "x = 1\n\"x\" = 2\n", "x = {a = 1, a = 2}\n",
+        "x = 1\nx.y = 2\n", "a.b = 1\na.b = 2\n", "[a]\n[a]\n", "a = {}\n[a]\n",
+        "a = {b = 1}\na.c = 2\n", "a = []\n[[a]]\n", "a.b = 1\n[a]\n", "[a] extra\n",
+        "x = [1,\n", "x = {a = 1,\n", "x =\n1\n"
+    };
+    for (const char* source : invalid) {
+        SCOPED_TRACE(source);
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("toml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_TRUE(parsed->parse_failed);
+    }
+    const char* valid[] = {
+        "", "# comment\n", "x = \"ok\\n\\u263A\"\n", "x = 'literal\\q'\n", "x = 1_000\ny = 0\nz = -0.1_2e+0_2\n",
+        "x = +inf\ny = +nan\nz = -inf\n", "x = 0xCA_FE\ny = 0o7_7\nz = 0b1_0\n", "x = [1,\n2,]\n",
+        "[a.b]\nx = 1\n[a]\ny = 2\n", "a.b = 1\na.c = 2\n", "x = {a.b = 1, a.c = 2}\n",
+        "[[a]]\nx = 1\n[a.b]\nx = 2\n[[a]]\nx = 3\n[a.b]\nx = 4\n"
+    };
+    for (const char* source : valid) {
+        SCOPED_TRACE(source);
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("toml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_FALSE(parsed->parse_failed);
+    }
+}
+
+TEST_F(InputRoundtripTest, YamlRejectsMalformedScalarsAliasesAndCollections) {
+    const char* invalid[] = {
+        "a: \"bad\\q\"\n", "a: \"unterminated\n", "a: 'unterminated\n", "a: \"\\uD800\"\n",
+        "a: \"\\U00110000\"\n", "a: *missing\n", "a:\n\tb: 1\n", "a: [1,,2]\n", "a: [,1]\n",
+        "a: {b: 1,, c: 2}\n", "a: 1\na: 2\n", "a: null\n\"a\": 2\n", "a: {b: 1, b: 2}\n"
+    };
+    for (const char* source : invalid) {
+        SCOPED_TRACE(source);
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("yaml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_TRUE(parsed->parse_failed);
+    }
+    const char* valid[] = {
+        "a: [1,2,]\n", "a: {b: 1, c: null,}\n", "a: &value null\nb: *value\n",
+        "a: &value 1\nb: &value 2\nc: *value\n", "a: 'literal\\q'\n", "a: \"ok\\n\\u263A\"\n",
+        "a: |\n  \tcontent\n", "a: \tvalue\n", "a: \"one\n  two\"\n", "a: {b, c}\n"
+    };
+    for (const char* source : valid) {
+        SCOPED_TRACE(source);
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("yaml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_FALSE(parsed->parse_failed);
+    }
+}
+
+TEST_F(InputRoundtripTest, YamlNormalizesSourceLineBreaksBeforeBlockParsing) {
+    for (const char* source : {"note: |\r\n  one\r\n  two\r\nother: null\r\n",
+                               "note: |\r  one\r  two\rother: null\r"}) {
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("yaml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        ASSERT_FALSE(parsed->parse_failed);
+        ASSERT_EQ(get_type_id(parsed->root), LMD_TYPE_MAP);
+        String* note = MapReader(parsed->root.map).get("note").item().get_safe_string();
+        ASSERT_NE(note, nullptr);
+        EXPECT_STREQ(note->chars, "one\ntwo\n");
+        EXPECT_TRUE(MapReader(parsed->root.map).has("other"));
+    }
+}
+
+TEST_F(InputRoundtripTest, TomlStringsValidateScalarEscapesAndSourceCharacters) {
+    const char* invalid[] = {
+        "x = \"\\uD800\\uDC00\"\n", "x = \"\"\"a\\   b\"\"\"\n",
+        "x = \"raw\x01" "control\"\n", "x = 'raw\rcarriage'\n", "x = \"\"\"raw\x7f" "control\"\"\"\n"
+    };
+    for (const char* source : invalid) {
+        SCOPED_TRACE(source);
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("toml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_TRUE(parsed->parse_failed);
+    }
+    const char* valid[] = {"x = \"\\U00010000\"\n", "x = \"\"\"one\\  \n  two\"\"\"\n",
+                           "x = \"\"\"one\"\"\"\"\n", "x = '''one'''''\n"};
+    for (const char* source : valid) {
+        SCOPED_TRACE(source);
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("toml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_FALSE(parsed->parse_failed);
+    }
+    Input* parsed = input_from_source("x = \"\"\"one\r\ntwo\"\"\"\n", nullptr, create_lambda_string("toml"), nullptr);
+    ASSERT_NE(parsed, nullptr);
+    ASSERT_FALSE(parsed->parse_failed);
+    String* value = MapReader(parsed->root.map).get("x").item().get_safe_string();
+    ASSERT_NE(value, nullptr);
+    EXPECT_STREQ(value->chars, "one\ntwo");
+}
+
+TEST_F(InputRoundtripTest, YamlAliasesDoNotCrossDocumentBoundaries) {
+    for (const char* sample : {"---\na: &x 1\n---\nb: *x\n", "---\na: &x null\n...\n---\nb: *x\n"}) {
+        Input* parsed = input_from_source(const_cast<char*>(sample), nullptr, create_lambda_string("yaml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_TRUE(parsed->parse_failed);
+    }
+    char valid[] = "---\na: &x 1\nb: *x\n---\nc: &x 2\nd: *x\n";
+    Input* parsed = input_from_source(valid, nullptr, create_lambda_string("yaml"), nullptr);
+    ASSERT_NE(parsed, nullptr);
+    EXPECT_FALSE(parsed->parse_failed);
+}
+
+TEST_F(InputRoundtripTest, YamlRejectsDuplicateNonStringKeys) {
+    const char* invalid[] = {"1: a\n0x1: b\n", "true: a\nTrue: b\n", "null: a\n~: b\n",
+        "? [1, 2]\n: a\n? [1, 2]\n: b\n", "? {a: 1, b: 2}\n: a\n? {b: 2, a: 1}\n: b\n"};
+    for (const char* sample : invalid) {
+        SCOPED_TRACE(sample);
+        Input* parsed = input_from_source(const_cast<char*>(sample), nullptr, create_lambda_string("yaml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_TRUE(parsed->parse_failed);
+    }
+    const char* valid[] = {"1: a\ntrue: b\n", "? [1, 2]\n: a\n? [2, 1]\n: b\n",
+                            "1: a\n'?': b\n", "'?': b\n1: a\n"};
+    for (const char* sample : valid) {
+        SCOPED_TRACE(sample);
+        Input* parsed = input_from_source(const_cast<char*>(sample), nullptr, create_lambda_string("yaml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        EXPECT_FALSE(parsed->parse_failed);
+    }
+}
+
+TEST_F(InputRoundtripTest, YamlImplicitFlowKeysRetainTheirStructure) {
+    const char* inputs[] = {"[1, 2]: one\n[3, 4]: two\n", "{a: 1}: one\n{b: 2}: two\n"};
+    for (const char* source : inputs) {
+        SCOPED_TRACE(source);
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("yaml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        ASSERT_FALSE(parsed->parse_failed);
+        ASSERT_EQ(get_type_id(parsed->root), LMD_TYPE_MAP);
+        MapReader map(parsed->root.map);
+        EXPECT_EQ(map.size(), 2);
+        auto entries = map.entries();
+        const char* name = nullptr; ItemReader value;
+        ASSERT_TRUE(entries.next(&name, &value));
+        EXPECT_STREQ(name, "?");
+        ASSERT_TRUE(value.isMap());
+        ItemReader key = value.asMap().get("key");
+        EXPECT_TRUE(source[0] == '[' ? key.isArray() : key.isMap());
+    }
+    char duplicate[] = "[1, 2]: first\n[1, 2]: second\n";
+    Input* bad = input_from_source(duplicate, nullptr, create_lambda_string("yaml"), nullptr);
+    ASSERT_NE(bad, nullptr);
+    EXPECT_TRUE(bad->parse_failed);
+}
+
+TEST_F(InputRoundtripTest, YamlAliasKeyStopsAtMappingIndicator) {
+    char valid[] = "first: &key 1\n*key: value\n";
+    Input* parsed = input_from_source(valid, nullptr, create_lambda_string("yaml"), nullptr);
+    ASSERT_NE(parsed, nullptr);
+    EXPECT_FALSE(parsed->parse_failed);
+    char duplicate[] = "first: &key 1\n*key: value\n1: other\n";
+    parsed = input_from_source(duplicate, nullptr, create_lambda_string("yaml"), nullptr);
+    ASSERT_NE(parsed, nullptr);
+    EXPECT_TRUE(parsed->parse_failed);
+}
+
+TEST_F(InputRoundtripTest, YamlInlineDocumentStartRetainsMapping) {
+    const char* samples[] = {"--- a: 1\nb: 2\n", "--- [1, 2]: first\nb: 2\n"};
+    for (const char* source : samples) {
+        Input* parsed = input_from_source(const_cast<char*>(source), nullptr, create_lambda_string("yaml"), nullptr);
+        ASSERT_NE(parsed, nullptr);
+        ASSERT_FALSE(parsed->parse_failed);
+        ASSERT_EQ(get_type_id(parsed->root), LMD_TYPE_MAP);
+        MapReader root(parsed->root.map);
+        EXPECT_EQ(root.size(), 2);
+        EXPECT_TRUE(root.has("b"));
+        EXPECT_TRUE(root.has(source[4] == '[' ? "?" : "a"));
     }
 }
 
@@ -2013,123 +2237,44 @@ TEST_F(TomlTests, SimpleTomlRoundtrip) {
     url_destroy(cwd);
 }
 
-// Test Unicode surrogate pair handling in TOML strings
-// TOML supports \uXXXX (4 hex) and \UXXXXXXXX (8 hex) escapes
-TEST_F(TomlTests, TomlUnicodeSurrogatePairs) {
-    printf("\n=== Testing TOML Unicode surrogate pair handling ===\n");
-
-    // TOML with various Unicode escapes including surrogate pairs
-    // 📚 = U+1F4DA = \uD83D\uDCDA (surrogate pair) or \U0001F4DA (direct)
-    // 🎉 = U+1F389 = \uD83C\uDF89 (surrogate pair) or \U0001F389 (direct)
-    // ä = U+00E4 = \u00E4 (BMP character)
-    const char* toml_with_unicode = "[emoji]\n"
-        "book_surrogate = \"\\uD83D\\uDCDA\"\n"
-        "party_surrogate = \"\\uD83C\\uDF89\"\n"
+// toml escapes encode scalar values, not UTF-16 pairs: https://toml.io/en/v1.0.0#string.
+TEST_F(TomlTests, TomlUnicodeScalarEscapes) {
+    char source[] = "[emoji]\n"
+        "book_raw = \"\xF0\x9F\x93\x9A\"\n"
+        "party_direct = \"\\U0001F389\"\n"
         "book_direct = \"\\U0001F4DA\"\n"
         "umlaut = \"\\u00E4\"\n";
-
-    String* type_str = create_lambda_string("toml");
-    String* flavor_str = NULL;
-
-    Url* cwd = url_parse("file://./");
-    Url* dummy_url = url_parse_with_base("unicode_test.toml", cwd);
-
-    char* toml_copy = strdup(toml_with_unicode);
-
-    printf("Parsing TOML with Unicode escapes...\n");
-    Input* parsed_input = input_from_source(toml_copy, dummy_url, type_str, flavor_str);
-
-    ASSERT_NE(parsed_input, nullptr) << "Failed to parse TOML with Unicode escapes";
-    printf("TOML with Unicode parsed successfully\n");
-
-    // Get the root and navigate to emoji section
-    Item root_item = parsed_input->root;
-    ASSERT_EQ(get_type_id(root_item), LMD_TYPE_MAP) << "Root should be a map";
-
-    MapReader root_reader = MapReader::fromItem(root_item);
-    ItemReader emoji_section = root_reader.get("emoji");
-    ASSERT_TRUE(emoji_section.isMap()) << "emoji section should be a map";
-
-    MapReader emoji_reader = emoji_section.asMap();
-
-    // Test surrogate pair: book_surrogate should be 📚
-    ItemReader book_surrogate_reader = emoji_reader.get("book_surrogate");
-    ASSERT_TRUE(book_surrogate_reader.isString()) << "book_surrogate should be a string";
-    String* book_str = book_surrogate_reader.asString();
-    ASSERT_NE(book_str, nullptr);
-    
-    // 📚 in UTF-8: F0 9F 93 9A
-    ASSERT_EQ(book_str->len, 4U) << "📚 should be 4 bytes in UTF-8";
-    EXPECT_EQ((unsigned char)book_str->chars[0], 0xF0);
-    EXPECT_EQ((unsigned char)book_str->chars[1], 0x9F);
-    EXPECT_EQ((unsigned char)book_str->chars[2], 0x93);
-    EXPECT_EQ((unsigned char)book_str->chars[3], 0x9A);
-    
-    printf("book_surrogate (\\uD83D\\uDCDA) parsed correctly as: ");
-    for (uint32_t i = 0; i < book_str->len; i++) {
-        printf("%02X ", (unsigned char)book_str->chars[i]);
+    Input* parsed = input_from_source(source, nullptr, create_lambda_string("toml"), nullptr);
+    ASSERT_NE(parsed, nullptr);
+    ASSERT_FALSE(parsed->parse_failed);
+    ASSERT_EQ(get_type_id(parsed->root), LMD_TYPE_MAP);
+    ItemReader emoji = MapReader(parsed->root.map).get("emoji");
+    ASSERT_TRUE(emoji.isMap());
+    MapReader fields = emoji.asMap();
+    struct Case { const char* key; const char* bytes; uint32_t length; };
+    const Case cases[] = {
+        {"book_raw", "\xF0\x9F\x93\x9A", 4},
+        {"party_direct", "\xF0\x9F\x8E\x89", 4},
+        {"book_direct", "\xF0\x9F\x93\x9A", 4},
+        {"umlaut", "\xC3\xA4", 2}
+    };
+    for (const Case& sample : cases) {
+        SCOPED_TRACE(sample.key);
+        ItemReader value = fields.get(sample.key);
+        ASSERT_TRUE(value.isString());
+        String* text = value.asString();
+        ASSERT_NE(text, nullptr);
+        ASSERT_EQ(text->len, sample.length);
+        EXPECT_EQ(memcmp(text->chars, sample.bytes, sample.length), 0);
     }
-    printf("(📚)\n");
-
-    // Test surrogate pair: party_surrogate should be 🎉
-    ItemReader party_reader = emoji_reader.get("party_surrogate");
-    ASSERT_TRUE(party_reader.isString()) << "party_surrogate should be a string";
-    String* party_str = party_reader.asString();
-    ASSERT_NE(party_str, nullptr);
-    
-    // 🎉 in UTF-8: F0 9F 8E 89
-    ASSERT_EQ(party_str->len, 4U) << "🎉 should be 4 bytes in UTF-8";
-    EXPECT_EQ((unsigned char)party_str->chars[0], 0xF0);
-    EXPECT_EQ((unsigned char)party_str->chars[1], 0x9F);
-    EXPECT_EQ((unsigned char)party_str->chars[2], 0x8E);
-    EXPECT_EQ((unsigned char)party_str->chars[3], 0x89);
-    
-    printf("party_surrogate (\\uD83C\\uDF89) parsed correctly as: ");
-    for (uint32_t i = 0; i < party_str->len; i++) {
-        printf("%02X ", (unsigned char)party_str->chars[i]);
+    // neither paired nor isolated surrogate escapes are legal TOML scalar values.
+    for (const char* invalid : {"x = \"\\uD83D\\uDCDA\"\n", "x = \"\\uD83C\\uDF89\"\n",
+                                 "x = \"\\uD83D\"\n", "x = \"\\uDCDA\"\n"}) {
+        SCOPED_TRACE(invalid);
+        Input* rejected = input_from_source(const_cast<char*>(invalid), nullptr, create_lambda_string("toml"), nullptr);
+        ASSERT_NE(rejected, nullptr);
+        EXPECT_TRUE(rejected->parse_failed);
     }
-    printf("(🎉)\n");
-
-    // Test direct \U escape: book_direct should also be 📚
-    ItemReader book_direct_reader = emoji_reader.get("book_direct");
-    ASSERT_TRUE(book_direct_reader.isString()) << "book_direct should be a string";
-    String* book_direct_str = book_direct_reader.asString();
-    ASSERT_NE(book_direct_str, nullptr);
-    
-    ASSERT_EQ(book_direct_str->len, 4U) << "📚 via \\U should be 4 bytes in UTF-8";
-    EXPECT_EQ((unsigned char)book_direct_str->chars[0], 0xF0);
-    EXPECT_EQ((unsigned char)book_direct_str->chars[1], 0x9F);
-    EXPECT_EQ((unsigned char)book_direct_str->chars[2], 0x93);
-    EXPECT_EQ((unsigned char)book_direct_str->chars[3], 0x9A);
-    
-    printf("book_direct (\\U0001F4DA) parsed correctly as: ");
-    for (uint32_t i = 0; i < book_direct_str->len; i++) {
-        printf("%02X ", (unsigned char)book_direct_str->chars[i]);
-    }
-    printf("(📚)\n");
-
-    // Test BMP character: umlaut should be ä
-    ItemReader umlaut_reader = emoji_reader.get("umlaut");
-    ASSERT_TRUE(umlaut_reader.isString()) << "umlaut should be a string";
-    String* umlaut_str = umlaut_reader.asString();
-    ASSERT_NE(umlaut_str, nullptr);
-    
-    // ä in UTF-8: C3 A4
-    ASSERT_EQ(umlaut_str->len, 2U) << "ä should be 2 bytes in UTF-8";
-    EXPECT_EQ((unsigned char)umlaut_str->chars[0], 0xC3);
-    EXPECT_EQ((unsigned char)umlaut_str->chars[1], 0xA4);
-    
-    printf("umlaut (\\u00E4) parsed correctly as: ");
-    for (uint32_t i = 0; i < umlaut_str->len; i++) {
-        printf("%02X ", (unsigned char)umlaut_str->chars[i]);
-    }
-    printf("(ä)\n");
-
-    printf("TOML Unicode surrogate pair test completed successfully\n");
-
-    free(toml_copy);
-    url_destroy(dummy_url);
-    url_destroy(cwd);
 }
 
 // INI Tests

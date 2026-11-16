@@ -34,6 +34,7 @@
 #include "lib/stringbuf.h"
 #include "lib/arraylist.h"
 #include "lib/hashmap.h"
+#include "lib/re2_glue.hpp"
 #include "lib/log.h"
 #include "lib/memtrack.h"
 #include <cstring>
@@ -366,14 +367,55 @@ Item MarkBuilder::createRange(int64_t start, int64_t end) {
     return {.range = range};
 }
 
-Item MarkBuilder::createType(TypeId type_id, bool is_literal, bool is_const) {
-    // Allocate Type from arena
-    Type* type = (Type*)arena_alloc(arena_, sizeof(Type));
-    if (!type) return {.item = ITEM_UNDEFINED};
+static bool mark_type_is_declared_nominal(const Type* type) {
+    return lambda_type_is_concrete_attr_shape(type) && type->is_nominal &&
+        ((const TypeMap*)type)->is_trusted_contract;
+}
 
-    type->type_id = type_id;
-    type->is_literal = is_literal ? 1 : 0;
-    type->is_const = is_const ? 1 : 0;
+// type descriptors must have the full layout that readers and copies dispatch to.
+static size_t mark_type_descriptor_size(const Type* source) {
+    size_t bytes = sizeof(Type);
+    if (source->type_id == LMD_TYPE_TYPE) {
+        const size_t sizes[] = {sizeof(TypeType), sizeof(TypeUnary), sizeof(TypeBinary), sizeof(TypePattern),
+            sizeof(TypeConstrained), sizeof(TypeRange), sizeof(TypeParam), sizeof(TypeBinder),
+            sizeof(TypeBoundRef), sizeof(TypeGrammar), sizeof(TypeGrammarRule)};
+        if (source->kind >= sizeof(sizes) / sizeof(sizes[0])) {
+            log_error("dom-contract-copy: unsupported type kind %u", source->kind);
+            return 0;
+        }
+        bytes = sizes[source->kind];
+    } else if (mark_type_is_declared_nominal(source)) bytes = sizeof(TypeObject);
+    else if (source->type_id == LMD_TYPE_MAP) bytes = sizeof(TypeMap);
+    else if (source->type_id == LMD_TYPE_ELEMENT) bytes = sizeof(TypeElmt);
+    else if (source->type_id == LMD_TYPE_ARRAY) bytes = sizeof(TypeArray);
+    else if (source->type_id == LMD_TYPE_FUNC) bytes = sizeof(TypeFunc);
+    else if (source->is_literal || source->is_const) {
+        switch (source->type_id) {
+        case LMD_TYPE_BOOL: bytes = sizeof(TypeConst); break;
+        case LMD_TYPE_INT: case LMD_TYPE_INT64: bytes = sizeof(TypeInt64); break;
+        case LMD_TYPE_UINT64: bytes = sizeof(TypeUint64); break;
+        case LMD_TYPE_FLOAT: bytes = sizeof(TypeFloat); break;
+        case LMD_TYPE_COMPLEX: bytes = sizeof(TypeComplex); break;
+        case LMD_TYPE_NUM_SIZED: bytes = sizeof(TypeNumSized); break;
+        case LMD_TYPE_DTIME: bytes = sizeof(TypeDateTime); break;
+        case LMD_TYPE_STRING: case LMD_TYPE_SYMBOL: bytes = sizeof(TypeString); break;
+        case LMD_TYPE_BINARY: bytes = sizeof(TypeBinaryConst); break;
+        case LMD_TYPE_DECIMAL: bytes = sizeof(TypeDecimal); break;
+        default: break;
+        }
+    }
+    return bytes;
+}
+
+Item MarkBuilder::createType(TypeId type_id, bool is_literal, bool is_const) {
+    Type header = {};
+    header.type_id = type_id;
+    header.is_literal = is_literal;
+    header.is_const = is_const;
+    size_t bytes = mark_type_descriptor_size(&header);
+    Type* type = bytes ? (Type*)arena_calloc(arena_, bytes) : nullptr;
+    if (!type) return {.item = ITEM_UNDEFINED};
+    *type = header;
 
     return {.type = type};
 }
@@ -920,9 +962,12 @@ Item MarkBuilder::deep_copy_for_view(Item item) {
 
 Item MarkBuilder::deep_copy_for_dom(Item item) {
     copying_view_ = true;
+    dom_contract_copy_failed_ = false;
     Item copied = deep_copy_internal(item);
     copying_view_ = false;
-    return copied;
+    if (dom_contract_copies_) hashmap_free(dom_contract_copies_);
+    dom_contract_copies_ = nullptr;
+    return dom_contract_copy_failed_ ? ItemError : copied;
 }
 
 Item MarkBuilder::copy_ui_content(Item item) {
@@ -934,6 +979,247 @@ Item MarkBuilder::copy_ui_content(Item item) {
 
 static Target* copy_name_namespace(Pool* owner, Target* ns) {
     return ns ? namespace_target(owner, ns->original, ns->name_prefix, ns->name_separator) : nullptr;
+}
+
+struct DomContractCopy {
+    const Type* source;
+    Type* copy;
+};
+static uint64_t dom_contract_hash(const void* value, uint64_t, uint64_t) {
+    return hashmap_xxhash3(&((const DomContractCopy*)value)->source, sizeof(Type*), 0, 0);
+}
+static int dom_contract_compare(const void* a, const void* b, void*) {
+    const Type* x = ((const DomContractCopy*)a)->source;
+    const Type* y = ((const DomContractCopy*)b)->source;
+    return x == y ? 0 : (uintptr_t)x < (uintptr_t)y ? -1 : 1;
+}
+
+static bool dom_contract_is_permanent(const Type* type) {
+    if (type->type_id < LMD_TYPE_COUNT &&
+            (type == type_info[type->type_id].type || type == type_info[type->type_id].lit_type)) return true;
+    // these contracts carry semantics by identity even when they share a TypeId.
+    const Type* permanent[] = {&TYPE_FLOAT64, &TYPE_INTEGER, &TYPE_INTEGER_VALUE, &TYPE_NUMBER,
+        &TYPE_NONE, &TYPE_OBJECT, &TYPE_LIST, &TYPE_DATE, &TYPE_TIME, &TYPE_ANY_NO_ERROR,
+        &TYPE_ANY_NO_NULL, &TYPE_ANY_NO_ERROR_OR_NULL, &TYPE_I8, &TYPE_I16, &TYPE_I32,
+        &TYPE_U8, &TYPE_U16, &TYPE_U32, &TYPE_F16, &TYPE_F32, &CONST_BOOL, &CONST_INT,
+        &CONST_FLOAT, &CONST_STRING, &LIT_NULL, &LIT_BOOL, &LIT_BOOL_TRUE, &LIT_BOOL_FALSE,
+        &LIT_INT, &LIT_INT64, &LIT_FLOAT, &LIT_COMPLEX, &LIT_DECIMAL, &LIT_STRING,
+        &LIT_DTIME, &LIT_NUM_SIZED, &LIT_UINT64, &LIT_TYPE};
+    for (const Type* item : permanent) if (type == item) return true;
+    return false;
+}
+
+bool MarkBuilder::copy_dom_field(ShapeEntry* target, const ShapeEntry* source) {
+    if (source->name) {
+        String* owned = createName(source->name->str, source->name->length);
+        StrView* name = (StrView*)pool_alloc(pool_, sizeof(StrView));
+        if (!owned || !name) return false;
+        *name = {owned->chars, owned->len};
+        target->name = name;
+        target->name_id = name_ref_id(owned);
+    }
+    target->ns = copy_name_namespace(pool_, source->ns);
+    Type* contract = copy_dom_contract(source->type);
+    if (!contract) return false;
+    // the cached lane must point into the copied graph as well (D3.4.6/D5.5.3).
+    shape_entry_set_type(target, contract);
+    return true;
+}
+
+Type* MarkBuilder::copy_dom_contract(const Type* source) {
+    Type* copied = copy_dom_contract_inner(source);
+    if (source && !copied) dom_contract_copy_failed_ = true;
+    return copied;
+}
+
+TypeParam* MarkBuilder::copy_dom_parameter(const TypeParam* source) {
+    if (!source) return nullptr;
+    DomContractCopy key = {source, nullptr};
+    const DomContractCopy* found = (const DomContractCopy*)hashmap_get(dom_contract_copies_, &key);
+    if (found) return (TypeParam*)found->copy;
+    TypeParam* copied = (TypeParam*)pool_alloc(pool_, sizeof(TypeParam));
+    if (!copied) { dom_contract_copy_failed_ = true; return nullptr; }
+    *copied = *source;
+    key.copy = copied;
+    hashmap_set(dom_contract_copies_, &key);
+    if (hashmap_oom(dom_contract_copies_)) { dom_contract_copy_failed_ = true; return nullptr; }
+    copied->full_type = copy_dom_contract(source->full_type);
+    copied->contract_type = copy_dom_contract(source->contract_type);
+    copied->binder = (TypeBinder*)copy_dom_contract(source->binder);
+    copied->next = copy_dom_parameter(source->next);
+    return copied;
+}
+
+static void dom_contract_regex_release(void* value) {
+    lam::re2_glue_release((re2::RE2*)value);
+}
+static re2::RE2* dom_contract_regex_copy(Pool* pool, const re2::RE2* source) {
+    if (!source) return nullptr;
+    re2::RE2* copied = lam::re2_glue_compile(source->pattern().data(), source->pattern().size(),
+        source->options(), "dom-contract-copy");
+    if (copied && !pool_add_cleanup(pool, dom_contract_regex_release, copied)) {
+        lam::re2_glue_release(copied);
+        return nullptr;
+    }
+    return copied;
+}
+
+Type* MarkBuilder::copy_dom_contract_inner(const Type* source) {
+    if (!source || dom_contract_is_permanent(source)) return (Type*)source;
+    if (!dom_contract_copies_) dom_contract_copies_ = hashmap_new(sizeof(DomContractCopy), 16,
+        0, 0, dom_contract_hash, dom_contract_compare, nullptr, nullptr);
+    if (!dom_contract_copies_) return nullptr;
+    DomContractCopy key = {source, nullptr};
+    const DomContractCopy* found = (const DomContractCopy*)hashmap_get(dom_contract_copies_, &key);
+    if (found) return found->copy;
+    size_t bytes = mark_type_descriptor_size(source);
+    if (!bytes) return nullptr;
+    Type* copy = (Type*)pool_alloc(pool_, bytes);
+    if (!copy) return nullptr;
+    memcpy(copy, source, bytes);
+    // publish before following edges so recursive contracts and aliases stay shared.
+    key.copy = copy;
+    hashmap_set(dom_contract_copies_, &key);
+    if (hashmap_oom(dom_contract_copies_)) return nullptr;
+    bool ok = true;
+    auto edge = [&](Type*& pointer) {
+        if (!pointer) return;
+        pointer = copy_dom_contract(pointer);
+        if (!pointer) ok = false;
+    };
+    if (source->type_id == LMD_TYPE_TYPE) {
+        switch (source->kind) {
+        case TYPE_KIND_SIMPLE: edge(((TypeType*)copy)->type); break;
+        case TYPE_KIND_UNARY: edge(((TypeUnary*)copy)->operand); break;
+        case TYPE_KIND_BINARY: edge(((TypeBinary*)copy)->left); edge(((TypeBinary*)copy)->right); break;
+        case TYPE_KIND_CONSTRAINED: edge(((TypeConstrained*)copy)->base); break;
+        case TYPE_KIND_PARAM: {
+            TypeParam* parameter = (TypeParam*)copy;
+            edge(parameter->full_type); edge(parameter->contract_type);
+            parameter->binder = (TypeBinder*)copy_dom_contract(parameter->binder);
+            parameter->next = copy_dom_parameter(parameter->next);
+            break;
+        }
+        case TYPE_KIND_PATTERN: {
+            TypePattern* pattern = (TypePattern*)copy;
+            const TypePattern* original = (const TypePattern*)source;
+            pattern->source = original->source ? createString(original->source->chars, original->source->len) : nullptr;
+            pattern->regex_source = original->regex_source ? createString(original->regex_source->chars, original->regex_source->len) : nullptr;
+            pattern->re2 = dom_contract_regex_copy(pool_, original->re2);
+            pattern->re2_unanchored = dom_contract_regex_copy(pool_, original->re2_unanchored);
+            if ((original->source && !pattern->source) || (original->regex_source && !pattern->regex_source) ||
+                    (original->re2 && !pattern->re2) || (original->re2_unanchored && !pattern->re2_unanchored)) return nullptr;
+            break;
+        }
+        case TYPE_KIND_GRAMMAR: {
+            TypeGrammar* grammar = (TypeGrammar*)copy;
+            edge(grammar->type);
+            if (grammar->name) grammar->name = createString(grammar->name->chars, grammar->name->len);
+            if (grammar->rule_count) {
+                grammar->rules = (GrammarRule**)pool_alloc(pool_, sizeof(GrammarRule*) * grammar->rule_count);
+                if (!grammar->rules) return nullptr;
+                memcpy(grammar->rules, ((const TypeGrammar*)source)->rules, sizeof(GrammarRule*) * grammar->rule_count);
+            }
+            break;
+        }
+        case TYPE_KIND_GRAMMAR_RULE: {
+            TypeGrammarRule* rule = (TypeGrammarRule*)copy;
+            edge(rule->type);
+            rule->grammar = (TypeGrammar*)copy_dom_contract(rule->grammar);
+            if (rule->name) rule->name = createString(rule->name->chars, rule->name->len);
+            break;
+        }
+        case TYPE_KIND_BINDER: {
+            TypeBinder* binder = (TypeBinder*)copy;
+            edge(binder->bound);
+            if (binder->parameter_name) binder->parameter_name = createString(binder->parameter_name->chars, binder->parameter_name->len);
+            if (binder->name) {
+                Name* name = (Name*)pool_alloc(pool_, sizeof(Name));
+                if (!name) return nullptr;
+                *name = {createName(binder->name->name->chars, binder->name->name->len), copy_name_namespace(pool_, binder->name->ns)};
+                binder->name = name;
+            }
+            break;
+        }
+        case TYPE_KIND_BOUND_REF: edge(((TypeBoundRef*)copy)->bound); break;
+        case TYPE_KIND_RANGE: {
+            TypeRange* range = (TypeRange*)copy;
+            range->start = deep_copy_internal(range->start); range->end = deep_copy_internal(range->end);
+            break;
+        }
+        default: break;
+        }
+    } else if (source->type_id == LMD_TYPE_MAP || source->type_id == LMD_TYPE_ELEMENT) {
+        TypeMap* map = (TypeMap*)copy;
+        map->field_index = nullptr; map->field_count = map->field_capacity = 0;
+        map->transitions = nullptr; map->retype_plans = nullptr; map->js_proto_entry_cache = nullptr;
+        map->is_private_clone = true; map->is_transition_shared_shape = map->is_shared_constructor_shape = false;
+        map->slot_entries = nullptr; map->slot_count = 0;
+        map->struct_name = map->struct_name ? pool_strdup(pool_, map->struct_name) : nullptr;
+        map->shape = clone_shape_entries(type_alloc_of_pool(pool_), (const TypeMap*)source, &map->last);
+        if (((const TypeMap*)source)->shape && !map->shape) return nullptr;
+        ShapeEntry* field = map->shape;
+        FOR_EACH_MAP_FIELD((const TypeMap*)source, original) {
+            if (!copy_dom_field(field, original)) return nullptr;
+            field = typemap_next_field(map, field);
+        }
+        map->verified_contract = (TypeMap*)copy_dom_contract(map->verified_contract);
+        if (source->type_id == LMD_TYPE_ELEMENT || mark_type_is_declared_nominal(source)) {
+            TypeElmt* element = (TypeElmt*)copy;
+            String* name = createName(element->name.str, element->name.length);
+            if (!name) return nullptr;
+            element->name = {name->chars, name->len};
+            element->ns = copy_name_namespace(pool_, element->ns);
+            element->content_list = (TypeList*)copy_dom_contract(element->content_list);
+        }
+        if (mark_type_is_declared_nominal(source)) {
+            TypeObject* object = (TypeObject*)copy;
+            String* name = createName(object->type_name.str, object->type_name.length);
+            if (!name) return nullptr;
+            object->type_name = {name->chars, name->len};
+            object->base = (TypeObject*)copy_dom_contract(object->base);
+        }
+        // nominal records and executable metadata retain their host's rooted identity (D5.5.2/S2.1.4).
+        typemap_hash_build(map, pool_);
+    } else if (source->type_id == LMD_TYPE_ARRAY) {
+        TypeArray* array = (TypeArray*)copy;
+        edge(array->nested);
+        if (array->item_patterns && array->length > 0) {
+            array->item_patterns = (Item*)pool_alloc(pool_, sizeof(Item) * array->length);
+            array->item_is_type_pattern = (uint8_t*)pool_alloc(pool_, array->length);
+            if (!array->item_patterns || !array->item_is_type_pattern) return nullptr;
+            const TypeArray* old = (const TypeArray*)source;
+            for (int64_t i = 0; i < array->length; i++) {
+                array->item_patterns[i] = deep_copy_internal(old->item_patterns[i]);
+                array->item_is_type_pattern[i] = old->item_is_type_pattern ? old->item_is_type_pattern[i] : 0;
+            }
+        }
+    } else if (source->type_id == LMD_TYPE_FUNC) {
+        TypeFunc* function = (TypeFunc*)copy;
+        function->param = copy_dom_parameter(function->param);
+        edge(function->returned); edge(function->inferred_return);
+        edge(function->return_contract); edge(function->error_type);
+        if (function->binder_count) {
+            function->binders = (TypeBinder**)pool_alloc(pool_, sizeof(TypeBinder*) * function->binder_count);
+            if (!function->binders) return nullptr;
+            const TypeFunc* original = (const TypeFunc*)source;
+            for (uint16_t i = 0; i < function->binder_count; i++)
+                function->binders[i] = (TypeBinder*)copy_dom_contract(original->binders[i]);
+        }
+    } else if (source->is_literal || source->is_const) {
+        if (source->type_id == LMD_TYPE_STRING || source->type_id == LMD_TYPE_SYMBOL) {
+            TypeString* literal = (TypeString*)copy;
+            if (literal->string) literal->string = createString(literal->string->chars, literal->string->len);
+        } else if (source->type_id == LMD_TYPE_BINARY) {
+            TypeBinaryConst* literal = (TypeBinaryConst*)copy;
+            if (literal->binary) literal->binary = createBinary(binary_data(literal->binary), binary_length(literal->binary));
+        } else if (source->type_id == LMD_TYPE_DECIMAL) {
+            TypeDecimal* literal = (TypeDecimal*)copy;
+            Item value = deep_copy_internal({.item = c2it(literal->decimal)});
+            literal->decimal = value.get_decimal();
+        }
+    }
+    return ok ? copy : nullptr;
 }
 
 template<TypeId Tag>
@@ -1052,6 +1338,9 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
             view_type = elmt_clone_type_for_mutation(occurrence, pool_, true);
             if (!view_type) return ItemNull;
             view_type->ns = copy_name_namespace(pool_, elem_type->ns);
+            view_type->struct_name = elem_type->struct_name ? pool_strdup(pool_, elem_type->struct_name) : nullptr;
+            view_type->content_list = (TypeList*)copy_dom_contract(elem_type->content_list);
+            if (elem_type->content_list && !view_type->content_list) return ItemNull;
             view_type->name = allocated_type->name;
             view_type->name_id = allocated_type->name_id;
             // runtime element fields can have no reserve metadata; the shape owns their footprint.
@@ -1068,15 +1357,7 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
                 Item attr_item = map_shape_field_to_item(elem->data, attr.get());
                 Item copied_item = deep_copy_internal(attr_item);
                 if (view_type) {
-                    if (attr->name) {
-                        String* owned_name = createName(attr->name->str, attr->name->length);
-                        StrView* name = (StrView*)pool_alloc(pool_, sizeof(StrView));
-                        if (!owned_name || !name) return ItemNull;
-                        *name = {owned_name->chars, owned_name->len};
-                        view_attr->name = name;
-                        view_attr->name_id = name_ref_id(owned_name);
-                    }
-                    view_attr->ns = copy_name_namespace(pool_, attr->ns);
+                    if (!copy_dom_field(view_attr, attr.get())) return ItemNull;
                     set_field_value(view_attr, map_field_ptr(elem_builder.final().element->data, view_attr), copied_item);
                     view_attr = typemap_next_field(view_type, view_attr);
                 } else if (attr->name) {
@@ -1102,6 +1383,10 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
         log_leave();
         return elem_builder.final();
     } else if constexpr (Tag == LMD_TYPE_TYPE) {
+        if (copying_view_) {
+            Type* copied = copy_dom_contract((Type*)typed.ptr());
+            return copied ? Item{.type = copied} : ItemError;
+        }
         TypeType* source_type = (TypeType*)typed.ptr();
         if (!source_type || !source_type->type) return ItemError;
         if (source_type->type == &TYPE_NUMBER) {

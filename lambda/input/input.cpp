@@ -1731,11 +1731,9 @@ bool map_put_undefined_unique_absent_bulk(Map* mp, String** keys, int count,
 
 extern TypeElmt EmptyElmt;
 static void elmt_store_value(void* field_ptr, TypeId type_id, Item value) {
-    if (store_common_field_value(field_ptr, type_id, value)) return;
-    switch (type_id) {
-    default:
+    // elements use the same carriers as maps, including type and function values.
+    if (!map_store_field_value(field_ptr, type_id, value))
         log_debug("elmt_store_value: unknown type %d", type_id);
-    }
 }
 
 // An attribute already present with this name and value type: ElementReader

@@ -15,60 +15,25 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-065"></a>
+
+### LI-065 — FIXED
+
+See the [CSS Shapes registration repair](<Lib_Input_Issue_Ledger (fixed).md#li-065>).
+
 <a id="li-063"></a>
 
-### LI-063 — ZIP output cannot retain timestamps for modified members
+### LI-063 — FIXED
 
-**Status:** OPEN, reproduced 2026-11-15 against Lambda `e55450ec8` plus
-editor work and Input `3e14a05`. **Lambda task blocker:** yes for a
-metadata-preserving DOCX/EPUB editor. Input ownership is D9.1.1v4 and
-D9.1.3v2; document and archive preservation is D9.3.4 / D9.5.5.
-
-From the Lambda checkout run
-`./test/test_lambda_gtest.exe --gtest_filter='*proc_editor_package_members*:*proc_editor_epub_chapter*'`.
-The package editor reconstructs the changed XML member as a materialized
-`<fs kind:'file'>`, preserving its `name`, bytes and `mode`, then writes the
-archive through the ZIP writer. Python `zipfile` shows the original DOCX
-`word/document.xml` timestamp `(2020, 1, 2, 3, 4, 6)` becomes
-`(1980, 1, 1, 0, 0, 0)`; the original EPUB `Books/text/one.xhtml` timestamp
-`(2026, 1, 1, 0, 0, 0)` also becomes `(1980, 1, 1, 0, 0, 0)`. Both retain
-their `0600` permission bits. Evidence is in
-`Lambda-opus/temp/edit-viewer/package-metadata.log`. Other members retain
-their logical bytes; the archive is rebuilt and compressed representations and
-unknown extra fields are outside the current ZIP writer contract.
-
-`lambda/input/input-zip.cpp` `fs_output_walk` obtains timestamps only from
-archive-backed `FsNode` objects. Constructed files have no supported way to
-specify a modification timestamp, although their payloads are the supported
-way to represent edits; rebuilt directory nodes likewise do not retain their
-original directory metadata. Preserve and validate the available original
-timestamp and directory mode when writing edited/rebuilt members. Keep the
-user-facing package editor disabled until metadata and other package save
-requirements have been addressed. No Input implementation was changed.
+See the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-063>).
 
 
 <a id="li-062"></a>
 
-### LI-062 — Man parser includes .TH argument quotes in the title
+### LI-062 — FIXED
 
-**Status:** OPEN, reproduced 2026-11-15 against Lambda `e55450ec8` plus
-editor work and input `3e14a05`. **Lambda task blocker:** yes for reliable
-rich editing of man documents that use the Lambda man writer. Input ownership
-is D9.1.1v4 and document processing is D9.3.4.
+See the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-062>).
 
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/man-title-parse.ls`.
-The input `.TH "TEST" "1"` yields an h1 whose text includes the double
-quotes; `.TH TEST 1` yields `TEST` without them. The local `mandoc -Thtml`
-independently renders both headers as the same `TEST(1)` title. Evidence:
-`Lambda-opus/temp/edit-viewer/man-title-parse.log`,
-`man-title-quoted.html`, and `man-title-unquoted.html` in the same directory.
-The Lambda man writer emits quoted `.TH` arguments, so its output reparses
-to a visibly different title. Writer metadata retention is a separate Lambda
-editor concern; correcting the Input parser alone does not complete that work.
-
-The exact Input parser cause is unconfirmed. LI-043 fixed the separate `\&`
-zero-width escape issue. The editor retains source mode for man pages. No
-Input implementation or reference was changed by this report.
 
 <a id="li-061"></a>
 
@@ -121,79 +86,24 @@ or reference was changed by this report.
 
 <a id="li-058"></a>
 
-### LI-058 — Calendar and contact parsers accept broken component boundaries
+### LI-058 — FIXED
 
-**Status:** OPEN, reproduced 2026-11-15 against Lambda `e55450ec8` plus
-editor work and input `3e14a05`. **Lambda task blocker:** yes for safely
-validating source-backed iCalendar and vCard property edits. Input ownership
-is D9.1.1v4; document processing is D9.3.4 and parse-error acknowledgement
-is S7.5.1v6.
+See the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-058>).
 
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/contact-calendar-admission.ls`. An unclosed
-`BEGIN:VCARD` and a card closed with `END:OTHER` both return a normal contact;
-a property outside a vCard returns an empty contact list. For iCalendar an
-unclosed `VEVENT`, a mismatched `END:VTODO`, an unclosed calendar, and a
-property outside `VCALENDAR` all return success. In the first two cases the
-VEVENT and its summary are silently absent from the result. A properly closed
-calendar retains the event and acts as a control. The complete output is in
-`Lambda-opus/temp/edit-viewer/contact-calendar-admission.log`.
-
-The input parser in `lambda/input/input-vcf.cpp` accepts or finalizes incomplete
-cards, while `lambda/input/input-ics.cpp` can leave an active component
-unreported at a parent close or end of input; exact parser-state fixes are not
-established. LI-040 fixed missing property-name/value separators, but did not
-validate nesting or outer boundaries. Return parse errors for malformed
-boundaries without silently dropping content. The editor retains source mode
-until its provider can validate these documents. No Input implementation or
-references are changed by this report.
 
 <a id="li-057"></a>
 
-### LI-057 — YAML parser accepts malformed scalars, aliases and collections
+### LI-057 — FIXED
 
-**Status:** OPEN, reproduced 2026-11-15 against Lambda `e55450ec8` plus
-editor work and input `3e14a05`. **Lambda task blocker:** yes for safe YAML
-property editing. Input ownership is D9.1.1v4, document processing D9.3.4,
-and parse-error acknowledgement S7.5.1v6.
+See the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-057>).
 
-From the Lambda checkout run `./lambda.exe temp/edit-viewer/yaml-admission-probe.ls`.
-The parser accepts an unknown double-quoted escape (`a: "bad\q"`), an
-unterminated quoted scalar, an undefined alias (`a: *missing`), a tab used
-for indentation, a doubled flow-sequence comma (`a: [1,,2]`), and duplicate
-mapping keys. The independent local `js-yaml` parser rejects each input.
-The Lambda probe output is `Lambda-opus/temp/edit-viewer/yaml-admission-probe.log`.
-The precise Input-side causes are unconfirmed. Resolved LI-039 covers missing
-flow delimiters, which the current parser does reject; it does not cover these
-other malformed cases.
-
-The Lambda editor leaves YAML in source mode because the current parser cannot
-reliably validate a complete document or an edited value. No Input implementation
-or references are changed by this report.
 
 <a id="li-056"></a>
 
-### LI-056 — TOML parser accepts invalid escapes, numbers and duplicate keys
+### LI-056 — FIXED
 
-**Status:** OPEN, reproduced 2026-11-15 against Lambda `e55450ec8` plus
-editor work and input `3e14a05`. **Lambda task blocker:** yes, safe TOML
-property editing needs the provider to reject malformed documents and edited
-values. Input owns the parser under D9.1.1v4; D9.3.4 covers document processing
-and S7.5.1v6 governs parse-error acknowledgement.
+See the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-056>).
 
-From the Lambda checkout, run `./lambda.exe temp/edit-viewer/toml-admission-probe.ls`.
-The script-facing TOML parser accepts `name = "bad\q"`, `x = 01`, `x = 1__2`,
-`x = 12_`, and repeated `x = 1` / `x = 2` assignments. Python's independent
-`tomllib.loads` rejects all five; evidence is in
-`Lambda-opus/temp/edit-viewer/toml-admission-probe.log`. The parser reports
-unknown basic-string escapes as warnings and continues in
-`lambda/input/input-toml.cpp`; the precise numeric and duplicate-key causes
-are unconfirmed. The earlier LI-038 fix rejects trailing numeric content but
-does not cover these spellings.
-
-The editor currently leaves TOML in source mode. It cannot safely use the
-provider to validate a property edit or a candidate document while invalid
-values and duplicate assignments are admitted. This report makes no change
-to Input implementation or references.
 
 <a id="li-053"></a>
 
@@ -418,117 +328,66 @@ native qualification remains pending; this check is not a platform build.
 
 <a id="li-002"></a>
 
-### LI-002 — External-parent admissibility test disagrees with implementation
+### LI-002 — FIXED
 
-**Status:** OPEN — expected behavior and root cause need investigation.
-**Observed:** 2026-11-09, macOS, `make test-input-baseline` (debug).
-**Lambda blocker:** not established. D3.4.3 requires a transition tree not
-to write to an external parent; it does not by itself establish the disputed
-`has_spread` admission rule.
-
-`TransitionTreeExternalParentTest.InadmissibleParentsAreDeclined` in
-`test/test_mark_builder_gtest.cpp` expects `type_tree_add_map_field_chars`
-to return null for an external map marked `has_spread`, but it returns a
-non-null child. `external_parent_admissible` in `lambda/input/input.cpp`
-currently allows named stored fields for runtime-key literals that keep this
-flag. Determine the intended admission rule and repair the implementation or
-the test at the root cause; do not change the expectation merely to pass.
-Reproduce with `./build/test/test_mark_builder_gtest --gtest_filter=TransitionTreeExternalParentTest.InadmissibleParentsAreDeclined`
-after building the baseline.
-
-2026-11-14 review: the existing D3.4.3 implementation record in
-`Lambda_Impl_DBench.md` explicitly admits `has_spread` when every stored
-field is named, and rejects actual unnamed spread slots. The failing test
-constructs an empty shape with only the marker, so it conflicts with that
-documented implementation policy. A separate native control now checks both
-the named-field admission and the unnamed-slot rejection. The original
-assertion remains unchanged under this repository's test-preservation rule;
-the aggregate failure remains open.
+See the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-002>).
 
 <a id="li-003"></a>
 
-### LI-003 — Recheck DOM element backing-copy ownership
+### LI-003 — FIXED
 
-**Status:** PARTIAL — a source-storage lifetime defect is fixed; broader
-non-view ownership remains unverified.
-**Ownership checked:** 2026-11-09. **Lambda blocker:** not established.
+See the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-003>).
 
-The historical [RAD01-2](../../Lambda/vibe/radiant/Radiant_Issue_Ledger.md#rad01-2)
-claimed that DOM element backing data was copied and could diverge. The current
-input-owned `DomElement::create_in` in `lambda/input/css/dom_element.cpp` still
-assigns the supplied `Element` into `element->elmt` and conditionally snapshots
-backing data, but the old member names and constructor description are stale.
-Review the current ownership and mutation invariants, including D5.5.1 and
-D9.1.1v4, before deciding whether any defect remains.
+<a id="li-064"></a>
 
-2026-11-14 review: D5.5.3 requires a view occurrence to own its copied
-document content. `build_dom_tree_with_parent` now uses `deep_copy_for_dom`
-for ordinary view inputs, and the focused
-`InputDomNativeTest.ViewOccurrencesOwnBackingAndLeaveSourceUnchanged` passes
-for two occurrences and a mutated descendant. The historical `native_element`
-member is gone; the registry separately records a render source, while DOM
-reads and writes use the embedded backing. A second control verifies that
-mapping and live mutation for a non-view wrapper. Non-view construction still
-borrows shallow-copied data, and its behavior when the source has a shorter
-lifetime than the document has not been qualified, so this issue remains open.
-D5.5.2 permits a retained reference only when its GC root lives at least as
-long as the document; the non-view control does not establish that host-side
-lifetime condition.
+### LI-064 — LaTeX command scanning depends on process locale and can split UTF-8
 
-**Source storage repair, 2026-11-14:** a non-view wrapper shallow-copies the
-source element header. Adding an attribute through `MarkEditor` rebuilt the
-wrapper's shape and freed its shared pool buffer, leaving the retained source
-pointing at a freed block. If the shared type was a private clone, the same
-edit could also change the source's shape. The editor now checks its document's
-registered source before reusing a private shape or freeing old data; it
-keeps the source-owned type and allocation intact. The test
-`InputDomNativeTest.NonViewWrapperShapeChangesRetainSourceStorage` failed for
-both shared and private shapes before the repair and passes afterward, along
-with the other eight native DOM cases. Evidence: `temp/ledger-dom-regression-before.log`
-and `temp/ledger-dom-suite-after.log`. Same-type writes through a directly
-created non-view wrapper still share existing data. The shorter-source-lifetime
-question remains unqualified; this partial repair does not close LI-003.
+**Status:** PARTIALLY FIXED for locale independence; UTF-8 boundary handling
+remains OPEN. Reproduced 2026-11-16 against Input
+`2672c1ada7cabbd4144f21f97f15ee96a62b1b6f` and Lambda
+`17ce141e10aa10d0b36b1e9e211463df13c3a088` with their recorded working-tree
+state. **Lambda task blocker:** yes for exact cross-locale Script/native LaTeX
+front-end parity. Input owns the scanner under D9.1.1v4 and D9.1.3v2;
+D10.2.2 requires one source to give one AST and output to depend only on the
+source and resources. Text sequence operations use code points under S2.5.8.
 
-**Descendant reproduction:** a non-view tree's parent backing retains its
-original child instead of the live DOM wrapper. Consequently
-`dom_backed_node_index` returns -1 for the linked child, and a new child
-attribute is absent when reading through the parent's Mark backing. Non-view
-tree construction now uses the existing D5.5.2/D5.5.3 document-owned deep-copy
-path, allocates each copied occurrence as DOM node storage, and retains the
-source mapping. Focused tests cover two independent occurrences, descendant
-edits and removal, and nested arrays without modifying the source. The native
-regression `InputDomNativeTest.NonViewChildBackingTracksTheLiveWrapper` fails
-before and passes after the repair. Evidence: `temp/ledger-dom-tree-before.log`
-and `temp/ledger-dom-cow-qualified.log`. See the subsequent source-lifetime
-control below for its scope; host-managed GC qualification remains open.
+`lambda/input/input-latex-scanner.c` classifies command-name bytes using
+locale-sensitive `isalpha((unsigned char)c)`. A direct probe of the actual
+scanner, built from the checksum-verified Input source snapshot, scans the
+same valid UTF-8 bytes `5C C3 AA 61 62 63` differently: under locale `C` it
+returns end offset 2 and name bytes `C3`; under `fr_FR.UTF-8` it returns end
+6 and name bytes `C3 AA 61 62 63`. The `fr_FR.ISO8859-1` locale also returns
+end 6. Run `python3 temp/tex-script-f/native-scanner-locale.py` from the
+Lambda checkout; the generated probe library and recorded output are in
+`temp/tex-script-f/native_latex_scanner.dylib` and
+`temp/tex-script-f/native-scanner-locale.out`. This scanner is called by the
+native LaTeX parser, so the differing token boundaries can affect its AST.
 
-**Source-header lifetime repair, 2026-11-14:** even after a tree had been
-copied into its document, a later shape edit dereferenced its retained source
-header to discover whether its type and data were shared. A guard-page probe
-reproduced the access after the source header became inaccessible
-(`temp/ledger-dom-source-guard-before.log`). The node registry now records
-shared storage while binding the valid source, and the editor consults that
-record without rereading the source. Sixteen native DOM controls pass,
-including view and non-view copied trees after a separate source pool is
-destroyed, a guarded source header, and the existing shared-wrapper cases
-(`temp/ledger-dom-source-focused.log`). These tests do not qualify foreign
-storage borrowed by a directly created wrapper, render-map identity after
-source retirement, or host-managed GC and compaction; LI-003 remains open.
+Separately, the existing included fixture
+`test/lambda/latex/fixtures/local_packages/script_definition_unicode_main.tex`
+contains `\def\é{Q}`. Native parsing in the default C locale returns a
+command target and argument descriptor with bytes `5C C3`, splitting the
+UTF-8 encoding `C3 A9` of `é` across values. Run
+`./lambda.exe --no-log temp/tex-script-f/native-unicode-bytes.ls`; the result
+is recorded in `temp/tex-script-f/native-unicode-bytes-current-jit.out`.
+The Script data parser can preserve those bytes, but valid-text decoding
+rejects the partial sequence. The scanner now uses the existing ASCII classification helper, so command
+boundaries do not depend on the host locale. The new owner GTest failed against
+the original scanner and passes against the candidate archive; all 14 linked
+TeX engine tests passed in the recorded Input snapshot. A 564-case byte and
+buffer-capacity matrix matches the original C-locale scanner under each of
+three locales (`temp/tex-script-f/input-scanner-locale-diff.out`); the GTest
+logs are `native-scanner-locale-gtest-before-final.log` and
+`input-locale-tex-engine-suite-final.log` in the same directory. Installed
+source and test match the tested candidates byte for byte. This qualifies the
+locale fix, not the remaining partial UTF-8 result: decide and implement its
+intended boundary behavior with owner-side tests before closing LI-064.
 
-**Retained field contract, 2026-11-14:** the copied element shape still
-retains each source `ShapeEntry::type`. With a source-owned field contract,
-protecting that contract's page after tree construction causes a subsequent
-attribute read to fault (`temp/ledger-dom-contract-before.log`). The native
-regression `InputDomNativeTest.CopiedTreeOwnsForeignFieldTypeContract` remains
-failing for both view and non-view documents
-(`temp/ledger-dom-contract-focused.log`). Shape contracts can contain nested
-type graphs and nominal records whose pointer identity is significant under
-S2.1.4/D3.1.1; copying only the base header or replacing the contract with a
-generic type would not establish the required lifetime or preserve semantics.
-The correct ownership of those contracts is still under investigation.
-The cached `LaneStorageDesc::semantic_contract` and `base_contract` also
-point into the source pool. The additional native nullable-contract control
-exposes both the outer contract and its nested base; both controls fail in
-view and non-view modes (`temp/ledger-dom-contract-graph-before.log`). The
-document constructor receives an `Element*`, not its source `Input` or an
-owner handle, and the shared allocator capability is open as [LI-053](#li-053).
+The subsequent Input baseline was run from a checksum-verified copy of the
+current dirty Input source with this fix (`temp/tex-script-f/input-locale-baseline.log`
+in the Lambda checkout). It failed because the sandbox denied localhost binds
+for two fixture-server runners and nine HTTP cases, and because the already
+open [LI-002](#li-002) external-parent admission test failed. Its TeX engine
+suite passed 12 tests and skipped two expl3 tests without the optional resource
+setting; the separate focused run with that setting passed all 14. This does
+not qualify the full Input baseline as passing.

@@ -51,6 +51,8 @@ private:
     bool ui_mode_;              // true = allocate DomElement/DomText (for layout/render/view)
     bool copying_view_ = false; // DOM occurrences copy owned markup as well as external values
     bool preserving_owned_content_ = false;
+    HashMap* dom_contract_copies_ = nullptr;
+    bool dom_contract_copy_failed_ = false;
 
 public:
     /**
@@ -308,6 +310,10 @@ private:
     Item deep_copy_typed(lam::ItemOf<Tag> item);
 
     Item deep_copy_unknown(Item item);
+    Type* copy_dom_contract(const Type* source);
+    Type* copy_dom_contract_inner(const Type* source);
+    TypeParam* copy_dom_parameter(const TypeParam* source);
+    bool copy_dom_field(ShapeEntry* target, const ShapeEntry* source);
 
     struct DeepCopyVisitor {
         MarkBuilder* builder;

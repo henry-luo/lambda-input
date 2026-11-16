@@ -1,3 +1,4 @@
+#include "lib/re2_glue.hpp"
 #include <gtest/gtest.h>
 #include "lambda/input/css/dom_element.hpp"
 #include "lambda/input/css/dom_xml_serializer.h"
@@ -210,10 +211,12 @@ TEST(InputDomNativeTest, CopiedTreeOwnsForeignFieldTypeContract) {
         const LaneStorageDesc* storage = shape_entry_storage(copied_type->shape);
         EXPECT_FALSE(pool_owns(source_pool, storage->semantic_contract));
         EXPECT_FALSE(pool_owns(source_pool, storage->base_contract));
+        pool_destroy(source_pool);
+        EXPECT_STREQ(ElementReader(dom_element_backing(root)).get_attr("id").cstring(), "source");
+        ASSERT_TRUE(root->set_attribute("added", "safe"));
         EXPECT_STREQ(ElementReader(dom_element_backing(root)).get_attr("id").cstring(), "source");
         dom_document_destroy(document);
         pool_destroy(document_pool);
-        pool_destroy(source_pool);
     }
 }
 
@@ -256,12 +259,14 @@ TEST(InputDomNativeTest, CopiedTreeOwnsForeignNullableFieldContractGraph) {
         EXPECT_FALSE(pool_owns(source_pool, copied_type->shape->type));
         EXPECT_FALSE(pool_owns(source_pool, storage->semantic_contract));
         EXPECT_FALSE(pool_owns(source_pool, storage->base_contract));
+        pool_destroy(source_pool);
         ItemReader value = ElementReader(dom_element_backing(root)).get_attr("count");
         EXPECT_TRUE(value.isInt());
         EXPECT_EQ(value.asInt(), 7);
+        ASSERT_TRUE(root->set_attribute("added", "safe"));
+        EXPECT_EQ(ElementReader(dom_element_backing(root)).get_attr("count").asInt(), 7);
         dom_document_destroy(document);
         pool_destroy(document_pool);
-        pool_destroy(source_pool);
     }
 }
 
@@ -696,4 +701,150 @@ TEST(InputDomNativeTest, SerializesSvgNamespacesAndEscapesAttributesWithoutRunti
     strbuf_free(output);
     dom_document_destroy(document);
     pool_destroy(pool);
+}
+
+
+TEST(InputDomNativeTest, CopiedTreeRetainsRecursiveContractsAndNominalIdentity) {
+    for (bool ui_mode : {false, true}) {
+        SCOPED_TRACE(ui_mode);
+        Pool* source_pool = pool_create();
+        Pool* document_pool = pool_create();
+        Input* source_input = Input::create(source_pool);
+        Input* document_input = Input::create(document_pool);
+        ASSERT_NE(source_input, nullptr); ASSERT_NE(document_input, nullptr);
+        document_input->ui_mode = ui_mode;
+        // the evaluation owns the nominal record separately from document storage.
+        TypeNominal identity = {};
+        MarkBuilder builder(source_input);
+        Item value = builder.map().put("value", (int64_t)7).final();
+        Item source = builder.element("div").attr("left", value).attr("right", value).final();
+        TypeElmt* source_type = elmt_clone_type_for_mutation(source.element, source_pool, true);
+        ASSERT_NE(source_type, nullptr);
+        TypeMap* record = (TypeMap*)alloc_type(source_pool, LMD_TYPE_MAP, sizeof(TypeMap));
+        TypeUnary* optional = (TypeUnary*)alloc_type_kind(source_pool, TYPE_KIND_UNARY, sizeof(TypeUnary));
+        ASSERT_NE(record, nullptr); ASSERT_NE(optional, nullptr);
+        optional->op = OPERATOR_OPTIONAL; optional->operand = record;
+        record->is_nominal = true; record->nominal = &identity;
+        record->struct_name = pool_strdup(source_pool, "RecursiveRecord");
+        ShapeEntry* next = alloc_shape_entry(source_pool, builder.createString("next"), LMD_TYPE_MAP, nullptr);
+        ASSERT_NE(next, nullptr);
+        shape_entry_set_type(next, optional);
+        record->shape = record->last = next; record->length = 1;
+        record->byte_size = shape_entry_storage_size(next);
+        shape_entry_set_type(source_type->shape, optional);
+        shape_entry_set_type(typemap_next_field(source_type, source_type->shape), optional);
+        TypeList* content = (TypeList*)alloc_type(source_pool, LMD_TYPE_ARRAY, sizeof(TypeList));
+        ASSERT_NE(content, nullptr);
+        content->nested = record;
+        source_type->content_list = content;
+        DomDocument* document = dom_document_create(document_input);
+        ASSERT_NE(document, nullptr);
+        DomElement* root = build_dom_tree_from_element(source.element, document, nullptr);
+        ASSERT_NE(root, nullptr);
+        TypeElmt* copied = (TypeElmt*)dom_element_backing(root)->type;
+        ASSERT_NE(copied, nullptr);
+        TypeUnary* copied_optional = (TypeUnary*)copied->shape->type;
+        TypeMap* copied_record = (TypeMap*)copied_optional->operand;
+        EXPECT_NE(copied_optional, optional); EXPECT_NE(copied_record, record);
+        EXPECT_EQ(typemap_next_field(copied, copied->shape)->type, copied_optional);
+        EXPECT_EQ(copied_record->shape->type, copied_optional);
+        EXPECT_EQ(copied->content_list->nested, copied_record);
+        EXPECT_EQ(copied_record->nominal, &identity);
+        EXPECT_EQ(shape_entry_storage(copied->shape)->base_contract, copied_record);
+        EXPECT_EQ(shape_entry_storage(copied_record->shape)->semantic_contract, copied_optional);
+        pool_destroy(source_pool);
+        EXPECT_STREQ(copied_record->struct_name, "RecursiveRecord");
+        EXPECT_EQ(copied_record->shape->name->length, 4u);
+        EXPECT_EQ(memcmp(copied_record->shape->name->str, "next", 4), 0);
+        EXPECT_TRUE(copied_record->is_nominal);
+        EXPECT_EQ(copied_record->nominal, &identity);
+        ASSERT_TRUE(root->set_attribute("added", "safe"));
+        EXPECT_TRUE(ElementReader(dom_element_backing(root)).get_attr("left").isMap());
+        dom_document_destroy(document);
+        pool_destroy(document_pool);
+    }
+}
+
+
+static void input_dom_test_release_regex(void* value) {
+    lam::re2_glue_release((re2::RE2*)value);
+}
+
+TEST(InputDomNativeTest, CopiedTreeOwnsTypeValuesAndPatternResources) {
+    Pool* source_pool = pool_create();
+    Pool* document_pool = pool_create();
+    Input* source_input = Input::create(source_pool);
+    Input* document_input = Input::create(document_pool);
+    ASSERT_NE(source_input, nullptr); ASSERT_NE(document_input, nullptr);
+    MarkBuilder builder(source_input);
+    TypeBinary* union_type = (TypeBinary*)alloc_type_kind(source_pool, TYPE_KIND_BINARY, sizeof(TypeBinary));
+    TypePattern* pattern = (TypePattern*)alloc_type_kind(source_pool, TYPE_KIND_PATTERN, sizeof(TypePattern));
+    ASSERT_NE(union_type, nullptr); ASSERT_NE(pattern, nullptr);
+    union_type->op = OPERATOR_UNION; union_type->left = &TYPE_NUMBER; union_type->right = &TYPE_ANY_NO_NULL;
+    pattern->source = builder.createString("x+");
+    pattern->regex_source = builder.createString("^x+$");
+    pattern->re2 = lam::re2_glue_compile(pattern->regex_source->chars, pattern->regex_source->len,
+        lam::re2_glue_default_options(), "dom-contract-test");
+    ASSERT_NE(pattern->re2, nullptr);
+    ASSERT_TRUE(re2::RE2::FullMatch("xxx", *pattern->re2));
+    ASSERT_TRUE(pool_add_cleanup(source_pool, input_dom_test_release_regex, pattern->re2));
+    Item source = builder.element("div").attr("contract", Item{.type = union_type})
+        .attr("pattern", Item{.type = pattern}).attr("simple", builder.createMetaType(LMD_TYPE_STRING)).final();
+    ASSERT_EQ(get_type_id(ElementReader(source.element).get_attr("contract").item()), LMD_TYPE_TYPE);
+    ASSERT_EQ(get_type_id(ElementReader(source.element).get_attr("pattern").item()), LMD_TYPE_TYPE);
+    DomDocument* document = dom_document_create(document_input);
+    ASSERT_NE(document, nullptr);
+    DomElement* root = build_dom_tree_from_element(source.element, document, nullptr);
+    ASSERT_NE(root, nullptr);
+    ElementReader reader(dom_element_backing(root));
+    ASSERT_EQ(get_type_id(reader.get_attr("contract").item()), LMD_TYPE_TYPE);
+    ASSERT_EQ(get_type_id(reader.get_attr("pattern").item()), LMD_TYPE_TYPE);
+    TypeBinary* copied = (TypeBinary*)reader.get_attr("contract").item().type;
+    TypePattern* copied_pattern = (TypePattern*)reader.get_attr("pattern").item().type;
+    ASSERT_NE(copied, nullptr); ASSERT_NE(copied_pattern, nullptr);
+    EXPECT_NE(copied, union_type); EXPECT_NE(copied_pattern, pattern);
+    EXPECT_NE(copied_pattern->re2, pattern->re2);
+    pool_destroy(source_pool);
+    EXPECT_EQ(copied->left, &TYPE_NUMBER); EXPECT_EQ(copied->right, &TYPE_ANY_NO_NULL);
+    EXPECT_EQ(copied->op, OPERATOR_UNION);
+    EXPECT_STREQ(copied_pattern->source->chars, "x+");
+    EXPECT_TRUE(re2::RE2::FullMatch("xxx", *copied_pattern->re2));
+    EXPECT_FALSE(re2::RE2::FullMatch("y", *copied_pattern->re2));
+    TypeType* simple = (TypeType*)reader.get_attr("simple").item().type;
+    ASSERT_NE(simple, nullptr); ASSERT_NE(simple->type, nullptr);
+    EXPECT_EQ(simple->type->type_id, LMD_TYPE_STRING);
+    EXPECT_TRUE(simple->type->is_literal);
+    dom_document_destroy(document); pool_destroy(document_pool);
+}
+
+
+TEST(InputDomNativeTest, CopiedNominalTypeValueKeepsItsDeclaredLayout) {
+    Pool* source_pool = pool_create();
+    Pool* document_pool = pool_create();
+    Input* source_input = Input::create(source_pool);
+    Input* document_input = Input::create(document_pool);
+    MarkBuilder builder(source_input);
+    TypeNominal identity = {};
+    TypeObject* declared = (TypeObject*)alloc_type(source_pool, LMD_TYPE_MAP, sizeof(TypeObject));
+    ASSERT_NE(declared, nullptr);
+    String* name = builder.createName("Record");
+    declared->type_name = declared->name = {name->chars, name->len};
+    declared->is_trusted_contract = true; declared->is_nominal = true; declared->nominal = &identity;
+    TypeType* wrapper = (TypeType*)alloc_type(source_pool, LMD_TYPE_TYPE, sizeof(TypeType));
+    ASSERT_NE(wrapper, nullptr);
+    wrapper->type = declared;
+    Item source = builder.element("div").attr("declared", Item{.type = wrapper}).final();
+    DomDocument* document = dom_document_create(document_input);
+    ASSERT_NE(document, nullptr);
+    DomElement* root = build_dom_tree_from_element(source.element, document, nullptr);
+    ASSERT_NE(root, nullptr);
+    TypeType* copied_wrapper = (TypeType*)ElementReader(dom_element_backing(root)).get_attr("declared").item().type;
+    TypeObject* copied = (TypeObject*)copied_wrapper->type;
+    ASSERT_NE(copied, nullptr); EXPECT_NE(copied, declared);
+    pool_destroy(source_pool);
+    EXPECT_TRUE(copied->is_trusted_contract); EXPECT_EQ(copied->nominal, &identity);
+    EXPECT_EQ(copied->type_name.length, 6u); EXPECT_EQ(memcmp(copied->type_name.str, "Record", 6), 0);
+    EXPECT_EQ(copied->name.length, 6u); EXPECT_EQ(memcmp(copied->name.str, "Record", 6), 0);
+    EXPECT_EQ(copied->base, nullptr); EXPECT_EQ(copied->methods, nullptr);
+    dom_document_destroy(document); pool_destroy(document_pool);
 }

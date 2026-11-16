@@ -42,6 +42,8 @@ struct ArchiveEntry {
     uint64_t data_offset;
     uint64_t local_offset;
     uint64_t record_end;
+    uint64_t central_record_offset;
+    uint64_t central_record_size;
     uint32_t crc;
     uint32_t mode;
     uint32_t index;
@@ -68,6 +70,8 @@ struct Archive {
     ArchiveBudget* budget;
     uint64_t index_bytes;
     uint64_t central_offset;
+    uint64_t comment_offset;
+    uint16_t comment_length;
     uint64_t decompressions;
     uint32_t depth;
     bool zip64;

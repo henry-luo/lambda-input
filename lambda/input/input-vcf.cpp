@@ -144,12 +144,6 @@ void parse_vcf(Input* input, const char* vcf_string) {
             continue;
         }
 
-        // Skip lines that start with whitespace if we're not in a vCard
-        if (!in_vcard && is_folded_line(vcf)) {
-            skip_to_newline(&vcf);
-            continue;
-        }
-
         // Parse property name
         String* property_name = parse_property_name(ctx, &vcf);
         if (!property_name) {
@@ -181,12 +175,9 @@ void parse_vcf(Input* input, const char* vcf_string) {
 
         // Handle vCard start and end
         if (strcmp(property_name->chars, "begin") == 0) {
-            if (str_ieq_cstr(property_value->chars, "VCARD")) {
-                if (in_vcard) {
-                    finish_vcf_contact(ctx, contacts, contact_map, properties_map, entries);
-                    contact_count++;
-                    in_vcard = false;
-                }
+            if (!str_ieq_cstr(property_value->chars, "VCARD") || in_vcard || has_parameters) {
+                ctx.addError("vCard has an invalid or nested BEGIN");
+            } else {
                 contact_map = map_pooled(input->pool);
                 properties_map = map_pooled(input->pool);
                 entries = rfc_new_entry_list(input);
@@ -205,11 +196,18 @@ void parse_vcf(Input* input, const char* vcf_string) {
                 finish_vcf_contact(ctx, contacts, contact_map, properties_map, entries);
                 contact_count++;
                 in_vcard = false;
+            } else {
+                ctx.addError("vCard END does not match an open VCARD");
             }
+            if (has_parameters) ctx.addError("vCard END must not have parameters");
             continue;
         }
 
-        if (!in_vcard) continue;
+        // uncontained properties cannot be represented in the contact result.
+        if (!in_vcard) {
+            ctx.addError("vCard property outside VCARD");
+            continue;
+        }
 
         // Store raw property in properties map
         Item prop_value = {.item = s2it(property_value)};
@@ -282,10 +280,9 @@ void parse_vcf(Input* input, const char* vcf_string) {
         }
     }
 
-    if (in_vcard) {
-        finish_vcf_contact(ctx, contacts, contact_map, properties_map, entries);
-        contact_count++;
-    }
+    // an unfinished card must not be returned as if it were complete.
+    if (in_vcard) ctx.addError("vCard is missing END:VCARD");
+    if (!contact_count) ctx.addError("vCard document has no complete VCARD");
 
     if (contact_count == 1) {
         // Single-card callers keep their existing named-field view.

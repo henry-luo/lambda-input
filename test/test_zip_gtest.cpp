@@ -7,6 +7,7 @@
 #include "lib/endian.h"
 #include "lib/memtrack.h"
 #include "lib/log.h"
+#include "lib/datetime.h"
 
 class ZipTest : public ::testing::Test {
 protected:
@@ -740,4 +741,129 @@ TEST_F(ZipTest, NativeTreeZipConversionPreservesModeAndRepresentableTime) {
     uint32_t time = (22u << 11) | (13u << 5) | 10u;
     EXPECT_EQ(entry->dos_time, (date << 16) | time);
     archive_release(zip); strbuf_free(output);
+}
+
+
+TEST_F(ZipTest, ConstructedEntriesPreserveAndValidateMetadata) {
+    Input* input = InputManager::create_input(nullptr);
+    ASSERT_NE(input, nullptr);
+    MarkBuilder builder(input);
+    DateTime* date = datetime_parse_iso8601(input->pool, "2020-01-02T03:04:07Z");
+    ASSERT_NE(date, nullptr);
+    Item modified = builder.createDateTime(*date);
+    Item file = builder.element("fs").attr("name", "data.xml").attr("kind", "file")
+        .attr("mode", (int64_t)0600).attr("modified", modified).text("edited").final();
+    Item dir = builder.element("fs").attr("name", "word").attr("kind", "dir")
+        .attr("mode", (int64_t)0750).attr("modified", modified).child(file).final();
+    Item tree = builder.element("fs").attr("kind", "dir").child(dir).final();
+    StrBuf* output = strbuf_new();
+    ASSERT_TRUE(fs_zip_encode(tree, nullptr, output, &error)) << error.message;
+    Archive* zip = zip_archive_open(output->str, output->length, nullptr, nullptr, 0, &error);
+    ASSERT_NE(zip, nullptr) << error.message;
+    uint32_t date_bits = ((2020u - 1980) << 9) | (1u << 5) | 2u;
+    uint32_t time_bits = (3u << 11) | (4u << 5) | 3u;
+    ArchiveEntry* result = archive_entry(zip, find(zip, "word/data.xml"));
+    ArchiveEntry* folder = archive_entry(zip, find(zip, "word"));
+    ASSERT_NE(result, nullptr); ASSERT_NE(folder, nullptr);
+    EXPECT_EQ(result->dos_time, (date_bits << 16) | time_bits);
+    EXPECT_EQ(folder->dos_time, result->dos_time);
+    EXPECT_EQ(result->mode, 0100600u); EXPECT_EQ(folder->mode, 0040750u);
+    archive_release(zip);
+    Item implicit = builder.element("fs").attr("name", "word").attr("kind", "dir")
+        .attr("explicit_dir", false).child(file).final();
+    Item implicit_tree = builder.element("fs").attr("kind", "dir").child(implicit).final();
+    ASSERT_TRUE(fs_zip_encode(implicit_tree, nullptr, output, &error)) << error.message;
+    zip = zip_archive_open(output->str, output->length, nullptr, nullptr, 0, &error);
+    ASSERT_NE(zip, nullptr);
+    folder = archive_entry(zip, find(zip, "word"));
+    ASSERT_NE(folder, nullptr); EXPECT_FALSE(folder->explicit_directory);
+    archive_release(zip);
+    Item wrong_type = builder.element("fs").attr("name", "bad").attr("kind", "file")
+        .attr("modified", "not a datetime").text("x").final();
+    EXPECT_FALSE(fs_zip_encode(wrong_type, nullptr, output, &error));
+    DateTime* before_zip = datetime_parse_iso8601(input->pool, "1979-12-31T23:59:59Z");
+    ASSERT_NE(before_zip, nullptr);
+    Item out_of_range = builder.element("fs").attr("name", "bad").attr("kind", "file")
+        .attr("modified", builder.createDateTime(*before_zip)).text("x").final();
+    EXPECT_FALSE(fs_zip_encode(out_of_range, nullptr, output, &error));
+    Item raw_mode = builder.element("fs").attr("name", "raw").attr("kind", "file")
+        .attr("mode", (int64_t)0600).attr("archive_mode", (int64_t)0600).text("x").final();
+    ASSERT_TRUE(fs_zip_encode(raw_mode, nullptr, output, &error)) << error.message;
+    zip = zip_archive_open(output->str, output->length, nullptr, nullptr, 0, &error);
+    ASSERT_NE(zip, nullptr);
+    result = archive_entry(zip, find(zip, "raw"));
+    ASSERT_NE(result, nullptr); EXPECT_EQ(result->mode, 0600u);
+    archive_release(zip);
+    Item conflicting = builder.element("fs").attr("name", "bad").attr("kind", "file")
+        .attr("mode", (int64_t)0600).attr("archive_mode", (int64_t)0100644).text("x").final();
+    EXPECT_FALSE(fs_zip_encode(conflicting, nullptr, output, &error));
+    Item invalid_mode = builder.element("fs").attr("name", "bad").attr("kind", "dir")
+        .attr("mode", (int64_t)-1).final();
+    Item invalid_tree = builder.element("fs").attr("kind", "dir").child(invalid_mode).final();
+    EXPECT_FALSE(fs_zip_encode(invalid_tree, nullptr, output, &error));
+    strbuf_free(output);
+}
+
+
+TEST_F(ZipTest, PreservingOutputRetainsOriginalRecordsAndOrder) {
+    const char* fixtures[] = {"test/input/zip/sample.jar", "test/input/zip/wide.zip",
+        "test/input/zip/descriptor-signed.zip"};
+    for (const char* fixture : fixtures) {
+        Archive* initial = open(fixture);
+        ASSERT_NE(initial, nullptr) << error.message;
+        StrBuf* captured = strbuf_new();
+        ASSERT_TRUE(zip_append_bytes(captured, initial->snapshot->data, initial->snapshot->capacity,
+            archive_default_limits().archive_bytes, &error));
+        // Add an EOCD comment to each original without changing its member records.
+        write_le16((uint8_t*)captured->str + captured->length - 2, 7);
+        strbuf_append_str(captured, "comment");
+        Archive* original = zip_archive_open(captured->str, captured->length, nullptr, nullptr, 0, &error);
+        archive_release(initial); strbuf_free(captured);
+        ASSERT_NE(original, nullptr) << error.message;
+        ArrayList* entries = arraylist_new(original->entries->length);
+        // Reverse the input so the writer must restore central directory order.
+        for (int i = original->entries->length - 1; i > 0; i--) {
+            ArchiveEntry* member = archive_entry(original, i);
+            if (member->directory && !member->explicit_directory) continue;
+            ByteSpan data = {};
+            if (!member->directory) ASSERT_TRUE(archive_member_bytes(original, i, &data, &error));
+            ZipOutputEntry* entry = (ZipOutputEntry*)mem_calloc(1, sizeof(ZipOutputEntry), MEM_CAT_TEMP);
+            ASSERT_NE(entry, nullptr);
+            entry->path = member->path; entry->directory = member->directory;
+            entry->bytes = member->directory ? nullptr : byte_span_data(&data);
+            entry->length = member->size; entry->mode = member->mode;
+            entry->original_archive = original; entry->original_index = i; entry->raw_copy = true;
+            ASSERT_TRUE(arraylist_append(entries, entry));
+        }
+        ZipWriteOptions options = zip_default_write_options();
+        options.preserve_archive = original;
+        StrBuf* output = strbuf_new();
+        ASSERT_TRUE(zip_write_entries(entries, &options, output, &error)) << error.message;
+        Archive* result = zip_archive_open(output->str, output->length, nullptr, nullptr, 0, &error);
+        ASSERT_NE(result, nullptr) << error.message;
+        ASSERT_EQ(result->comment_length, 7u);
+        EXPECT_EQ(memcmp(result->snapshot->data + result->comment_offset, "comment", 7), 0);
+        for (int i = 0; i < entries->length; i++) {
+            ZipOutputEntry* entry = (ZipOutputEntry*)entries->data[i];
+            ArchiveEntry* before = archive_entry(original, entry->original_index);
+            ArchiveEntry* after = archive_entry(result, find(result, entry->path));
+            ASSERT_NE(after, nullptr);
+            EXPECT_EQ(after->source_index, before->source_index);
+            ASSERT_EQ(after->record_end - after->local_offset, before->record_end - before->local_offset);
+            EXPECT_EQ(memcmp(original->snapshot->data + before->local_offset,
+                result->snapshot->data + after->local_offset, before->record_end - before->local_offset), 0);
+            ASSERT_EQ(after->central_record_size, before->central_record_size);
+            const uint8_t* old_record = original->snapshot->data + before->central_record_offset;
+            const uint8_t* new_record = result->snapshot->data + after->central_record_offset;
+            EXPECT_EQ(memcmp(old_record, new_record, 42), 0);
+            // ZIP64 may store the changed local offset in its extra field.
+            if (read_le32(old_record + 42) != UINT32_MAX)
+                EXPECT_EQ(memcmp(old_record + 46, new_record + 46, before->central_record_size - 46), 0);
+        }
+        options.deterministic = true;
+        EXPECT_FALSE(zip_write_entries(entries, &options, output, &error));
+        archive_release(result); strbuf_free(output);
+        for (int i = 0; i < entries->length; i++) mem_free(entries->data[i]);
+        arraylist_free(entries); archive_release(original);
+    }
 }

@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 #include "lambda/input/input-tex.hpp"
+#include "lambda/input/input-latex-scanner.h"
+#include "lib/str.h"
+#include <locale.h>
 #include "lambda/io/security_io.h"
 #include <errno.h>
 #include <stdio.h>
@@ -343,6 +346,45 @@ TEST_F(TexEngineTest, ParameterlessRecursionStillUsesTheExpansionBudget) {
     ASSERT_EQ(result.diagnostic_count, 1U);
     EXPECT_STREQ(result.diagnostics[0].code, "tex-budget");
     tex::engine_destroy(engine);
+}
+
+} // namespace
+
+namespace {
+
+// LC_CTYPE is process-global; restore it even if an assertion returns early.
+class ScopedScannerLocale {
+    char* saved;
+public:
+    ScopedScannerLocale() {
+        const char* current = setlocale(LC_CTYPE, nullptr);
+        saved = current ? str_dup(current, strlen(current)) : nullptr;
+    }
+    ~ScopedScannerLocale() { if (saved) setlocale(LC_CTYPE, saved); free(saved); }
+    bool valid() const { return saved != nullptr; }
+};
+
+TEST(LatexScannerTest, CommandNameClassificationIsLocaleIndependent) {
+    ScopedScannerLocale restore;
+    ASSERT_TRUE(restore.valid());
+    const char* locales[] = {"C", "C.UTF-8", "en_US.UTF-8", "fr_FR.UTF-8", "fr_FR.ISO8859-1"};
+    for (const char* locale_name : locales) {
+        if (!setlocale(LC_CTYPE, locale_name)) continue;
+        SCOPED_TRACE(locale_name);
+        for (unsigned int byte = 0; byte <= 255; byte++) {
+            SCOPED_TRACE(byte);
+            const char source[] = {'\\', (char)byte, 'A', '@', 'x'};
+            char name[16] = {}, full[16] = {};
+            size_t end = latex_scan_command(source, sizeof(source), 0, name, sizeof(name), full, sizeof(full));
+            // This literal is the scanner's ASCII command-name contract.
+            bool letter = byte != 0 && strchr("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@", (int)byte) != nullptr;
+            EXPECT_EQ(end, letter ? 5u : 2u);
+            EXPECT_EQ((unsigned char)name[0], byte);
+            EXPECT_EQ((unsigned char)full[1], byte);
+            EXPECT_EQ(name[letter ? 4 : 1], '\0');
+            EXPECT_EQ(full[letter ? 5 : 2], '\0');
+        }
+    }
 }
 
 } // namespace

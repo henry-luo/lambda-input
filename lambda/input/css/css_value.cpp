@@ -2079,6 +2079,7 @@ static const CssEnumInfo css_value_definitions[] = {
     {"ns-resize", 9, CSS_VALUE_NS_RESIZE, CSS_VALUE_GROUP_CURSOR},
     {"japanese-informal", 17, CSS_VALUE_JAPANESE_INFORMAL, CSS_VALUE_GROUP_LIST_STYLE_TYPE},
     {"cjk-decimal", 11, CSS_VALUE_CJK_DECIMAL, CSS_VALUE_GROUP_LIST_STYLE_TYPE},
+    {"margin-box", 10, CSS_VALUE_MARGIN_BOX, CSS_VALUE_GROUP_BOX_MODEL},
 };
 
 static const size_t css_value_definitions_count = sizeof(css_value_definitions) / sizeof(css_value_definitions[0]);

@@ -36,11 +36,16 @@ public:
         // Subsection: .SS "Subsection"
         if (line[0] != '.') return info;
 
-        if (strncmp(line, ".TH ", 4) == 0) {
+        if (strncmp(line, ".TH", 3) == 0 && (line[3] == ' ' || line[3] == '\t')) {
             info.level = 1;
             info.text_start = line + 4;
+            while (*info.text_start == ' ' || *info.text_start == '\t') info.text_start++;
+            // the title is the first roff argument; quoted arguments may contain spaces.
+            bool quoted = *info.text_start == '"';
+            if (quoted) info.text_start++;
             info.text_end = info.text_start;
-            while (*info.text_end && !str_is_space(*info.text_end)) info.text_end++;
+            while (*info.text_end && *info.text_end != '\n' && *info.text_end != '\r' &&
+                    (quoted ? *info.text_end != '"' : !str_is_space(*info.text_end))) info.text_end++;
             info.valid = true;
             return info;
         } else if (strncmp(line, ".SH", 3) == 0) {

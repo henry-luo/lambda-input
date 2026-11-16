@@ -425,6 +425,9 @@
     X(r) \
     X(rx) \
     X(ry) \
+    X(shape_outside) \
+    X(shape_margin) \
+    X(shape_image_threshold) \
     X(css_float)
 
 #define CSS_STYLE_PROPERTIES_ATTRIBUTES(X) \
@@ -1211,6 +1214,12 @@
     X(r, "r", "r") \
     X(rx, "rx", "rx") \
     X(ry, "ry", "ry") \
+    X(shape_outside, "shapeOutside", "shape-outside") \
+    X(shape_outside, "shape-outside", "shape-outside") \
+    X(shape_margin, "shapeMargin", "shape-margin") \
+    X(shape_margin, "shape-margin", "shape-margin") \
+    X(shape_image_threshold, "shapeImageThreshold", "shape-image-threshold") \
+    X(shape_image_threshold, "shape-image-threshold", "shape-image-threshold") \
     X(css_float, "cssFloat", "float")
 
 #define CSS_FONT_FACE_DESCRIPTORS_FIELDS(X) \

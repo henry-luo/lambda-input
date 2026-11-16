@@ -5,30 +5,80 @@
 #include "input-context.hpp"
 #include "input-utils.hpp"
 #include "source_tracker.hpp"
+#include "lib/hashmap_typed.hpp"
 
 using namespace lambda;
 
 static const int TOML_MAX_DEPTH = 512;
 
+// table declarations and inline values have different redefinition rules.
+enum TomlNodeKind { TOML_UNTRACKED, TOML_IMPLICIT, TOML_DOTTED, TOML_DECLARED, TOML_INLINE, TOML_TABLE_ARRAY };
+struct TomlNodeState { const void* node; TomlNodeKind kind; };
+using TomlNodeMap = TypedHashMap<TomlNodeState,
+    HashMapPointerMemberKeyOps<TomlNodeState, &TomlNodeState::node>>;
+struct TomlContext : InputContext {
+    struct hashmap* nodes;
+    TomlContext(Input* input, const char* source) : InputContext(input, source, strlen(source)),
+        nodes(TomlNodeMap::create(16)) { if (!nodes) addError("TOML table tracking allocation failed"); }
+    ~TomlContext() { hashmap_free(nodes); }
+    TomlNodeKind kind(const void* node) const {
+        TomlNodeState key = {node, TOML_UNTRACKED};
+        const TomlNodeState* found = nodes ? TomlNodeMap::get(nodes, key) : nullptr;
+        return found ? found->kind : TOML_UNTRACKED;
+    }
+    void track(const void* node, TomlNodeKind kind) {
+        if (nodes) {
+            TomlNodeMap::set(nodes, {node, kind});
+            if (TomlNodeMap::oom(nodes)) addError("TOML table tracking allocation failed");
+        }
+    }
+};
+
+static bool toml_put_unique(TomlContext& ctx, Map* owner, String* key, Item value) {
+    if (ctx.kind(owner) == TOML_INLINE || MapReader(owner).has(key->chars)) {
+        ctx.addError("TOML key is already defined or its table is sealed");
+        return false;
+    }
+    ctx.builder.putToMap(lam::gc_borrow(owner), key, value);
+    return true;
+}
+
+// underscores separate digits, and cannot border a sign, prefix, point or exponent.
+static bool toml_scan_digits(const char** cursor, int base) {
+    const char* first = *cursor;
+    bool digit = false;
+    while (**cursor) {
+        int value = str_hex_val(**cursor);
+        if (value >= 0 && value < base) { digit = true; (*cursor)++; }
+        else if (**cursor == '_') {
+            int next = str_hex_val((*cursor)[1]);
+            if (!digit || next < 0 || next >= base) return false;
+            digit = false;
+            (*cursor)++;
+        } else break;
+    }
+    return digit && *cursor > first;
+}
+
 // Forward declarations
-static Item parse_value(InputContext& ctx, const char **toml, int *line_num, int depth = 0);
-static Array* parse_array(InputContext& ctx, const char **toml, int *line_num, int depth = 0);
-static Map* parse_inline_table(InputContext& ctx, const char **toml, int *line_num, int depth = 0);
-static bool parse_dotted_key(InputContext& ctx, const char **toml, Map** owner, String** key);
-static String* parse_bare_key(InputContext& ctx, const char **toml);
-static String* parse_quoted_key(InputContext& ctx, const char **toml);
-static String* parse_literal_key(InputContext& ctx, const char **toml);
-static String* parse_key(InputContext& ctx, const char **toml);
-static String* parse_basic_string(InputContext& ctx, const char **toml);
-static String* parse_literal_string(InputContext& ctx, const char **toml);
-static String* parse_multiline_basic_string(InputContext& ctx, const char **toml, int *line_num);
-static String* parse_multiline_literal_string(InputContext& ctx, const char **toml, int *line_num);
-static Item parse_number(InputContext& ctx, const char **toml);
-static bool handle_escape_sequence(InputContext& ctx, StringBuf* sb, const char **toml, bool is_multiline, int *line_num);
+static Item parse_value(TomlContext& ctx, const char **toml, int *line_num, int depth = 0);
+static Array* parse_array(TomlContext& ctx, const char **toml, int *line_num, int depth = 0);
+static Map* parse_inline_table(TomlContext& ctx, const char **toml, int *line_num, int depth = 0);
+static bool parse_dotted_key(TomlContext& ctx, const char **toml, Map** owner, String** key, bool header = false);
+static String* parse_bare_key(TomlContext& ctx, const char **toml);
+static String* parse_quoted_key(TomlContext& ctx, const char **toml);
+static String* parse_literal_key(TomlContext& ctx, const char **toml);
+static String* parse_key(TomlContext& ctx, const char **toml);
+static String* parse_basic_string(TomlContext& ctx, const char **toml);
+static String* parse_literal_string(TomlContext& ctx, const char **toml);
+static String* parse_multiline_basic_string(TomlContext& ctx, const char **toml, int *line_num);
+static String* parse_multiline_literal_string(TomlContext& ctx, const char **toml, int *line_num);
+static Item parse_number(TomlContext& ctx, const char **toml);
+static bool handle_escape_sequence(TomlContext& ctx, StringBuf* sb, const char **toml, bool is_multiline, int *line_num);
 
 // Common function to handle escape sequences in strings
 // is_multiline: true for multiline basic strings, false for regular strings
-static bool handle_escape_sequence(InputContext& ctx, StringBuf* sb, const char **toml, bool is_multiline, int *line_num) {
+static bool handle_escape_sequence(TomlContext& ctx, StringBuf* sb, const char **toml, bool is_multiline, int *line_num) {
     SourceTracker& tracker = ctx.tracker;
 
     if (**toml != '\\') return false;
@@ -45,43 +95,21 @@ static bool handle_escape_sequence(InputContext& ctx, StringBuf* sb, const char 
         case 'n': stringbuf_append_char(sb, '\n'); break;
         case 'r': stringbuf_append_char(sb, '\r'); break;
         case 't': stringbuf_append_char(sb, '\t'); break;
-        case 'u': {
-            (*toml)++; // skip 'u'
-            tracker.advance(1);
-
-            uint32_t codepoint = 0;
-            size_t consumed = 0;
-            // bounded like parse_escape_char: the decoder reads at most 10 bytes
-            if (!escape_decode_utf16_escape(*toml, strnlen(*toml, 10), false,
-                                            &codepoint, &consumed)) {
-                ctx.addError(esc_loc, "Invalid \\u escape sequence: expected 4 hex digits");
-                return false;
-            }
-            *toml += consumed;
-            tracker.advance((int)consumed);
-            if (codepoint >= 0xD800 && codepoint <= 0xDBFF) codepoint = 0xFFFD;
-            stringbuf_append_utf8(sb, codepoint);
-            (*toml)--; // Back up one since we'll increment at end
-            tracker.advance(-1);
-        } break;
+        case 'u':
         case 'U': {
-            (*toml)++; // skip 'U'
+            int digits = **toml == 'u' ? 4 : 8;
+            (*toml)++;
             tracker.advance(1);
-
             const char* hex_start = *toml;
-            uint32_t codepoint = parse_hex_codepoint(toml, 8);
-            if (codepoint == 0xFFFFFFFF) {
-                ctx.addError(esc_loc, "Invalid \\U escape sequence: expected 8 hex digits");
+            uint32_t codepoint = parse_hex_codepoint(toml, digits);
+            tracker.advance(*toml - hex_start);
+            // toml encodes scalar values, not UTF-16 surrogate pairs.
+            if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+                ctx.addError(esc_loc, "TOML escape requires a Unicode scalar value and complete hex digits");
                 return false;
             }
-            tracker.advance((int)(*toml - hex_start));
-            if (codepoint > 0x10FFFF) {
-                ctx.addError(esc_loc, "Invalid Unicode codepoint: U+%08X exceeds maximum U+10FFFF", codepoint);
-                return false;
-            }
-
             stringbuf_append_utf8(sb, codepoint);
-            (*toml)--; // Back up one since we'll increment at end
+            (*toml)--;
             tracker.advance(-1);
         } break;
         case ' ':
@@ -89,47 +117,60 @@ static bool handle_escape_sequence(InputContext& ctx, StringBuf* sb, const char 
         case '\n':
         case '\r':
             if (is_multiline) {
-                // Line ending backslash - trim whitespace (only in multiline strings)
+                bool saw_line_break = false;
+                // a continuation needs a real line break, not only horizontal whitespace.
                 while (**toml && (**toml == ' ' || **toml == '\t' || **toml == '\n' || **toml == '\r')) {
-                    if (**toml == '\n' && line_num) {
-                        (*line_num)++;
+                    if (**toml == '\r' && (*toml)[1] != '\n') {
+                        ctx.addError(esc_loc, "Bare carriage return in TOML continuation");
+                        return false;
+                    }
+                    if (**toml == '\n') {
+                        saw_line_break = true;
+                        if (line_num) (*line_num)++;
                     }
                     (*toml)++;
                     tracker.advance(1);
                 }
+                if (!saw_line_break) {
+                    ctx.addError(esc_loc, "TOML continuation requires a line break");
+                    return false;
+                }
                 (*toml)--; // Back up one since we'll increment at end
                 tracker.advance(-1);
             } else {
-                ctx.addWarning(esc_loc, "Invalid escape sequence '\\%c' in string", **toml);
-                // Treat as literal backslash + character
-                stringbuf_append_char(sb, '\\');
-                stringbuf_append_char(sb, **toml);
+                ctx.addError(esc_loc, "Invalid TOML string escape");
+                return false;
             }
             break;
         default:
-            ctx.addWarning(esc_loc, "Unknown escape sequence '\\%c' in string", **toml);
-            stringbuf_append_char(sb, '\\');
-            stringbuf_append_char(sb, **toml);
-            break;
+            ctx.addError(esc_loc, "Unknown TOML string escape");
+            return false;
     }
     (*toml)++; // move to next character
     tracker.advance(1);
     return true;
 }
 
-static Item parse_prefixed_integer(InputContext& ctx, const char** toml, int base,
+static Item parse_prefixed_integer(TomlContext& ctx, const char** toml, int base,
                                    const char* kind, SourceLocation loc) {
     const char* start = *toml;
-    const char* end = nullptr;
-    Item result = parse_prefixed_integer_value(ctx, start, base, kind, loc, &end, true, true);
+    const char* end = start + 2;
+    if (!toml_scan_digits(&end, base)) {
+        ctx.addError(loc, "Invalid TOML prefixed integer digits");
+        return {.item = ITEM_ERROR};
+    }
+    // the shared exact integer reader takes contiguous digits.
+    StringBuf* token = ctx.sb;
+    stringbuf_reset(token);
+    for (const char* ch = start; ch < end; ch++) if (*ch != '_') stringbuf_append_char(token, *ch);
+    Item result = parse_prefixed_integer_value(ctx, token->str->chars, base, kind, loc, nullptr, true, true);
     if (result.item == ITEM_ERROR) return result;
-    size_t consumed = end - start;
     *toml = end;
-    ctx.tracker.advance(consumed);
+    ctx.tracker.advance(end - start);
     return result;
 }
 
-static String* parse_toml_single_line_string(InputContext& ctx, const char** toml,
+static String* parse_toml_single_line_string(TomlContext& ctx, const char** toml,
                                              char quote, bool allow_escapes,
                                              const char* label, const char* content_name);
 
@@ -161,7 +202,7 @@ static void skip_tab_pace_and_comments(const char **toml, int *line_num) {
     }
 }
 
-static String* parse_bare_key(InputContext& ctx, const char **toml) {
+static String* parse_bare_key(TomlContext& ctx, const char **toml) {
     SourceTracker& tracker = ctx.tracker;
     MarkBuilder* builder = &ctx.builder;
     StringBuf* sb = ctx.sb;
@@ -184,23 +225,23 @@ static String* parse_bare_key(InputContext& ctx, const char **toml) {
     return builder->createString(sb->str->chars, sb->length);
 }
 
-static String* parse_quoted_key(InputContext& ctx, const char **toml) {
+static String* parse_quoted_key(TomlContext& ctx, const char **toml) {
     return parse_toml_single_line_string(ctx, toml, '"', true, "quoted key", "key");
 }
 
-static String* parse_literal_key(InputContext& ctx, const char **toml) {
+static String* parse_literal_key(TomlContext& ctx, const char **toml) {
     return parse_toml_single_line_string(ctx, toml, '\'', false, "literal key", "key");
 }
 
-static String* parse_basic_string(InputContext& ctx, const char **toml) {
+static String* parse_basic_string(TomlContext& ctx, const char **toml) {
     return parse_toml_single_line_string(ctx, toml, '"', true, "basic string", "string");
 }
 
-static String* parse_literal_string(InputContext& ctx, const char **toml) {
+static String* parse_literal_string(TomlContext& ctx, const char **toml) {
     return parse_toml_single_line_string(ctx, toml, '\'', false, "literal string", "string");
 }
 
-static String* parse_toml_multiline_string(InputContext& ctx, const char **toml,
+static String* parse_toml_multiline_string(TomlContext& ctx, const char **toml,
                                            const char* delimiter, bool allow_escapes,
                                            const char* label, int *line_num) {
     SourceTracker& tracker = ctx.tracker;
@@ -227,8 +268,11 @@ static String* parse_toml_multiline_string(InputContext& ctx, const char **toml,
     bool found_closing = false;
     while (**toml) {
         if (strncmp(*toml, delimiter, 3) == 0) {
-            *toml += 3; // skip closing triple quotes
-            tracker.advance(3);
+            int quotes = 3;
+            while (quotes < 5 && (*toml)[quotes] == delimiter[0]) quotes++;
+            for (int i = 3; i < quotes; i++) stringbuf_append_char(sb, delimiter[0]);
+            *toml += quotes;
+            tracker.advance(quotes);
             found_closing = true;
             break;
         }
@@ -238,10 +282,19 @@ static String* parse_toml_multiline_string(InputContext& ctx, const char **toml,
                 return NULL;
             }
         } else {
-            if (**toml == '\n') {
-                (*line_num)++;
+            unsigned char ch = (unsigned char)**toml;
+            if ((ch < 0x20 && ch != '\t' && ch != '\n' && ch != '\r') || ch == 0x7F ||
+                    (ch == '\r' && (*toml)[1] != '\n')) {
+                ctx.addError(str_loc, "Unescaped control character in TOML multiline string");
+                return NULL;
             }
-            stringbuf_append_char(sb, **toml);
+            if (ch == '\r') {
+                (*toml)++;
+                tracker.advance(1);
+                ch = '\n';
+            }
+            if (ch == '\n') (*line_num)++;
+            stringbuf_append_char(sb, ch);
             (*toml)++;
             tracker.advance(1);
         }
@@ -255,17 +308,17 @@ static String* parse_toml_multiline_string(InputContext& ctx, const char **toml,
     return builder->createString(sb->str->chars, sb->length);
 }
 
-static String* parse_multiline_basic_string(InputContext& ctx, const char **toml, int *line_num) {
+static String* parse_multiline_basic_string(TomlContext& ctx, const char **toml, int *line_num) {
     return parse_toml_multiline_string(ctx, toml, "\"\"\"", true,
         "multiline basic string", line_num);
 }
 
-static String* parse_multiline_literal_string(InputContext& ctx, const char **toml, int *line_num) {
+static String* parse_multiline_literal_string(TomlContext& ctx, const char **toml, int *line_num) {
     return parse_toml_multiline_string(ctx, toml, "'''", false,
         "multiline literal string", line_num);
 }
 
-static String* parse_key(InputContext& ctx, const char **toml) {
+static String* parse_key(TomlContext& ctx, const char **toml) {
     if (**toml == '"') {
         return parse_quoted_key(ctx, toml);
     } else if (**toml == '\'') {
@@ -275,7 +328,7 @@ static String* parse_key(InputContext& ctx, const char **toml) {
     }
 }
 
-static String* parse_toml_single_line_string(InputContext& ctx, const char** toml,
+static String* parse_toml_single_line_string(TomlContext& ctx, const char** toml,
                                              char quote, bool allow_escapes,
                                              const char* label, const char* content_name) {
     SourceTracker& tracker = ctx.tracker;
@@ -300,7 +353,12 @@ static String* parse_toml_single_line_string(InputContext& ctx, const char** tom
             ctx.addError(str_loc, "Unterminated %s: newline in %s", label, content_name);
             return NULL;
         }
-        stringbuf_append_char(sb, **toml);
+        unsigned char ch = (unsigned char)**toml;
+        if ((ch < 0x20 && ch != '\t') || ch == 0x7F) {
+            ctx.addError(str_loc, "Unescaped control character in TOML string");
+            return NULL;
+        }
+        stringbuf_append_char(sb, ch);
         (*toml)++;
         tracker.advance(1);
     }
@@ -315,7 +373,7 @@ static String* parse_toml_single_line_string(InputContext& ctx, const char** tom
     return builder->createString(sb->str->chars, sb->length);
 }
 
-static Item parse_number(InputContext& ctx, const char **toml) {
+static Item parse_number(TomlContext& ctx, const char **toml) {
     SourceTracker& tracker = ctx.tracker;
 
     const char *start = *toml;
@@ -347,48 +405,40 @@ static Item parse_number(InputContext& ctx, const char **toml) {
         return ctx.builder.createDateTime(*datetime);
     }
 
-    // Handle special float values
-    if (strncmp(*toml, "inf", 3) == 0) {
-        *toml += 3;
-        tracker.advance(3);
-        return ctx.builder.createFloat(INFINITY);
-    }
-    if (strncmp(*toml, "-inf", 4) == 0) {
-        *toml += 4;
-        tracker.advance(4);
-        return ctx.builder.createFloat(-INFINITY);
-    }
-    if (strncmp(*toml, "nan", 3) == 0) {
-        *toml += 3;
-        tracker.advance(3);
-        return ctx.builder.createFloat(NAN);
-    }
-    if (strncmp(*toml, "-nan", 4) == 0) {
-        *toml += 4;
-        tracker.advance(4);
-        return ctx.builder.createFloat(NAN);
+    const char* special = start;
+    bool negative = *special == '-';
+    if (*special == '+' || *special == '-') special++;
+    if (strncmp(special, "inf", 3) == 0 || strncmp(special, "nan", 3) == 0) {
+        *toml = special + 3;
+        tracker.advance(*toml - start);
+        return ctx.builder.createFloat(*special == 'n' ? NAN : negative ? -INFINITY : INFINITY);
     }
 
     // Handle hex, octal, binary integers
-    if (**toml == '0' && (*(*toml + 1) == 'x' || *(*toml + 1) == 'X')) {
+    if (**toml == '0' && *(*toml + 1) == 'x') {
         return parse_prefixed_integer(ctx, toml, 16, "hexadecimal", num_loc);
     }
-    if (**toml == '0' && (*(*toml + 1) == 'o' || *(*toml + 1) == 'O')) {
+    if (**toml == '0' && *(*toml + 1) == 'o') {
         return parse_prefixed_integer(ctx, toml, 8, "octal", num_loc);
     }
-    if (**toml == '0' && (*(*toml + 1) == 'b' || *(*toml + 1) == 'B')) {
+    if (**toml == '0' && *(*toml + 1) == 'b') {
         return parse_prefixed_integer(ctx, toml, 2, "binary", num_loc);
     }
 
-    const char *temp = *toml;
-
-    // Skip sign
-    if (*temp == '+' || *temp == '-') {
+    const char* temp = start;
+    if (*temp == '+' || *temp == '-') temp++;
+    const char* integer = temp;
+    bool valid = toml_scan_digits(&temp, 10);
+    if (*integer == '0' && temp - integer > 1) valid = false;
+    if (*temp == '.') { temp++; valid = toml_scan_digits(&temp, 10) && valid; }
+    if (*temp == 'e' || *temp == 'E') {
         temp++;
+        if (*temp == '+' || *temp == '-') temp++;
+        valid = toml_scan_digits(&temp, 10) && valid;
     }
-
-    while (*temp && (str_char_is_digit(*temp) || *temp == '.' || *temp == 'e' || *temp == 'E' || *temp == '+' || *temp == '-' || *temp == '_')) {
-        temp++;
+    if (!valid) {
+        ctx.addError(num_loc, "Invalid TOML numeric spelling");
+        return {.item = ITEM_ERROR};
     }
 
     const char* token_end = temp;
@@ -408,7 +458,7 @@ static Item parse_number(InputContext& ctx, const char **toml) {
     return number_item;
 }
 
-static Array* parse_array(InputContext& ctx, const char **toml, int *line_num, int depth) {
+static Array* parse_array(TomlContext& ctx, const char **toml, int *line_num, int depth) {
     Input* input = ctx.input();
 
     if (**toml != '[') return NULL;
@@ -438,7 +488,7 @@ static Array* parse_array(InputContext& ctx, const char **toml, int *line_num, i
 
         if (**toml == ']') {
             (*toml)++;
-            break;
+            return arr;
         }
         if (**toml != ',') {
             return NULL;
@@ -449,14 +499,15 @@ static Array* parse_array(InputContext& ctx, const char **toml, int *line_num, i
         // Handle trailing comma
         if (**toml == ']') {
             (*toml)++;
-            break;
+            return arr;
         }
     }
 
-    return arr;
+    ctx.addError("Unterminated TOML array");
+    return nullptr;
 }
 
-static Map* parse_inline_table(InputContext& ctx, const char **toml, int *line_num, int depth) {
+static Map* parse_inline_table(TomlContext& ctx, const char **toml, int *line_num, int depth) {
     SourceTracker& tracker = ctx.tracker;
 
     Input* input = ctx.input();
@@ -476,6 +527,7 @@ static Map* parse_inline_table(InputContext& ctx, const char **toml, int *line_n
     if (**toml == '}') { // empty table
         (*toml)++;
         tracker.advance(1);
+        ctx.track(mp, TOML_INLINE);
         return mp;
     }
 
@@ -499,13 +551,14 @@ static Map* parse_inline_table(InputContext& ctx, const char **toml, int *line_n
             return NULL;
         }
 
-        ctx.builder.putToMap(lam::gc_borrow(owner), key, value);
+        if (!toml_put_unique(ctx, owner, key, value)) return NULL;
 
         skip_tab_pace_and_comments(toml, line_num);
         if (**toml == '}') {
             (*toml)++;
             tracker.advance(1);
-            break;
+            ctx.track(mp, TOML_INLINE);
+            return mp;
         }
         if (**toml != ',') {
             return NULL;
@@ -514,10 +567,11 @@ static Map* parse_inline_table(InputContext& ctx, const char **toml, int *line_n
         tracker.advance(1);
         skip_tab_pace_and_comments(toml, line_num);
     }
-    return mp;
+    ctx.addError("Unterminated TOML inline table");
+    return nullptr;
 }
 
-static Item parse_value(InputContext& ctx, const char **toml, int *line_num, int depth) {
+static Item parse_value(TomlContext& ctx, const char **toml, int *line_num, int depth) {
     SourceTracker& tracker = ctx.tracker;
 
     if (depth >= TOML_MAX_DEPTH) {
@@ -525,7 +579,7 @@ static Item parse_value(InputContext& ctx, const char **toml, int *line_num, int
         return {.item = ITEM_ERROR};
     }
 
-    skip_tab_pace_and_comments(toml, line_num);
+    skip_tab_pace(toml);
 
     SourceLocation value_loc = tracker.location();
     switch (**toml) {
@@ -604,7 +658,7 @@ static Item parse_value(InputContext& ctx, const char **toml, int *line_num, int
             ctx.addError(value_loc, "Invalid negative number");
             return {.item = ITEM_ERROR};
         case '+':
-            if (str_char_is_digit(*((*toml) + 1))) {
+            if (*((*toml) + 1) == 'i' || *((*toml) + 1) == 'n' || str_char_is_digit(*((*toml) + 1))) {
                 return parse_number(ctx, toml);
             }
             ctx.addError(value_loc, "Invalid positive number");
@@ -618,30 +672,33 @@ static Item parse_value(InputContext& ctx, const char **toml, int *line_num, int
     }
 }
 
-static Map* toml_child_map(InputContext& ctx, Map* parent, String* key) {
-    Item existing = MapReader(parent).get(key->chars).item();
-    TypeId type_id = get_type_id(existing);
-    if (type_id == LMD_TYPE_MAP) return existing.map;
-    if (type_id == LMD_TYPE_ARRAY && existing.array->length > 0) {
-        Item last = ArrayReader(existing.array).get(existing.array->length - 1).item();
-        if (get_type_id(last) == LMD_TYPE_MAP) return last.map;
-    }
-    if (type_id != LMD_TYPE_NULL) return NULL;
-
+static Map* toml_child_map(TomlContext& ctx, Map* parent, String* key, TomlNodeKind kind) {
+    if (ctx.kind(parent) == TOML_INLINE) return nullptr;
+    MapReader reader(parent);
+    Item existing = reader.get(key->chars).item();
+    if (get_type_id(existing) == LMD_TYPE_MAP)
+        return ctx.kind(existing.map) != TOML_INLINE ? existing.map : nullptr;
+    if (get_type_id(existing) == LMD_TYPE_ARRAY && ctx.kind(existing.array) == TOML_TABLE_ARRAY &&
+            existing.array->length > 0)
+        return ArrayReader(existing.array).get(existing.array->length - 1).item().map;
+    if (reader.has(key->chars)) return nullptr;
     Map* child = map_pooled(ctx.input()->pool);
-    if (child) ctx.builder.putToMap(lam::gc_borrow(parent), key, {.item = (uint64_t)child});
+    if (child) {
+        ctx.builder.putToMap(lam::gc_borrow(parent), key, {.item = (uint64_t)child});
+        ctx.track(child, kind);
+    }
     return child;
 }
 
 // a dotted key adds its intermediate tables to the current table.
-static bool parse_dotted_key(InputContext& ctx, const char **toml, Map** owner, String** key) {
+static bool parse_dotted_key(TomlContext& ctx, const char **toml, Map** owner, String** key, bool header) {
     *key = parse_key(ctx, toml);
     if (!*key) return false;
     skip_tab_pace(toml);
     while (**toml == '.') {
         (*toml)++;
         skip_tab_pace(toml);
-        *owner = toml_child_map(ctx, *owner, *key);
+        *owner = toml_child_map(ctx, *owner, *key, header ? TOML_IMPLICIT : TOML_DOTTED);
         if (!*owner) return false;
         *key = parse_key(ctx, toml);
         if (!*key) return false;
@@ -650,32 +707,42 @@ static bool parse_dotted_key(InputContext& ctx, const char **toml, Map** owner, 
     return true;
 }
 
-static Map* parse_table_header(InputContext& ctx, const char **toml, Map* root) {
+static Map* parse_table_header(TomlContext& ctx, const char **toml, Map* root) {
     bool array_table = (*toml)[1] == '[';
     *toml += array_table ? 2 : 1;
     skip_tab_pace(toml);
 
     Map* parent = root;
     String* key = NULL;
-    if (!parse_dotted_key(ctx, toml, &parent, &key)) return NULL;
+    if (!parse_dotted_key(ctx, toml, &parent, &key, true)) return NULL;
     if (**toml != ']' || (array_table && (*toml)[1] != ']')) return NULL;
     *toml += array_table ? 2 : 1;
 
-    if (!array_table) return toml_child_map(ctx, parent, key);
+    if (ctx.kind(parent) == TOML_INLINE) return nullptr;
+    if (!array_table) {
+        Map* table = toml_child_map(ctx, parent, key, TOML_IMPLICIT);
+        if (!table || ctx.kind(table) != TOML_IMPLICIT) return nullptr;
+        ctx.track(table, TOML_DECLARED);
+        return table;
+    }
 
     Item existing = MapReader(parent).get(key->chars).item();
     Array* tables = NULL;
-    if (get_type_id(existing) == LMD_TYPE_NULL) {
+    if (!MapReader(parent).has(key->chars)) {
         tables = array_pooled(ctx.input()->pool);
         if (!tables) return NULL;
+        ctx.track(tables, TOML_TABLE_ARRAY);
         ctx.builder.putToMap(lam::gc_borrow(parent), key, {.item = (uint64_t)tables});
-    } else if (get_type_id(existing) == LMD_TYPE_ARRAY) {
+    } else if (get_type_id(existing) == LMD_TYPE_ARRAY && ctx.kind(existing.array) == TOML_TABLE_ARRAY) {
         tables = existing.array;
     } else {
         return NULL;
     }
     Map* table = map_pooled(ctx.input()->pool);
-    if (table) array_append(tables, {.item = (uint64_t)table}, ctx.input()->pool);
+    if (table) {
+        array_append(tables, {.item = (uint64_t)table}, ctx.input()->pool);
+        ctx.track(table, TOML_DECLARED);
+    }
     return table;
 }
 
@@ -684,7 +751,7 @@ void parse_toml(Input* input, const char* toml_string) {
         input->root = {.item = ITEM_NULL};
         return;
     }
-    InputContext ctx(input, toml_string, strlen(toml_string));
+    TomlContext ctx(input, toml_string);
 
     Map* root_map = map_pooled(input->pool);
     if (!root_map) { return; }
@@ -708,6 +775,9 @@ void parse_toml(Input* input, const char* toml_string) {
             } else {
                 current_table = section_map;
             }
+            skip_tab_pace(&toml);
+            if (*toml && *toml != '\r' && *toml != '\n' && *toml != '#')
+                ctx.addError("Unexpected content after TOML table header");
             skip_line(&toml, &line_num);
             continue;
         }
@@ -744,7 +814,7 @@ void parse_toml(Input* input, const char* toml_string) {
             continue;
         }
 
-        ctx.builder.putToMap(lam::gc_borrow(owner), key, value);
+        toml_put_unique(ctx, owner, key, value);
 
         skip_line(&toml, &line_num);
     }

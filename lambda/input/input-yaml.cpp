@@ -2,6 +2,9 @@
 #include "input-context.hpp"
 #include "input-utils.hpp"
 #include "../io/mark_builder.hpp"
+#include "../core/mark_reader.hpp"
+#include "../core/lambda-decimal.hpp"
+#include <math.h>
 #include "lib/mem.h"
 #include "lib/strbuf.h"
 #include "lib/str.h"
@@ -56,6 +59,8 @@ struct AnchorEntry {
     Item value;
 };
 
+struct YamlTrackedKey { Map* map; Item key; YamlTrackedKey* next; };
+
 // parser state
 struct YamlParser {
     InputContext* ctx;
@@ -69,6 +74,7 @@ struct YamlParser {
     // define any number of anchors and every alias must resolve. Created on
     // the first anchor; freed by the parse entry's guard.
     struct hashmap* anchors;
+    YamlTrackedKey* tracked_keys;
     int tag;
 
     // Scratch StrBufs reused across scalars and keys: a malloc and free per
@@ -182,6 +188,10 @@ static uint32_t yaml_parse_hex_codepoint(YamlParser* p, int ndigits) {
     uint32_t codepoint = parse_hex_codepoint(&cur, ndigits);
     int consumed = (int)(cur - (p->src + p->pos));
     advance_n(p, consumed);
+    if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+        p->ctx->addError("yaml: invalid Unicode escape");
+        return 0xFFFFFFFF;
+    }
     return codepoint;
 }
 
@@ -239,6 +249,14 @@ static bool skip_blank_lines(YamlParser* p) {
             advance(p);
             continue;
         }
+        // quoted and block scalar content bypass this structural-line reader.
+        int line_start = saved.pos;
+        while (line_start > 0 && p->src[line_start - 1] != '\n') line_start--;
+        bool indentation = true;
+        for (int i = line_start; i < saved.pos; i++)
+            if (p->src[i] != ' ' && p->src[i] != '\t') indentation = false;
+        if (indentation && memchr(p->src + line_start, '\t', p->pos - line_start))
+            p->ctx->addError("yaml: tabs cannot be used for block indentation");
         restore_cursor(p, saved);
         return true;
     }
@@ -326,7 +344,7 @@ static Item resolve_alias(YamlParser* p, const char* name) {
         const AnchorEntry* found = AnchorMap::get(p->anchors, probe);
         if (found) return found->value;
     }
-    log_debug("yaml: unresolved alias *%s", name);
+    p->ctx->addError("yaml: unresolved alias *%s", name);
     return p->ctx->builder.createNull();
 }
 
@@ -343,11 +361,87 @@ static Item make_empty_string(YamlParser* p) {
     return (Item){.item = s2it(s)};
 }
 
+// compare parsed YAML keys, including structural keys, without depending on the runtime.
+static bool yaml_key_equal(YamlParser* p, Item a, Item b, int depth = 0) {
+    if (depth > 128) {
+        p->ctx->addError("yaml: mapping key nesting exceeds comparison limit");
+        return true;
+    }
+    ItemReader left(a.to_const()), right(b.to_const());
+    if (left.isNull() || right.isNull()) return left.isNull() && right.isNull();
+    if (left.isString() || right.isString()) {
+        if (!left.isString() || !right.isString()) return false;
+        String* x = left.asString(); String* y = right.asString();
+        return x && y && str_eq(x->chars, x->len, y->chars, y->len);
+    }
+    if (left.isBool() || right.isBool()) return left.isBool() && right.isBool() && left.asBool() == right.asBool();
+    if (left.isInt() || right.isInt()) return left.isInt() && right.isInt() && left.asInt() == right.asInt();
+    if (left.isFloat() || right.isFloat()) {
+        if (!left.isFloat() || !right.isFloat()) return false;
+        double x = left.asFloat(), y = right.asFloat();
+        return x == y || (isnan(x) && isnan(y));
+    }
+    if (get_type_id(a) == LMD_TYPE_DECIMAL && get_type_id(b) == LMD_TYPE_DECIMAL) {
+        int order = 0;
+        return decimal_cmp_items(a, b, &order) && order == 0;
+    }
+    if (left.isArray() || right.isArray()) {
+        if (!left.isArray() || !right.isArray()) return false;
+        ArrayReader x = left.asArray(), y = right.asArray();
+        if (x.length() != y.length()) return false;
+        for (int64_t i = 0; i < x.length(); i++)
+            if (!yaml_key_equal(p, x.get(i).item(), y.get(i).item(), depth + 1)) return false;
+        return true;
+    }
+    if (left.isMap() || right.isMap()) {
+        if (!left.isMap() || !right.isMap()) return false;
+        MapReader x = left.asMap(), y = right.asMap();
+        if (x.size() != y.size()) return false;
+        auto entries = x.entries();
+        const char* name = nullptr; ItemReader value;
+        while (entries.next(&name, &value)) {
+            bool found = false;
+            auto candidates = y.entries();
+            const char* other_name = nullptr; ItemReader other_value;
+            while (candidates.next(&other_name, &other_value)) {
+                if (strcmp(name, other_name) == 0 && yaml_key_equal(p, value.item(), other_value.item(), depth + 1)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+    return a.item == b.item;
+}
+
+static bool yaml_track_complex_key(YamlParser* p, Map* map, Item key) {
+    for (YamlTrackedKey* entry = p->tracked_keys; entry; entry = entry->next) {
+        if (entry->map == map && yaml_key_equal(p, entry->key, key)) {
+            p->ctx->addError("yaml: duplicate mapping key");
+            return false;
+        }
+    }
+    YamlTrackedKey* entry = (YamlTrackedKey*)arena_alloc(p->ctx->builder.arena(), sizeof(YamlTrackedKey));
+    if (!entry) { p->ctx->addError("yaml: mapping key tracking allocation failed"); return false; }
+    *entry = {map, key, p->tracked_keys};
+    p->tracked_keys = entry;
+    return true;
+}
+
 // put a key-value pair into a map, using composite key encoding for non-string keys.
 // non-string keys (null, int, bool, etc.) are encoded as: {"?": {"key": key_item, "value": value_item}}
 static void put_key_value(YamlParser* p, MapBuilder& map, Item key_item, Item value_item) {
     String* s = key_item.get_safe_string();
     if (s) {
+        // check presence independently of the old value, which may itself be null.
+        if (strcmp(s->chars, "?") == 0) {
+            if (!yaml_track_complex_key(p, map.final().map, key_item)) return;
+        } else if (MapReader(map.final().map).has(s->chars)) {
+            p->ctx->addError("yaml: duplicate mapping key");
+            return;
+        }
         if (s->len > 0) {
             map.put(p->ctx->builder.createName(s->chars), value_item);
         } else {
@@ -359,6 +453,7 @@ static void put_key_value(YamlParser* p, MapBuilder& map, Item key_item, Item va
         return;
     }
     // composite key: {"?": {"key": key_item, "value": value_item}}
+    if (!yaml_track_complex_key(p, map.final().map, key_item)) return;
     MapBuilder inner = p->ctx->builder.map();
     inner.put(p->ctx->builder.createName("key"), key_item);
     inner.put(p->ctx->builder.createName("value"), value_item);
@@ -534,8 +629,7 @@ static Item parse_double_quoted(YamlParser* p) {
                     break;
                 }
                 default:
-                    strbuf_append_char(sb, '\\');
-                    strbuf_append_char(sb, c);
+                    p->ctx->addError("yaml: unknown double-quoted escape");
                     break;
             }
             // mark: everything up to here is safe content from escape sequences
@@ -555,6 +649,7 @@ static Item parse_double_quoted(YamlParser* p) {
     }
 
     if (!at_end(p) && peek(p) == '"') advance(p);
+    else p->ctx->addError("yaml: unterminated double-quoted scalar");
     Item result = (sb->length == 0) ? make_empty_string(p) : p->ctx->builder.createStringItem(sb->str);
     yaml_scratch_release(p, sb);
     return result;
@@ -568,6 +663,7 @@ static Item parse_single_quoted(YamlParser* p) {
     advance(p); // skip opening '
     StrBuf* sb = yaml_scratch_acquire(p, 64);
 
+    bool closed = false;
     while (!at_end(p)) {
         if (peek(p) == '\'') {
             if (peek_at(p, 1) == '\'') {
@@ -576,6 +672,7 @@ static Item parse_single_quoted(YamlParser* p) {
                 advance(p);
             } else {
                 advance(p);
+                closed = true;
                 break;
             }
         } else if (peek(p) == '\n') {
@@ -587,6 +684,7 @@ static Item parse_single_quoted(YamlParser* p) {
         }
     }
 
+    if (!closed) p->ctx->addError("yaml: unterminated single-quoted scalar");
     Item result = (sb->length == 0) ? make_empty_string(p) : p->ctx->builder.createStringItem(sb->str);
     yaml_scratch_release(p, sb);
     return result;
@@ -672,7 +770,19 @@ static const char* parse_anchor(YamlParser* p) {
 
 static Item parse_alias(YamlParser* p) {
     advance(p); // skip *
-    return resolve_alias(p, scan_anchor_name(p));
+    const char* name = scan_anchor_name(p);
+    size_t length = strlen(name);
+    // a defined name ending in ':' wins over a possible mapping delimiter.
+    AnchorEntry full = {name, ITEM_NULL};
+    bool defined = p->anchors && AnchorMap::get(p->anchors, full);
+    if (!defined && length > 0 && name[length - 1] == ':' &&
+            (at_end(p) || peek(p) == ' ' || peek(p) == '\t' || peek(p) == '\n' ||
+             peek(p) == ',' || peek(p) == ']' || peek(p) == '}')) {
+        name = arena_strndup(p->ctx->builder.arena(), name, length - 1);
+        p->pos--;
+        p->col--;
+    }
+    return resolve_alias(p, name);
 }
 
 // ============================================================================
@@ -711,6 +821,32 @@ static bool is_flow_mapping_indicator(YamlParser* p) {
     char next = peek_at(p, 1);
     return next == ' ' || next == '\t' || next == '\n' || next == '\0' ||
            next == ',' || next == ']' || next == '}';
+}
+
+// a flow collection is an implicit key only when its matching close precedes ':'.
+static bool yaml_flow_collection_is_block_key(YamlParser* p, int offset) {
+    int pos = p->pos + offset, depth = 0;
+    char quote = 0;
+    if (pos >= p->len || (p->src[pos] != '[' && p->src[pos] != '{')) return false;
+    while (pos < p->len && p->src[pos] != '\n') {
+        char c = p->src[pos++];
+        if (quote) {
+            if (quote == '"' && c == '\\' && pos < p->len) pos++;
+            else if (c == quote) {
+                if (quote == '\'' && pos < p->len && p->src[pos] == '\'') pos++;
+                else quote = 0;
+            }
+        } else if (c == '"' || c == '\'') quote = c;
+        else if (c == '[' || c == '{') depth++;
+        else if (c == ']' || c == '}') {
+            if (--depth == 0) break;
+        }
+    }
+    if (depth != 0 || quote) return false;
+    while (pos < p->len && (p->src[pos] == ' ' || p->src[pos] == '\t')) pos++;
+    if (pos >= p->len || p->src[pos] != ':') return false;
+    char next = pos + 1 < p->len ? p->src[pos + 1] : '\0';
+    return next == ' ' || next == '\t' || next == '\n' || next == '\0';
 }
 
 // check if current line (from offset) contains a mapping key (key: value)
@@ -1229,6 +1365,11 @@ static Item parse_flow_sequence(YamlParser* p) {
 
         if (at_end(p)) break;
         if (peek(p) == ']') { advance(p); closed = true; break; }
+        if (peek(p) == ',') {
+            p->ctx->addError("yaml: missing flow collection entry");
+            advance(p);
+            continue;
+        }
 
         // handle explicit key in flow sequence: ? key : value
         bool explicit_key = false;
@@ -1279,6 +1420,10 @@ static Item parse_flow_sequence(YamlParser* p) {
         }
 
         if (!at_end(p) && peek(p) == ',') advance(p);
+        else if (!at_end(p) && peek(p) != ']') {
+            p->ctx->addError("yaml: expected a flow collection separator");
+            break;
+        }
 
         if (p->pos == loop_guard && !at_end(p)) advance(p);
     }
@@ -1306,6 +1451,11 @@ static Item parse_flow_mapping(YamlParser* p) {
 
         if (at_end(p)) break;
         if (peek(p) == '}') { advance(p); closed = true; break; }
+        if (peek(p) == ',') {
+            p->ctx->addError("yaml: missing flow collection entry");
+            advance(p);
+            continue;
+        }
 
         if (peek(p) == '?') {
             char next = peek_at(p, 1);
@@ -1390,6 +1540,10 @@ static Item parse_flow_mapping(YamlParser* p) {
         }
 
         if (!at_end(p) && peek(p) == ',') advance(p);
+        else if (!at_end(p) && peek(p) != '}') {
+            p->ctx->addError("yaml: expected a flow collection separator");
+            break;
+        }
 
         if (p->pos == loop_guard && !at_end(p)) advance(p);
     }
@@ -1542,6 +1696,10 @@ static Item parse_mapping_key(YamlParser* p, int key_tag, int map_indent, bool e
             key_item = parse_single_quoted(p);
         } else if (!at_end(p) && peek(p) == '*') {
             key_item = parse_alias(p);
+        } else if (!at_end(p) && peek(p) == '[') {
+            key_item = parse_flow_sequence(p);
+        } else if (!at_end(p) && peek(p) == '{') {
+            key_item = parse_flow_mapping(p);
         } else {
             StrBuf* ksb = yaml_scratch_acquire(p, 32);
             while (!at_end(p) && peek(p) != '\n') {
@@ -1765,7 +1923,10 @@ static Item parse_block_node(YamlParser* p, int min_indent) {
     char first = peek(p);
     Item result;
 
-    if (yaml_parse_simple_block_value(p, first, indent, &result)) {
+    if ((first == '[' || first == '{') && yaml_flow_collection_is_block_key(p, 0)) {
+        move_to_line_start(p, lstart);
+        result = parse_block_mapping(p, indent);
+    } else if (yaml_parse_simple_block_value(p, first, indent, &result)) {
     } else if (first == '"') {
         result = parse_double_quoted(p);
         skip_spaces(p);
@@ -2211,7 +2372,11 @@ static Item parse_document(YamlParser* p, bool* has_content) {
 
             char c = peek(p);
             Item val;
-            if (c == '|' || c == '>') {
+            if (((c == '[' || c == '{') && yaml_flow_collection_is_block_key(p, 0)) ||
+                    ((c != '[' && c != '{') && is_block_mapping_key(p, 0))) {
+                // a same-line document mapping continues at the document's block indentation.
+                val = parse_block_mapping_inline(p, 0);
+            } else if (c == '|' || c == '>') {
                 val = parse_block_scalar(p, -1);  // document-level: allow content at indent 0
             } else if (c == '[') {
                 val = parse_flow_sequence(p);
@@ -2298,6 +2463,21 @@ void parse_yaml(Input *input, const char* yaml_str) {
         return;
     }
 
+    // normalize source line breaks before YAML tokenization, including block scalars.
+    if (strchr(yaml_str, '\r')) {
+        size_t length = strlen(yaml_str);
+        char* normalized = (char*)pool_alloc(input->pool, length + 1);
+        if (!normalized) { input->parse_failed = true; return; }
+        size_t written = 0;
+        for (size_t i = 0; i < length; i++) {
+            if (yaml_str[i] == '\r') {
+                normalized[written++] = '\n';
+                if (i + 1 < length && yaml_str[i + 1] == '\n') i++;
+            } else normalized[written++] = yaml_str[i];
+        }
+        normalized[written] = '\0';
+        yaml_str = normalized;
+    }
     InputContext ctx(input, yaml_str);
 
     YamlParser parser;
@@ -2387,6 +2567,8 @@ void parse_yaml(Input *input, const char* yaml_str) {
 
         bool has_content = false;
         Item doc = parse_document(p, &has_content);
+        // anchor names are scoped to one document, even in a multi-document stream.
+        if (p->anchors) hashmap_clear(p->anchors, false);
 
         skip_blank_lines(p);
         if (!at_end(p) && is_doc_end(p)) {

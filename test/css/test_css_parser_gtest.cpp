@@ -2685,3 +2685,41 @@ TEST_F(CssEngineParserTest, CssomPropertyNamesAreDecodedLengthDelimitedStrings) 
         EXPECT_STREQ(css_format_declaration_full(formatter, snapshots[i]), serialized[i]);
     }
 }
+
+
+TEST_F(CssParserTest, CssShapesRegistersAndValidatesCoreGrammar) {
+    ASSERT_TRUE(css_property_system_init(pool));
+    const char* valid[] = {
+        "shape-outside:none", "shape-outside:margin-box", "shape-outside:content-box",
+        "shape-outside:circle()", "shape-outside:circle(50% at right bottom)",
+        "shape-outside:border-box ellipse(20px 40% at 10px 20px)",
+        "shape-outside:inset(10% 20px round 5px)",
+        "shape-outside:polygon(evenodd, 0 0, 100% 0, 50% 100%)",
+        "shape-outside:url('shape.png')", "shape-outside:var(--contour)",
+        "shape-outside:inherit", "shape-margin:0", "shape-margin:10%",
+        "shape-margin:calc(1em + 2px)", "shape-margin:var(--gap)",
+        "shape-image-threshold:0", "shape-image-threshold:50%",
+        "shape-image-threshold:calc(.2 + .3)", "shape-image-threshold:2",
+    };
+    const char* invalid[] = {
+        "shape-outside:potato", "shape-outside:circle(10px 20px)",
+        "shape-outside:circle(-1px)", "shape-outside:circle(20px at)",
+        "shape-outside:ellipse(10px)", "shape-outside:inset()",
+        "shape-outside:inset(10px round)", "shape-outside:inset(1px 2px 3px 4px 5px)",
+        "shape-outside:polygon(0 0, 1px 2px)", "shape-outside:none border-box",
+        "shape-outside:border-box padding-box", "shape-outside:circle() circle()",
+        "shape-margin:-1px", "shape-margin:-10%", "shape-margin:10",
+        "shape-margin:auto", "shape-margin:1px 2px",
+        "shape-image-threshold:1px", "shape-image-threshold:0 1",
+    };
+    for (const char* source : valid) {
+        CssDeclaration* declaration = css_parse_declaration_text(source, strlen(source), pool);
+        ASSERT_NE(declaration, nullptr) << source;
+        EXPECT_TRUE(css_declaration_is_supported(declaration)) << source;
+    }
+    for (const char* source : invalid)
+        EXPECT_EQ(css_parse_declaration_text(source, strlen(source), pool), nullptr) << source;
+    EXPECT_EQ(css_property_get_by_code(CSS_PROPERTY_SHAPE_OUTSIDE)->inheritance, PROP_INHERIT_NO);
+    EXPECT_STREQ(css_property_get_by_code(CSS_PROPERTY_SHAPE_MARGIN)->initial_value, "0px");
+    EXPECT_STREQ(css_property_get_by_code(CSS_PROPERTY_SHAPE_IMAGE_THRESHOLD)->initial_value, "0");
+}

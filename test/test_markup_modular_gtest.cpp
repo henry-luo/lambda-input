@@ -890,6 +890,18 @@ TEST_F(FormatAdapterTest, ManMacrosKeepSectionsAndTaggedTerms) {
     EXPECT_FALSE(json_contains(json->chars, ".TP"));
 }
 
+TEST_F(FormatAdapterTest, ManTitleQuotesAreArgumentDelimiters) {
+    String* quoted = parse_to_json(".TH \"TEST\" \"1\"\n.SH NAME\nbody\n", "sample.man");
+    String* plain = parse_to_json(".TH TEST 1\n.SH NAME\nbody\n", "sample.man");
+    String* spaced = parse_to_json(".TH \"TWO WORDS\" 1\n.SH NAME\nbody\n", "sample.man");
+    ASSERT_TRUE(quoted && plain && spaced);
+    EXPECT_STREQ(quoted->chars, plain->chars);
+    EXPECT_TRUE(json_contains(spaced->chars, "TWO WORDS"));
+    String* tabbed = parse_to_json(".TH\t\"TEST\" \"1\"\n.SH NAME\nbody\n", "sample.man");
+    ASSERT_NE(tabbed, nullptr);
+    EXPECT_STREQ(tabbed->chars, plain->chars);
+}
+
 // Test Textile format
 TEST_F(FormatAdapterTest, TextileDetection) {
     const char* content =

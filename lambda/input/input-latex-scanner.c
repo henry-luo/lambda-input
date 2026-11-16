@@ -1,11 +1,11 @@
 #include "input-latex-scanner.h"
 #include "lib/str.h"
 
-#include <ctype.h>
 #include <string.h>
 
 static bool scanner_name_char(char c) {
-    return isalpha((unsigned char)c) || c == '@';
+    // command-name letters must not depend on the host process locale.
+    return str_char_is_alpha(c) || c == '@';
 }
 
 bool latex_scan_starts_with(const char* source, size_t length, size_t start,

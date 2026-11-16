@@ -904,12 +904,18 @@ typedef enum CssPropertyCode {
     CSS_PROPERTY_RX,
     CSS_PROPERTY_RY,
 
+    CSS_PROPERTY_SHAPE_OUTSIDE,
+    CSS_PROPERTY_SHAPE_MARGIN,
+    CSS_PROPERTY_SHAPE_IMAGE_THRESHOLD,
+
     // Custom Properties (CSS Variables)
     CSS_PROPERTY_CUSTOM,
 
     CSS_PROPERTY_COUNT,
     CSS_PROPERTY_UNKNOWN = -1
 } CssPropertyCode;
+
+bool css_shape_outside_components(const CssValue* value, const CssValue** shape, CssEnum* box);
 
 unsigned css_grid_placement_mask(CssPropertyCode property);
 CssPropertyCode css_grid_placement_member(unsigned index);

@@ -217,6 +217,16 @@ struct IcsComponentFrame {
     String* type;
 };
 
+// retain each root independently while preserving the single-calendar API.
+static void finish_ics_calendar(InputContext& ctx, Map* calendar, Map* properties,
+                                List* components, List* entries, List* calendars) {
+    MarkBuilder& builder = ctx.builder;
+    builder.putToMap(lam::gc_borrow(calendar), builder.createName("components"), {.item = (uint64_t)components});
+    builder.putToMap(lam::gc_borrow(calendar), builder.createName("properties"), {.item = (uint64_t)properties});
+    builder.putToMap(lam::gc_borrow(calendar), builder.createName("entries"), {.item = (uint64_t)entries});
+    array_append((Array*)calendars, {.item = (uint64_t)calendar}, ctx.input()->pool);
+}
+
 // Main iCalendar parsing function
 void parse_ics(Input* input, const char* ics_string) {
     if (!ics_string || !input) {
@@ -260,18 +270,15 @@ void parse_ics(Input* input, const char* ics_string) {
         arraylist_free(parents);
         return;
     }
+    List* calendars = rfc_new_entry_list(input);
+    if (!calendars) { arraylist_free(parents); ctx.addError("Failed to allocate calendars"); return; }
     bool in_calendar = false;
+    bool seen_calendar = false;
 
     // Parse iCalendar line by line
     while (*ics) {
         // Skip empty lines
         if (*ics == '\n' || *ics == '\r') {
-            skip_to_newline(&ics);
-            continue;
-        }
-
-        // Skip lines that start with whitespace if we're not in a calendar
-        if (!in_calendar && is_folded_line(ics)) {
             skip_to_newline(&ics);
             continue;
         }
@@ -307,9 +314,24 @@ void parse_ics(Input* input, const char* ics_string) {
 
         // Handle calendar start and end
         if (strcmp(property_name->chars, "BEGIN") == 0) {
+            if (has_parameters) ctx.addError("iCalendar BEGIN must not have parameters");
             if (str_ieq_cstr(property_value->chars, "VCALENDAR")) {
-                in_calendar = true;
-            } else if (in_calendar) {
+                if (in_calendar) ctx.addError("iCalendar has a nested VCALENDAR");
+                else {
+                    if (seen_calendar) {
+                        calendar_map = map_pooled(input->pool);
+                        properties_map = map_pooled(input->pool);
+                        components_list = rfc_new_entry_list(input);
+                        calendar_entries = rfc_new_entry_list(input);
+                        if (!calendar_map || !properties_map || !components_list || !calendar_entries) {
+                            ctx.addError("Failed to allocate calendar root");
+                            break;
+                        }
+                    }
+                    in_calendar = true;
+                    seen_calendar = true;
+                }
+            } else if (in_calendar && property_value->len > 0) {
                 // Keep the parent frame while a nested VALARM or other component is parsed.
                 IcsComponentFrame* child = (IcsComponentFrame*)pool_calloc(input->pool, sizeof(IcsComponentFrame));
                 if (child) {
@@ -326,13 +348,20 @@ void parse_ics(Input* input, const char* ics_string) {
                 active = child;
                 builder.putToMap(lam::gc_borrow(active->component), builder.createName("type"),
                                  {.item = s2it(active->type)});
+            } else {
+                ctx.addError("iCalendar component BEGIN outside VCALENDAR or without a name");
             }
             continue;
         }
 
         if (strcmp(property_name->chars, "END") == 0) {
+            if (has_parameters) ctx.addError("iCalendar END must not have parameters");
             if (str_ieq_cstr(property_value->chars, "VCALENDAR")) {
-                in_calendar = false;
+                if (!in_calendar || active) ctx.addError("iCalendar END:VCALENDAR has an open or missing component");
+                else {
+                    finish_ics_calendar(ctx, calendar_map, properties_map, components_list, calendar_entries, calendars);
+                    in_calendar = false;
+                }
             } else if (active &&
                       str_ieq(property_value->chars, strlen(property_value->chars), active->type->chars, strlen(active->type->chars))) {
                 builder.putToMap(lam::gc_borrow(active->component), builder.createName("properties"),
@@ -351,11 +380,17 @@ void parse_ics(Input* input, const char* ics_string) {
                     array_append((Array*)components_list, component_item, input->pool);
                     rfc_append_entry(ctx, calendar_entries, component_type, component_item);
                 }
+            } else {
+                ctx.addError("iCalendar END does not match the open component");
             }
             continue;
         }
 
-        if (!in_calendar) continue;
+        // properties outside the root would otherwise be silently discarded.
+        if (!in_calendar) {
+            ctx.addError("iCalendar property outside VCALENDAR");
+            continue;
+        }
 
         // Store property based on current context
         Item prop_value = {.item = s2it(property_value)};
@@ -377,22 +412,13 @@ void parse_ics(Input* input, const char* ics_string) {
         }
     }
 
+    if (in_calendar || active) ctx.addError("iCalendar has an unclosed component");
+    if (!seen_calendar) ctx.addError("iCalendar document has no VCALENDAR");
     arraylist_free(parents);
 
-    // Store components list in calendar
-    String* components_key = builder.createName("components");
-    Item components_value = {.item = (uint64_t)components_list};
-    ctx.builder.putToMap(lam::gc_borrow(calendar_map), components_key, components_value);
-
-    // Store properties map in calendar
-    String* properties_key = builder.createName("properties");
-    Item properties_value = {.item = (uint64_t)properties_map};
-    ctx.builder.putToMap(lam::gc_borrow(calendar_map), properties_key, properties_value);
-    ctx.builder.putToMap(lam::gc_borrow(calendar_map), builder.createName("entries"),
-                         {.item = (uint64_t)calendar_entries});
-
-    // Set the calendar map as the root of the input
-    input->root = {.item = (uint64_t)calendar_map};
+    // one root keeps the historical map shape; multiple roots retain source order.
+    input->root = ((Array*)calendars)->length == 1
+        ? ((Array*)calendars)->items[0] : (Item){.item = (uint64_t)calendars};
 
     if (ctx.hasErrors()) {
         ctx.logErrors();

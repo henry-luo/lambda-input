@@ -161,6 +161,8 @@ static bool zip_end_directory_at(ZipArchive* archive, size_t end,
     *count = read_le16(data + end + 10);
     *directory_size = read_le32(data + end + 12);
     archive->central_offset = read_le32(data + end + 16);
+    archive->comment_offset = end + 22;
+    archive->comment_length = read_le16(data + end + 20);
     uint64_t directory_end = end;
     if (end >= 20 && read_le32(data + end - 20) == ZIP64_LOCATOR) {
         archive->zip64 = true;
@@ -339,6 +341,9 @@ static bool zip_build_index(ZipArchive* archive, ZipError* error) {
         ZipEntry* entry = archive_index_path(archive, name, directory, error);
         if (!entry) { ok = false; break; }
         entry->explicit_directory = directory;
+        entry->source_index = (uint32_t)index;
+        entry->central_record_offset = offset;
+        entry->central_record_size = record_size;
         entry->compressed_size = compressed;
         entry->size = size;
         entry->local_offset = local;
@@ -468,6 +473,53 @@ static int zip_output_order(const void* a, const void* b) {
     return strcmp((*(ZipOutputEntry* const*)a)->path, (*(ZipOutputEntry* const*)b)->path);
 }
 
+// Unchanged members keep their validated local record and central metadata.
+static bool zip_copy_original(ZipOutputEntry* source, StrBuf* out, StrBuf* central,
+        const ZipLimits& limits, ZipError* error) {
+    Archive* archive = source->original_archive;
+    ArchiveEntry* entry = archive_entry(archive, source->original_index);
+    if (!archive || archive->format != ARCHIVE_ZIP || !entry ||
+            entry->record_end < entry->local_offset ||
+            !archive_range(entry->local_offset, entry->record_end - entry->local_offset, archive->snapshot->capacity) ||
+            !archive_range(entry->central_record_offset, entry->central_record_size, archive->snapshot->capacity))
+        return zip_fail(error, "ZIP original record is unavailable");
+    uint64_t offset = out->length, central_start = central->length;
+    const uint8_t* bytes = archive->snapshot->data;
+    if (!zip_append_bytes(out, bytes + entry->local_offset, entry->record_end - entry->local_offset, limits.archive_bytes, error) ||
+            !zip_append_bytes(central, bytes + entry->central_record_offset, entry->central_record_size, limits.index_bytes, error))
+        return false;
+    uint8_t* record = (uint8_t*)central->str + central_start;
+    if (read_le32(record + 42) != UINT32_MAX) {
+        if (offset >= UINT32_MAX) return zip_fail(error, "ZIP original offset requires ZIP64");
+        write_le32(record + 42, (uint32_t)offset);
+        return true;
+    }
+    uint16_t name = read_le16(record + 28), extra = read_le16(record + 30);
+    size_t at = 46 + name, end = at + extra;
+    while (at + 4 <= end) {
+        uint16_t id = read_le16(record + at), length = read_le16(record + at + 2);
+        at += 4;
+        if (at + length > end) return zip_fail(error, "ZIP original extra field is truncated");
+        if (id == 1) {
+            size_t position = at;
+            if (read_le32(record + 24) == UINT32_MAX) position += 8;
+            if (read_le32(record + 20) == UINT32_MAX) position += 8;
+            if (position + 8 > at + length) return zip_fail(error, "ZIP64 original offset is missing");
+            write_le64(record + position, offset);
+            return true;
+        }
+        at += length;
+    }
+    return zip_fail(error, "ZIP64 original offset field is missing");
+}
+static int zip_original_order(const void* a, const void* b) {
+    const ZipOutputEntry* left = *(ZipOutputEntry* const*)a;
+    const ZipOutputEntry* right = *(ZipOutputEntry* const*)b;
+    uint64_t x = left->original_archive ? archive_entry(left->original_archive, left->original_index)->source_index : UINT64_MAX;
+    uint64_t y = right->original_archive ? archive_entry(right->original_archive, right->original_index)->source_index : UINT64_MAX;
+    return x < y ? -1 : x > y ? 1 : strcmp(left->path, right->path);
+}
+
 bool zip_write_entries(const ArrayList* entries, const ZipWriteOptions* requested,
         StrBuf* out, ZipError* error) {
     ZipWriteOptions options = requested ? *requested : zip_default_write_options();
@@ -508,6 +560,17 @@ bool zip_write_entries(const ArrayList* entries, const ZipWriteOptions* requeste
         member->explicit_directory = source->directory;
         ok = arraylist_append(ordered, source);
     }
+    for (int i = 0; ok && options.preserve_archive && i < ordered->length; i++) {
+        ZipOutputEntry* source = (ZipOutputEntry*)ordered->data[i];
+        if ((source->raw_copy && !source->original_archive) ||
+                (source->original_archive && (source->original_archive != options.preserve_archive ||
+                 !archive_entry(source->original_archive, source->original_index))))
+            ok = zip_fail(error, "ZIP original member is invalid");
+    }
+    if (ok && options.preserve_archive && options.deterministic)
+        ok = zip_fail(error, "ZIP preservation and deterministic output are incompatible");
+    if (ok && options.preserve_archive && ordered->length > 1)
+        qsort(ordered->data, ordered->length, sizeof(void*), zip_original_order);
     if (ok && options.deterministic && ordered->length > 1) {
         qsort(ordered->data, ordered->length, sizeof(void*), zip_output_order);
     }
@@ -515,6 +578,15 @@ bool zip_write_entries(const ArrayList* entries, const ZipWriteOptions* requeste
     bool wide_archive = options.force_zip64 || entries->length >= UINT16_MAX;
     for (int i = 0; ok && i < ordered->length; i++) {
         ZipOutputEntry* source = (ZipOutputEntry*)ordered->data[i];
+        if (options.preserve_archive && source->original_archive &&
+                source->original_archive != options.preserve_archive) {
+            ok = zip_fail(error, "ZIP entries come from different source archives"); break;
+        }
+        if (options.preserve_archive && source->raw_copy) {
+            ok = zip_copy_original(source, out, central, options.limits, error);
+            if (ok && source->original_archive->zip64) wide_archive = true;
+            continue;
+        }
         strbuf_reset(name);
         strbuf_append_str(name, source->path);
         ok = archive_normalize_name(name, options.limits, error);
@@ -606,7 +678,12 @@ bool zip_write_entries(const ArrayList* entries, const ZipWriteOptions* requeste
         write_le16(end + 10, wide_archive ? UINT16_MAX : (uint16_t)entries->length);
         write_le32(end + 12, wide_archive ? UINT32_MAX : (uint32_t)central->length);
         write_le32(end + 16, wide_archive ? UINT32_MAX : (uint32_t)central_offset);
+        uint16_t comment_length = options.preserve_archive ? options.preserve_archive->comment_length : 0;
+        write_le16(end + 20, comment_length);
         ok = zip_append_bytes(out, end, sizeof(end), options.limits.archive_bytes, error);
+        if (ok && comment_length)
+            ok = zip_append_bytes(out, options.preserve_archive->snapshot->data + options.preserve_archive->comment_offset,
+                comment_length, options.limits.archive_bytes, error);
     }
     archive_release(index);
     if (ordered) arraylist_free(ordered);

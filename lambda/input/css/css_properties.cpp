@@ -109,6 +109,10 @@ static CssProperty property_definitions[] = {
     {CSS_PROPERTY_VISIBILITY, "visibility", PROP_TYPE_KEYWORD, PROP_INHERIT_YES, "visible", true, false, NULL, 0, validate_keyword, NULL},
     {CSS_PROPERTY_ZOOM, "zoom", PROP_TYPE_NUMBER, PROP_INHERIT_NO, "1", true, false, NULL, 0, validate_number, NULL},
 
+    {CSS_PROPERTY_SHAPE_OUTSIDE, "shape-outside", PROP_TYPE_STRING, PROP_INHERIT_NO, "none", false, false, NULL, 0, validate_string, NULL},
+    {CSS_PROPERTY_SHAPE_MARGIN, "shape-margin", PROP_TYPE_LENGTH, PROP_INHERIT_NO, "0px", true, false, NULL, 0, validate_length, NULL},
+    {CSS_PROPERTY_SHAPE_IMAGE_THRESHOLD, "shape-image-threshold", PROP_TYPE_NUMBER, PROP_INHERIT_NO, "0", true, false, NULL, 0, validate_number, NULL},
+
     // Additional Layout Properties
     {CSS_PROPERTY_CLIP, "clip", PROP_TYPE_STRING, PROP_INHERIT_NO, "auto", false, false, NULL, 0, validate_string, NULL},
     {CSS_PROPERTY_CLIP_PATH, "clip-path", PROP_TYPE_STRING, PROP_INHERIT_NO, "none", false, false, NULL, 0, validate_string, NULL},
@@ -3180,10 +3184,120 @@ bool css_cursor_value_parse(const CssValue* value, CssEnum* fallback,
     return !alternatives || count > 1;
 }
 
+static bool css_shape_word(const CssValue* value, const char* word) {
+    const char* name = css_value_identifier_name(value);
+    return name && str_ieq_cstr(name, word);
+}
+
+static bool css_shape_length(const CssValue* value) {
+    return value && (css_value_is_text_indent_amount(value));
+}
+
+static bool css_basic_shape_valid(const CssValue* value) {
+    if (!value || value->type != CSS_VALUE_TYPE_FUNCTION || !value->data.function) return false;
+    const CssFunction* fn = value->data.function;
+    bool circle = str_ieq_cstr(fn->name, "circle");
+    bool ellipse = str_ieq_cstr(fn->name, "ellipse");
+    if (circle || ellipse) {
+        if (fn->arg_count > 1) return false;
+        const CssValue* args = fn->arg_count ? fn->args[0] : nullptr;
+        size_t count = css_space_list_count(args), radii = 0;
+        while (radii < count && !css_shape_word(css_space_list_item(args, radii), "at")) radii++;
+        if (radii && radii != (circle ? 1u : 2u)) return false;
+        for (size_t i = 0; i < radii; i++) {
+            const CssValue* radius = css_space_list_item(args, i);
+            if (!css_shape_word(radius, "closest-side") && !css_shape_word(radius, "farthest-side") &&
+                !css_value_is_nonnegative_length_percentage(radius)) return false;
+        }
+        if (radii < count) {
+            CssValue tail = {};
+            tail.type = CSS_VALUE_TYPE_LIST;
+            tail.data.list = args->data.list;
+            tail.data.list.values += radii + 1;
+            tail.data.list.count -= radii + 1;
+            CssPositionAxis axes[2] = {};
+            return css_position_components(&tail, axes, false);
+        }
+        return true;
+    }
+    if (str_ieq_cstr(fn->name, "inset")) {
+        if (fn->arg_count != 1) return false;
+        const CssValue* args = fn->args[0];
+        size_t count = css_space_list_count(args), edges = 0;
+        while (edges < count && !css_shape_word(css_space_list_item(args, edges), "round")) edges++;
+        if (edges < 1 || edges > 4) return false;
+        for (size_t i = 0; i < edges; i++) if (!css_shape_length(css_space_list_item(args, i))) return false;
+        if (edges == count) return true;
+        size_t radii = 0;
+        bool slash = false;
+        for (size_t i = edges + 1; i < count; i++) {
+            const CssValue* part = css_space_list_item(args, i);
+            if (css_shape_word(part, "/")) {
+                if (slash || !radii || radii > 4) return false;
+                slash = true; radii = 0;
+            } else {
+                if (!css_value_is_nonnegative_length_percentage(part)) return false;
+                radii++;
+            }
+        }
+        return radii > 0 && radii <= 4;
+    }
+    if (str_ieq_cstr(fn->name, "polygon")) {
+        int start = fn->arg_count && (css_shape_word(fn->args[0], "evenodd") ||
+            css_shape_word(fn->args[0], "nonzero")) ? 1 : 0;
+        if (fn->arg_count - start < 3) return false;
+        for (int i = start; i < fn->arg_count; i++) {
+            if (css_space_list_count(fn->args[i]) != 2 ||
+                !css_shape_length(css_space_list_item(fn->args[i], 0)) ||
+                !css_shape_length(css_space_list_item(fn->args[i], 1))) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool css_shape_outside_components(const CssValue* value, const CssValue** shape, CssEnum* box) {
+    if (!value || !shape || !box) return false;
+    *shape = nullptr; *box = CSS_VALUE_MARGIN_BOX;
+    if (css_value_keyword_equals(value, CSS_VALUE_NONE)) return true;
+    if (value->type == CSS_VALUE_TYPE_URL || css_value_is_image_set(value)) {
+        if (css_value_is_image_set(value) && !css_image_set_valid(value)) return false;
+        *shape = value;
+        return true;
+    }
+    size_t count = css_space_list_count(value);
+    if (!count || count > 2) return false;
+    bool seen_box = false;
+    for (size_t i = 0; i < count; i++) {
+        const CssValue* item = css_space_list_item(value, i);
+        if (item && item->type == CSS_VALUE_TYPE_KEYWORD &&
+            (item->data.keyword == CSS_VALUE_MARGIN_BOX || item->data.keyword == CSS_VALUE_BORDER_BOX ||
+             item->data.keyword == CSS_VALUE_PADDING_BOX || item->data.keyword == CSS_VALUE_CONTENT_BOX)) {
+            if (seen_box) return false;
+            seen_box = true; *box = item->data.keyword;
+        } else {
+            if (*shape || !css_basic_shape_valid(item)) return false;
+            *shape = item;
+        }
+    }
+    return true;
+}
+
 bool css_property_validate_value_mode(CssPropertyCode id,
                                       const CssValue* value,
                                       bool quirks_mode) {
     if (!value) return false;
+    if (id == CSS_PROPERTY_SHAPE_OUTSIDE || id == CSS_PROPERTY_SHAPE_MARGIN ||
+        id == CSS_PROPERTY_SHAPE_IMAGE_THRESHOLD) {
+        if (css_value_is_global_keyword(value) || css_value_contains_pending_substitution(value)) return true;
+        if (id == CSS_PROPERTY_SHAPE_OUTSIDE) {
+            const CssValue* shape; CssEnum box;
+            return css_shape_outside_components(value, &shape, &box);
+        }
+        if (id == CSS_PROPERTY_SHAPE_MARGIN) return css_value_is_nonnegative_length_percentage(value);
+        CssMathType type = css_math_value_type(value);
+        return type == CSS_MATH_NUMBER || type == CSS_MATH_PERCENT;
+    }
     if (id == CSS_PROPERTY_CURSOR) {
         if (css_value_is_global_keyword(value) || css_value_contains_pending_substitution(value))
             return true;

@@ -12,7 +12,7 @@ thread_local const ZipLimits* input_zip_limits = nullptr;
 static const char fs_backend_brand = 0;
 static const char* const fs_attributes[] = {
     "name", "kind", "is_file", "is_dir", "path", "entry_path", "extension",
-    "size", "modified", "mode", "is_link", "format", "compressed_size", "compression", "crc32", "sha256"
+    "size", "modified", "mode", "is_link", "format", "compressed_size", "compression", "crc32", "sha256", "explicit_dir", "archive_mode"
 };
 static constexpr int FS_ATTR_COUNT = sizeof(fs_attributes) / sizeof(fs_attributes[0]);
 
@@ -264,6 +264,8 @@ static Item fs_wrap(FsNode* node) {
     node->attrs[14] = i && !directory && archive->format == ARCHIVE_ZIP ? builder.createUInt64(entry->crc) : ItemNull;
     node->attrs[15] = i ? ItemNull : input_snapshot_identity(builder,
         archive->snapshot->data, archive->snapshot->capacity);
+    node->attrs[16] = directory ? builder.createBool(entry->explicit_directory) : ItemNull;
+    node->attrs[17] = i && entry->mode ? builder.createInt(entry->mode) : ItemNull;
     return node->element;
 }
 
@@ -371,21 +373,53 @@ static Item fs_materialized_attr(Item node, const char* name) {
         ? (Item){.item = node.element->get_attr(name).item} : ItemNull;
 }
 struct FsOutputBudget { uint64_t expanded; uint64_t index; };
+static bool fs_zip_time(int64_t seconds, Pool* pool, uint32_t* result) {
+    // ZIP stores UTC civil fields at two-second precision within its year range.
+    if (seconds < datetime_days_from_civil(1980, 1, 1) * 86400 ||
+            seconds >= datetime_days_from_civil(2108, 1, 1) * 86400) return false;
+    DateTime* date = datetime_from_unix(pool, seconds);
+    if (!date) return false;
+    uint32_t day = ((DATETIME_GET_YEAR(date) - 1980) << 9) |
+        (DATETIME_GET_MONTH(date) << 5) | date->day;
+    uint32_t time = (date->hour << 11) | (date->minute << 5) | (date->second / 2);
+    *result = (day << 16) | time;
+    return true;
+}
 static void fs_output_metadata(ZipOutputEntry* entry, FsNode* node, Pool* pool) {
     ArchiveEntry* original = archive_entry(node->tree->archive, node->index);
     entry->mode = original->mode;
     entry->dos_time = original->dos_time;
-    if (!original->has_modified) return;
-    // ZIP stores UTC civil fields here, at two-second precision and within its year range.
-    int64_t seconds = original->modified_seconds;
-    if (seconds < datetime_days_from_civil(1980, 1, 1) * 86400 ||
-            seconds >= datetime_days_from_civil(2108, 1, 1) * 86400) return;
-    DateTime* date = datetime_from_unix(pool, seconds);
-    if (!date) return;
-    uint32_t day = ((DATETIME_GET_YEAR(date) - 1980) << 9) |
-        (DATETIME_GET_MONTH(date) << 5) | date->day;
-    uint32_t time = (date->hour << 11) | (date->minute << 5) | (date->second / 2);
-    entry->dos_time = (day << 16) | time;
+    if (original->has_modified) fs_zip_time(original->modified_seconds, pool, &entry->dos_time);
+}
+static bool fs_output_materialized_metadata(ZipOutputEntry* entry, Item node,
+        bool directory, Pool* pool, ZipError* error) {
+    Item mode = fs_materialized_attr(node, "mode");
+    if (get_type_id(mode) != LMD_TYPE_NULL) {
+        if (get_type_id(mode) != LMD_TYPE_INT || mode.int_val < 0 || mode.int_val > 07777)
+            return fs_output_error(error, "ZIP fs mode must be an integer in 0..07777");
+        entry->mode = (directory ? 0040000 : 0100000) | (uint32_t)mode.int_val;
+    }
+    // Preserve source ZIP file-type bits as well as their permission bits.
+    Item archive_mode = fs_materialized_attr(node, "archive_mode");
+    if (get_type_id(archive_mode) != LMD_TYPE_NULL) {
+        if (get_type_id(archive_mode) != LMD_TYPE_INT || archive_mode.int_val < 0 ||
+                archive_mode.int_val > 0177777 ||
+                ((archive_mode.int_val & 0170000) &&
+                 (archive_mode.int_val & 0170000) != (directory ? 0040000 : 0100000)) ||
+                (get_type_id(mode) == LMD_TYPE_INT && (archive_mode.int_val & 07777) != mode.int_val))
+            return fs_output_error(error, "ZIP fs archive_mode conflicts with kind or mode");
+        entry->mode = (uint32_t)archive_mode.int_val;
+    }
+    Item modified = fs_materialized_attr(node, "modified");
+    if (get_type_id(modified) != LMD_TYPE_NULL) {
+        if (get_type_id(modified) != LMD_TYPE_DTIME)
+            return fs_output_error(error, "ZIP fs modified must be a full datetime");
+        DateTime* date = modified.get_datetime_ptr();
+        if (!date || date->precision != DATETIME_PRECISION_DATE_TIME || !datetime_is_valid(date) ||
+                !fs_zip_time(datetime_to_unix(date), pool, &entry->dos_time))
+            return fs_output_error(error, "ZIP fs modified must be a representable datetime");
+    }
+    return true;
 }
 
 static ZipOutputEntry* fs_output_entry(Pool* pool, const StrBuf* path,
@@ -405,12 +439,15 @@ static ZipOutputEntry* fs_output_entry(Pool* pool, const StrBuf* path,
 
 static bool fs_output_walk(Item node, const char* parent, bool root,
         uint32_t depth, ArrayList* entries, Pool* pool, const ZipLimits& limits,
-        FsOutputBudget* budget, ZipError* error) {
+        FsOutputBudget* budget, ZipError* error, Archive* preserve) {
     if (depth > limits.path_depth || (uint64_t)entries->length > limits.entries) {
         return fs_output_error(error, "ZIP output tree exceeds depth/entry limits");
     }
     FsNode* fs = fs_node_data(node);
     bool materialized = get_type_id(node) == LMD_TYPE_ELEMENT;
+    FsNode* original = fs ? fs : materialized ? fs_node_data(fs_materialized_attr(node, "archive_source")) : nullptr;
+    if (original && preserve && original->tree->archive != preserve)
+        return fs_output_error(error, "ZIP entries come from different source archives");
     if (!fs && !materialized) return fs_output_error(error, "ZIP output requires fs elements");
     if (materialized) {
         TypeElmt* type = (TypeElmt*)node.element->type;
@@ -443,11 +480,25 @@ static bool fs_output_walk(Item node, const char* parent, bool root,
         strbuf_free(path); return fs_output_error(error, "ZIP output path length limit exceeded");
     }
     if (directory || archive_root) {
-        if (!root) {
+        Item explicit_dir = materialized ? fs_materialized_attr(node, "explicit_dir") : ItemNull;
+        if (get_type_id(explicit_dir) != LMD_TYPE_NULL && get_type_id(explicit_dir) != LMD_TYPE_BOOL) {
+            strbuf_free(path); return fs_output_error(error, "ZIP fs explicit_dir must be bool");
+        }
+        // A synthetic parent is needed for traversal, but was not a ZIP member.
+        bool write_dir = fs ? archive_entry(fs->tree->archive, fs->index)->explicit_directory :
+            get_type_id(explicit_dir) == LMD_TYPE_NULL || explicit_dir.bool_val;
+        if (!root && write_dir) {
             ZipOutputEntry* entry = fs_output_entry(pool, path, budget, limits, error);
             if (!entry) { strbuf_free(path); return false; }
             entry->directory = true;
             if (fs) fs_output_metadata(entry, fs, pool);
+            else if (!fs_output_materialized_metadata(entry, node, true, pool, error)) { strbuf_free(path); return false; }
+            if (preserve && original) {
+                ArchiveEntry* old = archive_entry(preserve, original->index);
+                if (!old || !old->directory || strcmp(old->path, path->str)) { strbuf_free(path); return fs_output_error(error, "ZIP source directory does not match"); }
+                entry->original_archive = preserve; entry->original_index = original->index;
+                entry->raw_copy = old->mode == entry->mode && old->dos_time == entry->dos_time;
+            }
             ok = arraylist_append(entries, entry);
         }
         int64_t count = fs ? fs->count : node.element->length;
@@ -456,7 +507,7 @@ static bool fs_output_walk(Item node, const char* parent, bool root,
             if (fs) fs_get(fs, i, &child);
             else child = node.element->items[i];
             ok = fs_output_walk(child, path->str ? path->str : "", false, depth + 1,
-                entries, pool, limits, budget, error);
+                entries, pool, limits, budget, error, preserve);
         }
     } else {
         ZipOutputEntry* entry = fs_output_entry(pool, path, budget, limits, error);
@@ -507,8 +558,13 @@ static bool fs_output_walk(Item node, const char* parent, bool root,
             }
             strbuf_free(payload);
             if (!ok) fs_output_error(error, "ZIP file payload requires text/binary or one value with an explicit format");
-            Item mode = fs_materialized_attr(node, "mode");
-            if (get_type_id(mode) == LMD_TYPE_INT) entry->mode = 0100000 | ((uint32_t)mode.int_val & 07777);
+            if (ok) ok = fs_output_materialized_metadata(entry, node, false, pool, error);
+        }
+        if (ok && preserve && original) {
+            ArchiveEntry* old = archive_entry(preserve, original->index);
+            if (!old || old->directory || strcmp(old->path, path->str)) { strbuf_free(path); return fs_output_error(error, "ZIP source member does not match"); }
+            entry->original_archive = preserve; entry->original_index = original->index;
+            entry->raw_copy = fs != nullptr;
         }
         if (ok) { budget->expanded += entry->length; ok = arraylist_append(entries, entry); }
     }
@@ -519,6 +575,17 @@ static bool fs_output_walk(Item node, const char* parent, bool root,
 bool fs_zip_encode(Item tree, const ZipWriteOptions* requested,
         StrBuf* bytes, ZipError* error) {
     ZipWriteOptions options = requested ? *requested : zip_default_write_options();
+    if (get_type_id(tree) == LMD_TYPE_ELEMENT) {
+        Item marker = fs_materialized_attr(tree, "preserve_zip");
+        if (get_type_id(marker) != LMD_TYPE_NULL && get_type_id(marker) != LMD_TYPE_BOOL)
+            return fs_output_error(error, "ZIP preserve_zip must be bool");
+        if (get_type_id(marker) == LMD_TYPE_BOOL && marker.bool_val) {
+            FsNode* original = fs_node_data(fs_materialized_attr(tree, "archive_source"));
+            if (!original || original->index != 0 || original->tree->archive->format != ARCHIVE_ZIP)
+                return fs_output_error(error, "ZIP preservation requires its captured source root");
+            options.preserve_archive = original->tree->archive;
+        }
+    }
     Pool* pool = pool_create();
     ArrayList* entries = arraylist_new(16);
     bool ok = pool && entries;
@@ -527,9 +594,9 @@ bool fs_zip_encode(Item tree, const ZipWriteOptions* requested,
         Item prepare_error = virtual_content_error(tree);
         ok = get_type_id(prepare_error) != LMD_TYPE_ERROR;
         for (int64_t i = 0; ok && i < varray_count(tree.varray); i++) {
-            ok = fs_output_walk(varray_get(tree.varray, i), "", false, 0, entries, pool, options.limits, &budget, error);
+            ok = fs_output_walk(varray_get(tree.varray, i), "", false, 0, entries, pool, options.limits, &budget, error, options.preserve_archive);
         }
-    } else if (ok) ok = fs_output_walk(tree, "", true, 0, entries, pool, options.limits, &budget, error);
+    } else if (ok) ok = fs_output_walk(tree, "", true, 0, entries, pool, options.limits, &budget, error, options.preserve_archive);
     if (ok) ok = zip_write_entries(entries, &options, bytes, error);
     if (entries) arraylist_free(entries);
     if (pool) pool_destroy(pool);

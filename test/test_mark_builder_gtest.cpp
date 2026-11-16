@@ -2331,6 +2331,12 @@ TEST(TransitionTreeExternalParentTest, InadmissibleParentsAreDeclined) {
     ASSERT_NE(f.tree, nullptr);
     TypeMap* spread = (TypeMap*)alloc_type(f.doc_pool, LMD_TYPE_MAP, sizeof(TypeMap));
     ASSERT_NE(spread, nullptr);
+    // the marker alone is valid for computed-key literals; an unnamed slot is not.
+    ShapeEntry* link = alloc_shape_entry(f.doc_pool, nullptr, LMD_TYPE_MAP, nullptr);
+    ASSERT_NE(link, nullptr);
+    spread->shape = spread->last = link;
+    spread->length = 1;
+    spread->byte_size = shape_entry_storage_size(link);
     spread->has_spread = true;
     EXPECT_EQ(type_tree_add_map_field_chars(f.tree, spread, "a", 1, LMD_TYPE_INT, nullptr),
         nullptr);
@@ -2351,10 +2357,15 @@ TEST(TransitionTreeExternalParentTest, SpreadMarkerRequiresNamedStoredFields) {
     ASSERT_NE(parent, nullptr);
     ShapeEntry* field = alloc_shape_entry(f.doc_pool, builder.createString("a"), LMD_TYPE_INT, nullptr);
     ASSERT_NE(field, nullptr);
+    parent->has_spread = true;
+    TypeMap* first = type_tree_add_map_field_chars(f.tree, parent, "a", 1, LMD_TYPE_INT, nullptr);
+    ASSERT_NE(first, nullptr);
+    EXPECT_TRUE(first->has_spread);
+    EXPECT_EQ(parent->shape, nullptr);
+    EXPECT_EQ(parent->length, 0);
     parent->shape = parent->last = field;
     parent->length = 1;
     parent->byte_size = shape_entry_storage_size(field);
-    parent->has_spread = true;
     TypeMap* child = type_tree_add_map_field_chars(f.tree, parent, "b", 1, LMD_TYPE_INT, nullptr);
     ASSERT_NE(child, nullptr);
     EXPECT_TRUE(child->has_spread);

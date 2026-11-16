@@ -30,6 +30,9 @@ struct ZipOutputEntry {
     bool directory;
     bool has_method;             // otherwise use the archive default
     uint16_t method;             // 0 Stored, 8 raw DEFLATE
+    Archive* original_archive;
+    uint32_t original_index;
+    bool raw_copy;
 };
 
 struct ZipWriteOptions {
@@ -38,6 +41,7 @@ struct ZipWriteOptions {
     bool force_zip64;
     bool deterministic;
     ZipLimits limits;
+    Archive* preserve_archive;
 };
 
 ZipWriteOptions zip_default_write_options();
