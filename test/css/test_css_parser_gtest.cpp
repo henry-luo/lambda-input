@@ -2696,6 +2696,10 @@ TEST_F(CssParserTest, CssShapesRegistersAndValidatesCoreGrammar) {
         "shape-outside:inset(10% 20px round 5px)",
         "shape-outside:polygon(evenodd, 0 0, 100% 0, 50% 100%)",
         "shape-outside:url('shape.png')", "shape-outside:var(--contour)",
+        "shape-outside:linear-gradient(to right,black 50%,transparent 50%)",
+        "shape-outside:radial-gradient(circle at 50px 50px,black 30px,transparent 30px)",
+        "shape-outside:repeating-linear-gradient(45deg,black 0 10px,transparent 10px 20px)",
+        "shape-outside:conic-gradient(black,transparent)",
         "shape-outside:inherit", "shape-margin:0", "shape-margin:10%",
         "shape-margin:calc(1em + 2px)", "shape-margin:var(--gap)",
         "shape-image-threshold:0", "shape-image-threshold:50%",
@@ -2703,6 +2707,9 @@ TEST_F(CssParserTest, CssShapesRegistersAndValidatesCoreGrammar) {
     };
     const char* invalid[] = {
         "shape-outside:potato", "shape-outside:circle(10px 20px)",
+        "shape-outside:linear-gradient(black)", "shape-outside:linear-gradient(black,12px)",
+        "shape-outside:radial-gradient(circle 20px 30px,black,transparent)",
+        "shape-outside:linear-gradient(black,transparent) border-box",
         "shape-outside:circle(-1px)", "shape-outside:circle(20px at)",
         "shape-outside:ellipse(10px)", "shape-outside:inset()",
         "shape-outside:inset(10px round)", "shape-outside:inset(1px 2px 3px 4px 5px)",

@@ -15,6 +15,12 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-066"></a>
+
+### LI-066 — FIXED
+
+See the [shape-outside gradient admission repair](<Lib_Input_Issue_Ledger (fixed).md#li-066>).
+
 <a id="li-065"></a>
 
 ### LI-065 — FIXED
