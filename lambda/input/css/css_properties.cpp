@@ -2335,11 +2335,9 @@ static bool css_value_is_individual_transform(CssPropertyCode property, const Cs
             ? value->data.list.values[i] : value;
         if (!item) return false;
         if (property == CSS_PROPERTY_TRANSLATE) {
-            if (count > 3) return false;
-            if (item->type == CSS_VALUE_TYPE_LENGTH && css_unit_is_length(item->data.length.unit)) continue;
-            if (item->type == CSS_VALUE_TYPE_NUMBER && item->data.number.value == 0.0) continue;
-            if (i < 2 && item->type == CSS_VALUE_TYPE_PERCENTAGE) continue;
-            return false;
+            // individual translation has the same typed arguments as translate3d(), including math.
+            if (count > 3 || !css_transform_argument_valid(TRANSFORM_TRANSLATE3D, i, item)) return false;
+            continue;
         }
         if (property == CSS_PROPERTY_SCALE) {
             if (count > 3 || (item->type != CSS_VALUE_TYPE_NUMBER &&
@@ -2523,8 +2521,8 @@ const CssValue* css_project_shorthand_longhand(Pool* pool, const CssValue* value
             result.factors[i].data.number.value = i;
             result.factors[i].data.number.is_integer = true;
         }
-        result.zero_basis.type = CSS_VALUE_TYPE_LENGTH;
-        result.zero_basis.data.length.unit = CSS_UNIT_PX;
+        // browsers retain an omitted basis as 0%, so auto columns size from content (CSSWG #5742).
+        result.zero_basis.type = CSS_VALUE_TYPE_PERCENTAGE;
         result.auto_basis.type = CSS_VALUE_TYPE_KEYWORD;
         result.auto_basis.data.keyword = CSS_VALUE_AUTO;
         return result;

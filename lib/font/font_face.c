@@ -114,10 +114,16 @@ static bool font_face_range_includes(const FontFaceEntry* entry, uint32_t codepo
     return false;
 }
 
+static FontWeight font_face_matching_weight(FontWeight weight) {
+    // CSS Fonts 4: auto matches as normal but does not clamp the requested variation axis.
+    return weight == FONT_WEIGHT_AUTO ? FONT_WEIGHT_NORMAL : weight;
+}
+
 static const FontFaceEntry* font_face_find_matching(FontContext* ctx, const char* family,
                                                      FontWeight weight, FontSlant slant,
                                                      bool filter_codepoint, uint32_t codepoint) {
     if (!ctx || !family) return NULL;
+    weight = font_face_matching_weight(weight);
 
     const FontFaceEntry* best = NULL;
     int best_slant_distance = INT32_MAX;
@@ -131,8 +137,8 @@ static const FontFaceEntry* font_face_find_matching(FontContext* ctx, const char
         int entry_slant_distance = slant_distance(entry->slant, slant);
         if (!best || entry_slant_distance < best_slant_distance ||
             (entry_slant_distance == best_slant_distance &&
-             font_css_weight_is_better((int)weight, (int)entry->weight,
-                                       (int)best->weight))) {
+             font_css_weight_is_better((int)weight, (int)font_face_matching_weight(entry->weight),
+                                       (int)font_face_matching_weight(best->weight)))) {
             best_slant_distance = entry_slant_distance;
             best = entry;
         }
@@ -250,7 +256,7 @@ int font_face_list(FontContext* ctx, const char* family,
 // ============================================================================
 
 static FontHandle* font_face_load_local(FontContext* ctx, const char* name,
-        const FontFaceEntry* entry, float size_px, float physical_size) {
+        const FontStyleDesc* style, float physical_size) {
     FontEntry* local = font_database_get_by_postscript_name_internal(ctx->database, name);
     int face_index = local && local->is_collection ? local->collection_index : 0;
     char* owned_path = local ? NULL : font_platform_find_fallback(name, &face_index);
@@ -263,7 +269,7 @@ static FontHandle* font_face_load_local(FontContext* ctx, const char* name,
         }
     }
     FontHandle* handle = path ? font_load_face_internal(ctx, path, face_index,
-        size_px, physical_size, entry->weight, entry->slant) : NULL;
+        style->size_px, physical_size, style->weight, style->slant) : NULL;
     if (owned_path) mem_free(owned_path);
     if (!handle) return NULL;
     NameTable* names = font_tables_get_name(handle->tables);
@@ -278,17 +284,24 @@ static FontHandle* font_face_load_local(FontContext* ctx, const char* name,
 }
 
 static FontHandle* font_face_load_entry(FontContext* ctx, const FontFaceEntry* entry,
-                                        float size_px) {
+                                        float size_px, FontWeight requested_weight) {
     if (!ctx || !entry) return NULL;
     if (entry->load_state != FONT_FACE_UNLOADED) return NULL;
 
     float pixel_ratio = ctx->config.pixel_ratio;
     float physical_size = size_px * pixel_ratio;
+    FontStyleDesc style = {
+        .family = entry->family, .size_px = size_px,
+        .weight = entry->weight == FONT_WEIGHT_AUTO
+            ? font_face_matching_weight(requested_weight) : entry->weight,
+        .slant = entry->slant,
+    };
 
-    // A logical size can survive a monitor move, but its raster face cannot.
+    // the retained instance includes the effective weight, not just its size.
     if (entry && entry->loaded_handle &&
         entry->loaded_handle->size_px == size_px &&
-        entry->loaded_handle->physical_size_px == physical_size) {
+        entry->loaded_handle->physical_size_px == physical_size &&
+        entry->loaded_handle->weight == style.weight) {
         font_handle_retain(entry->loaded_handle);
         return entry->loaded_handle;
     }
@@ -303,14 +316,8 @@ static FontHandle* font_face_load_entry(FontContext* ctx, const FontFaceEntry* e
 
         // check if it's a data URI
         if (source->local_name) {
-            handle = font_face_load_local(ctx, source->local_name, entry, size_px, physical_size);
+            handle = font_face_load_local(ctx, source->local_name, &style, physical_size);
         } else if (source->data || strncmp(src_path, "data:", 5) == 0) {
-            FontStyleDesc style = {
-                .family = entry->family,
-                .size_px = size_px,
-                .weight = entry->weight,
-                .slant = entry->slant,
-            };
             handle = source->data
                 ? font_load_from_memory(ctx, source->data, source->data_length, &style)
                 : font_load_from_data_uri(ctx, src_path, &style);
@@ -318,7 +325,7 @@ static FontHandle* font_face_load_entry(FontContext* ctx, const FontFaceEntry* e
             // local file path
             handle = font_load_face_internal(ctx, src_path, 0,
                                               size_px, physical_size,
-                                              entry->weight, entry->slant);
+                                              style.weight, style.slant);
         }
 
         if (handle) {
@@ -374,7 +381,7 @@ FontHandle* font_face_load(FontContext* ctx, const FontFaceDesc* desc,
     if (!ctx || !desc) return NULL;
     const FontFaceEntry* entry = font_face_find_internal(
         ctx, desc->family, desc->weight, desc->slant);
-    return font_face_load_entry(ctx, entry, size_px);
+    return font_face_load_entry(ctx, entry, size_px, desc->weight);
 }
 
 static FontHandle* font_face_load_for_codepoint(FontContext* ctx,
@@ -383,7 +390,7 @@ static FontHandle* font_face_load_for_codepoint(FontContext* ctx,
     if (!ctx || !style) return NULL;
     const FontFaceEntry* entry = font_face_find_matching(
         ctx, style->family, style->weight, style->slant, true, codepoint);
-    return font_face_load_entry(ctx, entry, style->size_px);
+    return font_face_load_entry(ctx, entry, style->size_px, style->weight);
 }
 
 FontHandle* font_resolve_document_face_for_codepoint(FontContext* ctx,

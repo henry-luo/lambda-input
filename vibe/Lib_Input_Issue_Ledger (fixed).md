@@ -6,6 +6,24 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-066"></a>
+
+### LI-066 — Individual translation rejects CSS math arguments
+
+**Status:** FIXED, 2026-11-16. **Lambda blocker:** no; Draftbit's primary
+navigation was shifted halfway offscreen. Input ownership D9.1.1v4 /
+D9.1.3v2; the native math resolver is tracked separately as RI-094.
+
+`translate:calc(calc(1 / 2 * 100%) * -1) 0` is a valid percentage translation.
+`css_value_is_individual_transform` admitted only literal lengths, percentages
+and zero, although `css_transform_argument_valid` already validates typed
+calculations. Individual translation now shares the `translate3d()` argument
+checker, retaining the third-axis percentage rejection and invalid-domain
+rejections. `CssEngineTest.SupportsIndividualTranslationMathUsesTransformArgumentTypes`
+and the existing supports-validation control pass. Seven native PNG controls
+and Chromium positions qualify the integrated repair; evidence is in Lambda
+`temp/online-visual-round39/`. No parser tolerance or capture policy changed.
+
 <a id="li-065"></a>
 
 ### LI-065 — CSS Shapes properties lack shared property registration
@@ -2041,3 +2059,146 @@ Historical owner declaration inventory (line numbers before removal):
 - `Item cow_path_borrow_home_keys` (line 3819)
 - `Item cow_place_leaf_fixed` (line 3830)
 - `Item cow_place_leaf_keys` (line 3834)
+
+<a id="li-067"></a>
+
+## LI-067 — Omitted flex basis collapsed content in auto-height columns
+
+**Status:** FIXED, 2026-11-17. Input owns the shared shorthand projection under
+D9.1.1v4/D9.1.3v2. No formal ruling changes. In `css_properties.cpp`,
+`css_project_shorthand_longhand` gave numeric `flex` shorthands an omitted
+basis of `0px`. In an auto-height column with hidden overflow this is definite
+zero, so `flex:1` / `flex:1 1` discarded content height. Cleanup.pictures' saved
+hydrated source reduced its first app from about920px to240px and exposed the
+black section below. The live page also has a separate client initialization
+path; a restored saved source alone does not establish a live clearance.
+
+The immutable shorthand default is now `0%`, shared by layout, substitution,
+inheritance and computed-style consumers. Explicit `0`, `0px`, `0%`, `auto`,
+`none`, and supplied bases retain their own meanings. This deliberately follows
+interoperable browser behavior, **not the current Flexbox specification's
+omitted-zero wording**. The distinction and collapsed-overflow consequences
+are documented in [CSSWG issue5742](https://github.com/w3c/csswg-drafts/issues/5742).
+There are no URL, class, content, viewport or capture-specific conditions.
+
+Evidence in Lambda `temp/online-visual-round43`: the8-case PNG test has3 genuine
+pre-fix failures, with explicit-zero and auto controls passing; independent
+Chromium confirms all8 heights and computed bases. Input's
+`FlexShorthandRetainsOmittedPercentageAndExplicitZeroBasis` directly checks8
+projection forms. Native
+`OmittedFlexBasisRetainsContentAcrossLiveShorthandChanges` checks6 live
+shorthand/substitution transitions and their retained percentage modes.
+Final qualification and page outcome are recorded in the round43 checkpoint
+and comparison report. Capture admission, clocks and tolerances are unchanged.
+
+<a id="li-068"></a>
+
+## LI-068 — Automatic font faces loaded and cached a fixed regular instance
+
+**Status:** FIXED, 2026-11-17. Input owns CSS descriptors and the unified font
+registry under D9.1.1v4/D9.1.3v2; Radiant's registration bridge preserves the
+new mode. Cache ownership remains D5.5.1. No formal ruling changes.
+
+Affinity's hero requested weight700 from a variable face whose invalid
+`font-weight:400 500 700` descriptor must be ignored. CSS Fonts4 §4.4 specifies
+an initial automatic descriptor: match as normal, but do not clamp variation
+axes. The parser instead initialized normal400. The font registry then loaded
+its descriptor weight and cached only by size, losing the caller's requested
+variable instance. Raster glyphs were visibly thin despite the existing
+CoreText variation backend. The independent local SFNS fixture reproduces
+this with omitted, explicit auto and invalid descriptors; all3 fail before
+repair, while an explicit400 control passes.
+
+`FONT_WEIGHT_AUTO` is a descriptor-only zero sentinel, without a data-layout
+change. Omitted/invalid and explicit auto weight retain that mode; explicit
+normal/numeric weights remain fixed. The registry matches auto as400, carries
+the requested effective axis weight through file, memory/data and local
+sources, and includes that weight in the retained-instance cache. Family and
+per-codepoint loading share the same producer. Fixed descriptors retain their
+clamp. Source selection and renderer clocks/budgets are unchanged. No page
+condition or downloaded proprietary-font fixture is introduced.
+
+This is scoped to automatic weights. General descriptor ranges, automatic
+style/width descriptors, extended numeric grammars and text-stroke rendering
+are not added here. [CSS Fonts4 §4.4](https://www.w3.org/TR/css-fonts-4/#font-prop-desc)
+is the external descriptor reference; browser experiments distinguish
+explicit400 from automatic weights rather than forwarding every request.
+
+Lambda `temp/online-visual-round45` records4PNG checks (Mac system SFNS,
+non-Mac skip explicit), four independent Chromium equivalences,10focused
+font-face parser tests,9font/context tests and4Radiant font tests passing.
+The generic registry controls use the existing FreeSans fixture and exercise
+cache/glyph selection at multiple weights; Mac controls independently compare
+4variable instances ×3glyph advances with their native raster face. Existing
+advance handling already passes; no additional metric patch was needed.
+A single broad baseline milestone and saved/live page outcomes are recorded
+in the round45 checkpoint/report. Focused evidence alone does not establish
+a live page clearance or a clean full baseline.
+
+Round45 milestone: Affinity's live mean error improves14.6559%→8.8302%,
+with the main variable headline restored. Four large corner images remain
+absent, so the page retains high severity by manual review. The broad Radiant
+run reports8488checks/8167passed/2failed/299partial/20skipped; neither failure
+was in font selection. The retained atomic-role regression and stale omitted
+flex-basis expectations were corrected; focused rechecks pass. The full
+baseline was not repeated. This does not claim a clean full baseline or page
+clearance. Evidence: Lambda round45 checkpoint and comparison repair gallery.
+
+<a id="li-069"></a>
+
+## LI-069 — Borrowed pseudo cascades invalidated authored ancestor inputs
+
+**Status:** FIXED, 2026-11-17. D5.5.1 requires intrinsic queries to preserve
+selected fragments; provider ownership is D9.1.1v4/D9.1.3v2. No ruling changes.
+Mymind's saved hydrated navigation emitted three selected-flow restoration
+errors. A release-visible trace showed list-item input revisions changing9→11
+inside a measurement, while generation, style epoch and mutation epoch stayed
+unchanged. An automated reduction retained three CSS rules and a small
+navigation with an unrelated custom-layout attribute.
+
+`dom_element_borrow_specified_style` reused authored-write invalidation when
+refreshing a generated box's derived cascade. It expired ancestor inputs and
+made the unchanged selected flow fail its valid stale-result guard. A shared
+local refresh now expires the generated box's own style/version/intrinsic
+cache and recompute flags. Same and replacement bindings use it; normal
+attribute/text/style writes still invalidate ancestor queries. The replay
+guard is unchanged. No page condition or capture policy is introduced.
+
+Lambda `temp/online-visual-round46` records same/replacement/rebound pseudo
+style controls and a real authored font write; the latter still invalidates
+the host. The old executable fails all three new rendering controls. After
+this repair and Radiant RI-101, seven PNG tests, four native tests, three
+independent Chromium equivalences and integer lint pass. Two existing owned
+flow/pseudo-font ownership tests also pass during implementation. The original
+saved Mymind page has zero restoration errors instead of three. Its live
+capture remains blank, so no high-severity clearance is claimed. Broad
+baselines were deferred after the round45 milestone.
+
+<a id="li-070"></a>
+
+## LI-070 — Backed insertion ignored the native slot of DOM-only references
+
+**Status:** FIXED, 2026-11-17. **Lambda blocker:** no.
+Owner boundaries are D9.1.1v4 / D9.1.3v2; retained node identity follows
+D5.5.1. No design ruling changes.
+
+`dom_insert_detached_backed_element` accepted MarkEditor's relink whenever
+the inserted child already had the requested parent. That proves membership,
+not position: a DOM-only reference such as a comment has no backing slot.
+Inserting a mixed fragment before that anchor reversed its element order,
+causing Svelte's later traversal to read a text node instead of its element.
+The helper now preserves the completed backing edit and places the live native
+node immediately before the actual reference, detaching only its native link
+when necessary. No new node, copied subtree or synthetic index is introduced.
+
+The new native test covers both UI and non-UI documents, two consecutive
+insertions, sibling identity and Mark ordering. It and the existing nested-array
+and mixed-node backing controls pass. Four Lambda PNG cases compare append,
+before, after and insertBefore with mixed comments/text/elements; the latter
+two fail before and all pass after. Together with RI-102 and Lambda's fragment
+and clone repairs, crates.io renders its main page instead of a blank green
+canvas. Evidence is in Lambda `temp/online-visual-round47`; the online report
+records the remaining visible differences and milestone qualification.
+The milestone's borrowed-fragment-text regression was corrected in Lambda;
+all nine persistent failed cases and the initial jQuery case pass focused checks.
+The full baseline was not repeated after that correction.

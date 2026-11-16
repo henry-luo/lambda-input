@@ -288,10 +288,13 @@ static FontHandle* font_resolve_single(FontContext* ctx, const FontStyleDesc* st
 
     // 3. check @font-face descriptors
     if (face_entry) {
-        // delegate to font_face_load() which handles caching-by-size internally
+        // the descriptor cache retains a size/weight-specific instance
         const FontFaceDesc* desc = font_face_find(ctx, style);
         if (desc) {
-            handle = font_face_load(ctx, desc, style->size_px);
+            FontFaceDesc requested = *desc;
+            // selection identifies the source; auto descriptors still need the caller's axis weight.
+            requested.weight = style->weight;
+            handle = font_face_load(ctx, &requested, style->size_px);
             if (handle) {
                 log_info("font_resolve: loaded @font-face for '%s'", style->family);
                 if (out_is_global_fallback) *out_is_global_fallback = false;

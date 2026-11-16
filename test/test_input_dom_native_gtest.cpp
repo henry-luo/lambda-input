@@ -303,6 +303,43 @@ TEST(InputDomNativeTest, CopiedTreeEditDoesNotReadSourceHeaderAgain) {
 }
 #endif
 
+TEST(InputDomNativeTest, BackedInsertionPreservesDomOnlyCommentReferenceOrder) {
+    for (bool ui_mode : {false, true}) {
+        SCOPED_TRACE(ui_mode);
+        Pool* pool = pool_create();
+        ASSERT_NE(pool, nullptr);
+        Input* input = Input::create(pool);
+        ASSERT_NE(input, nullptr);
+        input->ui_mode = ui_mode;
+        MarkBuilder builder(input);
+        Item source = builder.element("div").final();
+        DomDocument* document = dom_document_create(input);
+        ASSERT_NE(document, nullptr);
+        DomElement* root = build_dom_tree_from_element(source.element, document, nullptr);
+        ASSERT_NE(root, nullptr);
+        document->root = lam::up(root);
+        Item backing = builder.element("!--").child(builder.createStringItem("anchor")).final();
+        DomComment* anchor = dom_comment_create_detached(backing.element, document);
+        ASSERT_NE(anchor, nullptr);
+        ASSERT_TRUE(((DomNode*)root)->append_child(anchor));
+        DomElement* first = dom_create_backed_element_identity(document, "span", nullptr, false);
+        DomElement* second = dom_create_backed_element_identity(document, "b", nullptr, false);
+        ASSERT_NE(first, nullptr);
+        ASSERT_NE(second, nullptr);
+        ASSERT_TRUE(dom_insert_detached_backed_element(root, first, anchor));
+        ASSERT_TRUE(dom_insert_detached_backed_element(root, second, anchor));
+        EXPECT_EQ(root->first_child, first);
+        EXPECT_EQ(first->next_sibling, second);
+        EXPECT_EQ(second->next_sibling, anchor);
+        EXPECT_EQ(root->last_child, anchor);
+        EXPECT_EQ(dom_backed_node_index(root, first), 0);
+        EXPECT_EQ(dom_backed_node_index(root, second), 1);
+        EXPECT_EQ(dom_backed_node_index(root, anchor), -1);
+        dom_document_destroy(document);
+        pool_destroy(pool);
+    }
+}
+
 TEST(InputDomNativeTest, NestedArrayEditsKeepOwnedChildOccurrences) {
     for (bool ui_mode : {false, true}) {
         SCOPED_TRACE(ui_mode);

@@ -517,7 +517,7 @@ CssFontFaceDescriptor* css_parse_font_face_content(const char* content, Pool* po
 
     // Initialize defaults
     descriptor->font_style = CSS_VALUE_NORMAL;
-    descriptor->font_weight = CSS_VALUE_NORMAL;
+    descriptor->font_weight = CSS_VALUE_AUTO;
     descriptor->font_display = CSS_VALUE_AUTO;
 
     // Parse the content string - look for font-family and src
@@ -623,9 +623,13 @@ CssFontFaceDescriptor* css_parse_font_face_content(const char* content, Pool* po
         else if (prop_len >= 11 && strncmp(prop_start, "font-weight", 11) == 0) {
             char* val = trim_and_unquote(val_start, val_len, pool);
             if (val) {
-                if (strcmp(val, "bold") == 0) {
+                if (strcmp(val, "auto") == 0) {
+                    descriptor->font_weight = CSS_VALUE_AUTO;
+                } else if (strcmp(val, "bold") == 0) {
                     descriptor->font_weight = CSS_VALUE_BOLD;
-                } else if (strcmp(val, "normal") != 0) {
+                } else if (strcmp(val, "normal") == 0) {
+                    descriptor->font_weight = CSS_VALUE_NORMAL;
+                } else {
                     char* end = nullptr;
                     long numeric_weight = strtol(val, &end, 10);
                     if (end != val && *end == '\0' &&

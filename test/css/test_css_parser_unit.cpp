@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 #include "helpers/css_test_helpers.hpp"
 #include "lambda/input/css/css_font_face.hpp"
+#include "lib/str.h"
 #include "lambda/network/font_resource_faces.h"
 
 extern "C" {
@@ -877,6 +878,26 @@ TEST_F(CssParserUnitTest, Error_EmptyInput) {
     auto selector = parser.ParseSelector("");
 
     EXPECT_EQ(selector, nullptr);
+}
+
+TEST_F(CssParserUnitTest, FontFace_DefaultAndInvalidWeightRetainAutoMode) {
+    const struct { const char* text; CssEnum weight; } cases[] = {
+        {"",CSS_VALUE_AUTO},
+        {"font-weight:auto",CSS_VALUE_AUTO},
+        {"font-weight:400 500 700",CSS_VALUE_AUTO},
+        {"font-weight:normal",CSS_VALUE_NORMAL},
+        {"font-weight:400",(CssEnum)400},
+        {"font-weight:700;font-weight:bad",(CssEnum)700},
+    };
+    for (const auto& sample : cases) {
+        SCOPED_TRACE(sample.text);
+        char content[256];
+        str_fmt(content,sizeof(content),"{font-family:Probe;src:url(a.woff);%s}",sample.text);
+        CssFontFaceDescriptor* face = css_parse_font_face_content(content,nullptr);
+        ASSERT_NE(face,nullptr);
+        EXPECT_EQ(face->font_weight,sample.weight);
+        css_font_face_descriptor_free(face);
+    }
 }
 
 TEST_F(CssParserUnitTest, FontFace_NumericWeightPreservesDistinctFace) {

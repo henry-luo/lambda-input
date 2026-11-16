@@ -15,6 +15,41 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-070"></a>
+
+### LI-070 — FIXED
+
+Backing insertion misordered native children before DOM-only comment anchors.
+See the [native reference-order repair](<Lib_Input_Issue_Ledger (fixed).md#li-070>).
+
+<a id="li-069"></a>
+
+### LI-069 — FIXED
+
+Derived pseudo-style refresh invalidated unchanged authored host sizing inputs.
+See the [local borrowed-cascade repair](<Lib_Input_Issue_Ledger (fixed).md#li-069>).
+
+<a id="li-068"></a>
+
+### LI-068 — FIXED
+
+Automatic document font faces lost the requested variable weight.
+See the [automatic-weight and instance-cache repair](<Lib_Input_Issue_Ledger (fixed).md#li-068>).
+
+<a id="li-067"></a>
+
+### LI-067 — FIXED
+
+An omitted flex shorthand basis collapsed auto-height columns.
+See the [interoperable percentage default](<Lib_Input_Issue_Ledger (fixed).md#li-067>).
+
+<a id="li-066"></a>
+
+### LI-066 — FIXED
+
+Individual `translate` rejected typed calculations accepted by `translate3d()`.
+See the [shared-validation repair](<Lib_Input_Issue_Ledger (fixed).md#li-066>).
+
 <a id="li-065"></a>
 
 ### LI-065 — FIXED

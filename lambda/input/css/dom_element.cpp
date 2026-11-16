@@ -284,11 +284,11 @@ bool dom_insert_detached_backed_element(DomElement* parent, DomElement* child, D
         log_error("dom_insert_backed_element: inline insert changed backing identity");
         return false;
     }
-    if (child->parent != (DomNode*)parent) {
-        // MarkEditor can insert the backing before its detached wrapper is linked.
-        return ((DomNode*)parent)->insert_before(child, reference);
-    }
-    return true;
+    // backing order cannot locate a DOM-only reference such as a comment anchor.
+    // relinking may already attach the child, so restore its exact native slot.
+    if (child->parent == parent && child->next_sibling == reference) return true;
+    if (child->parent && !child->parent->remove_child(child)) return false;
+    return ((DomNode*)parent)->insert_before(child, reference);
 }
 
 bool dom_remove_backed_element_item(DomElement* parent, DomElement* child, int64_t child_index) {
@@ -1944,14 +1944,22 @@ void dom_element_clear_cascaded_styles(DomElement* element) {
     }
 }
 
+static void dom_element_refresh_borrowed_style(DomElement* element) {
+    // derived pseudo cascades must not turn a measurement into an authored subtree edit.
+    element->set_styles_resolved(false);
+    element->set_flag(ELMT_FLAG_NEEDS_STYLE_RECOMPUTE, true);
+    element->style_version++;
+    element->intrinsic_input_revision++;
+    element->set_has_cached_intrinsic_widths(false);
+}
+
 void dom_element_borrow_specified_style(DomElement* element, StyleTree* style) {
     if (!element) return;
     if (element->specified_style_shared()) {
         style_epoch_unbind_element(element);
     } else if (element->specified_style_borrowed()) {
         if (element->specified_style == style) {
-            element->set_styles_resolved(false);
-            element->set_needs_style_recompute(true);
+            dom_element_refresh_borrowed_style(element);
             return;
         }
         style_tree_release_borrow(element->specified_style);
@@ -1971,8 +1979,7 @@ void dom_element_borrow_specified_style(DomElement* element, StyleTree* style) {
     else element->mark_specified_style_owned();
     // Borrowing changes the cascade input. A retained generated box may have
     // just inherited its host's font, so it must reapply its own declarations.
-    element->set_styles_resolved(false);
-    element->set_needs_style_recompute(true);
+    dom_element_refresh_borrowed_style(element);
 }
 
 void dom_element_destroy(DomElement* element) {

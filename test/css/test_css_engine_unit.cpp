@@ -56,6 +56,37 @@ TEST_F(CssEngineTest, SupportsUsesSelectorAndDeclarationValidation) {
     EXPECT_FALSE(css_evaluate_supports_condition(engine, "selector(.a, .b:bogus)"));
 }
 
+TEST_F(CssEngineTest, FlexShorthandRetainsOmittedPercentageAndExplicitZeroBasis) {
+    struct Case { const char* text; CssValueType type; };
+    const Case cases[] = {{"flex:1",CSS_VALUE_TYPE_PERCENTAGE},
+        {"flex:1 1",CSS_VALUE_TYPE_PERCENTAGE},{"flex:0 0",CSS_VALUE_TYPE_PERCENTAGE},
+        {"flex:1 1 0%",CSS_VALUE_TYPE_PERCENTAGE},{"flex:1 1 0px",CSS_VALUE_TYPE_LENGTH},
+        {"flex:1 1 0",CSS_VALUE_TYPE_NUMBER},{"flex:auto",CSS_VALUE_TYPE_KEYWORD},
+        {"flex:none",CSS_VALUE_TYPE_KEYWORD}};
+    for (const Case& sample : cases) {
+        SCOPED_TRACE(sample.text);
+        CssDeclaration* declaration = css_parse_declaration_text(sample.text,strlen(sample.text),pool.get());
+        ASSERT_NE(declaration,nullptr);
+        const CssValue* basis = css_project_shorthand_longhand(pool.get(),declaration->value,
+            CSS_PROPERTY_FLEX,CSS_PROPERTY_FLEX_BASIS);
+        ASSERT_NE(basis,nullptr);
+        EXPECT_EQ(basis->type,sample.type);
+        if (sample.type == CSS_VALUE_TYPE_PERCENTAGE) EXPECT_DOUBLE_EQ(basis->data.percentage.value,0.0);
+    }
+}
+
+TEST_F(CssEngineTest, SupportsIndividualTranslationMathUsesTransformArgumentTypes) {
+    CssEngine* engine = CreateEngine();
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(css_evaluate_supports_condition(engine,
+        "(translate:calc(calc(1 / 2 * 100%) * -1) 0)"));
+    EXPECT_TRUE(css_evaluate_supports_condition(engine,
+        "(translate:calc(-50% + 1em) calc(25% - 5px) calc(2px * 3))"));
+    EXPECT_FALSE(css_evaluate_supports_condition(engine, "(translate:0 0 calc(10%))"));
+    EXPECT_FALSE(css_evaluate_supports_condition(engine, "(translate:calc(2 + 3))"));
+    EXPECT_FALSE(css_evaluate_supports_condition(engine, "(translate:calc(1deg + 2px))"));
+}
+
 // ============================================================================
 // Category 1: Stylesheet Parsing - Single/Multiple Rules (15 tests)
 // ============================================================================

@@ -80,6 +80,7 @@ bool font_context_scan(FontContext* ctx);
 // ============================================================================
 
 typedef enum FontWeight {
+    FONT_WEIGHT_AUTO        = 0,   // @font-face matching uses normal; variation weight remains unconstrained
     FONT_WEIGHT_THIN        = 100,
     FONT_WEIGHT_EXTRA_LIGHT = 200,
     FONT_WEIGHT_LIGHT       = 300,
@@ -481,7 +482,7 @@ typedef struct FontFaceUnicodeRange {
 // descriptor for a registered font face (one @font-face rule = one descriptor)
 typedef struct FontFaceDesc {
     const char*   family;       // font-family value
-    FontWeight    weight;       // font-weight (100–900)
+    FontWeight    weight;       // font-weight (100–900), or FONT_WEIGHT_AUTO for an unclamped descriptor
     FontSlant     slant;        // font-style (normal/italic/oblique)
     FontFaceSource*  sources;      // ordered src list (tried in order)
     int           source_count;
