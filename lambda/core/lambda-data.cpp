@@ -1722,6 +1722,9 @@ static TypeId classify_storage_domain(const Type* type) {
 bool lambda_type_accepts_error(Type* type) {
     type = type_field_unwrap_simple_decl(type);
     if (!type || type_is_any_without_error(type)) return false;
+    // constrained outcomes admit their base under S11.4.6v4.
+    if (type->type_id == LMD_TYPE_TYPE && type->kind == TYPE_KIND_CONSTRAINED)
+        return lambda_type_accepts_error(((TypeConstrained*)type)->base);
     if (type->type_id == LMD_TYPE_ANY || type->type_id == LMD_TYPE_ERROR) return true;
     // an optional error outcome still admits the error, alongside null.
     if (type->type_id == LMD_TYPE_TYPE && type->kind == TYPE_KIND_UNARY &&
@@ -1735,6 +1738,9 @@ bool lambda_type_accepts_error(Type* type) {
 bool lambda_type_accepts_null(Type* type) {
     type = type_field_unwrap_simple_decl(type);
     if (!type || type_is_any_without_null(type)) return false;
+    // constrained outcomes admit their base under S11.4.6v4.
+    if (type->type_id == LMD_TYPE_TYPE && type->kind == TYPE_KIND_CONSTRAINED)
+        return lambda_type_accepts_null(((TypeConstrained*)type)->base);
     if (type->type_id == LMD_TYPE_ANY || type->type_id == LMD_TYPE_NULL) return true;
     if (type->type_id == LMD_TYPE_TYPE && type->kind == TYPE_KIND_UNARY) {
         TypeUnary* unary = (TypeUnary*)type;

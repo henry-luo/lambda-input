@@ -6,6 +6,38 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-076"></a>
+
+### LI-076 — Constrained error contracts are not admitted by the shared core
+
+**Status:** FIXED, 2026-11-18. **Authority:** S11.4.2v3, S11.4.6v4,
+D9.1.1v4. **Lambda blocker:** the two constrained-error test failures resolved.
+
+On Input `6e22903`, `lambda/core/lambda-data.cpp::lambda_type_accepts_error`
+followed optional/union operands but skipped constrained bases. Lambda's
+unchanged `constrained_error_return` golden reported E312 for `int | First`,
+where `First = error that ~.message == "first"`, plus E200 failures. The same
+missing case affected `lambda_type_accepts_null`. Both shared walks now recurse
+through constrained bases; no runtime dependency or predicate-enforcement change
+was added. Existing compiler subtype/normal-admission logic needed no change.
+
+The unchanged golden passes AUTO/interpreter/JIT. Both explicit tiers also pass
+with forced collection on every allocation and freed-memory poisoning. Native
+`TypeContractMetadataTest.ConstrainedErrorChannelsFollowTheirBase` now covers
+nested constraints around optional error bases and explicit internal top
+exclusions; the full runtime/error suite passes 340/340. Eleven related
+constrained/error/admission goldens pass in each explicit tier.
+The full Input baseline passes 5,324 native tests with three skipped cases in
+109 runner summaries. The full Lambda baseline passes 7,604/7,604, including
+both originally failing tests.
+
+The prior broad Lambda repair remains recorded at
+`../../lambda/vibe/Lambda_Issue_Ledger (fixed).md#reader-constrained-error-return-fixed`.
+This recurrence was discovered during sync qualification and is independent of
+sync behavior. Original reproduction evidence remains under Lambda
+`temp/sync-test-performance-impl/constrained-{before,after,previous-release}.err`;
+repair evidence is under `../../lambda/temp/constrained-error-fix/`.
+
 <a id="li-074"></a>
 
 ### LI-074 — Closing a template in the head swallows following document metadata and body

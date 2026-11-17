@@ -15,6 +15,13 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-076"></a>
+
+### LI-076 — FIXED
+
+Constrained error/null outcome metadata now follows its base. See the
+[shared-core repair](<Lib_Input_Issue_Ledger (fixed).md#li-076>).
+
 <a id="li-075"></a>
 
 ### LI-075 — FIXED
