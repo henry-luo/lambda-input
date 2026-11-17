@@ -1691,6 +1691,11 @@ DomDocument* dom_document_create(Input* input);
 // Input and loader aliases that remain valid for the document lifetime.
 bool dom_document_replace_url(DomDocument* document, Url* replacement);
 
+// returns an owned resource base; the document URL keeps its original identity.
+Url* dom_document_resolve_url(DomDocument* document);
+// returns an owned URL; a null reference requests the first applicable HTML base URL.
+Url* dom_document_resolve_url(const DomDocument* document, const char* reference = nullptr);
+
 /**
  * Destroy a DomDocument and all its nodes
  * @param document Document to destroy

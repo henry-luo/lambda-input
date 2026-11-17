@@ -6,28 +6,141 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
-<a id="li-067"></a>
+<a id="li-076"></a>
 
-### LI-067 — constrained error bases omitted from error-channel discovery
+### LI-076 — Constrained error contracts are not admitted by the shared core
 
-**Status:** FIXED, 2026-11-17. **Dependent task blocker:** resolved for the
-Lambda TeX reader. S11.4.2v3 and S11.4.6v4 govern error unions and the
-base-only constrained admission rule.
+**Status:** FIXED, 2026-11-18. **Authority:** S11.4.2v3, S11.4.6v4,
+D9.1.1v4. **Lambda blocker:** the two constrained-error test failures resolved.
 
-`lambda_type_accepts_error` ignored constrained wrappers, so a function
-with an `int | CaptureError` return was rejected with E312. The shared core
-now follows constrained bases recursively; the Lambda compiler separately
-unwraps nested constraint layers at static admission. The paired Lambda
-`constrained_error_return` fixture passes interpreter, JIT and AUTO, and
-checks direct and nested returns, successful values and predicate-filtered
-handlers. The native metadata test verifies constrained error and non-error
-bases. Six reader/GC checks and 18 adjacent checks pass; aggregate gates are
-recorded in Lambda's issue ledger. Evidence: `../Lambda/temp/capture-error/`.
+On Input `6e22903`, `lambda/core/lambda-data.cpp::lambda_type_accepts_error`
+followed optional/union operands but skipped constrained bases. Lambda's
+unchanged `constrained_error_return` golden reported E312 for `int | First`,
+where `First = error that ~.message == "first"`, plus E200 failures. The same
+missing case affected `lambda_type_accepts_null`. Both shared walks now recurse
+through constrained bases; no runtime dependency or predicate-enforcement change
+was added. Existing compiler subtype/normal-admission logic needed no change.
+
+The unchanged golden passes AUTO/interpreter/JIT. Both explicit tiers also pass
+with forced collection on every allocation and freed-memory poisoning. Native
+`TypeContractMetadataTest.ConstrainedErrorChannelsFollowTheirBase` now covers
+nested constraints around optional error bases and explicit internal top
+exclusions; the full runtime/error suite passes 340/340. Eleven related
+constrained/error/admission goldens pass in each explicit tier.
+The full Input baseline passes 5,324 native tests with three skipped cases in
+109 runner summaries. The full Lambda baseline passes 7,604/7,604, including
+both originally failing tests.
+
+The prior broad Lambda repair remains recorded at
+`../../lambda/vibe/Lambda_Issue_Ledger (fixed).md#reader-constrained-error-return-fixed`.
+This recurrence was discovered during sync qualification and is independent of
+sync behavior. Original reproduction evidence remains under Lambda
+`temp/sync-test-performance-impl/constrained-{before,after,previous-release}.err`;
+repair evidence is under `../../lambda/temp/constrained-error-fix/`.
+
+<a id="li-074"></a>
+
+### LI-074 — Closing a template in the head swallows following document metadata and body
+
+**Status:** FIXED, 2026-11-17. **Lambda blocker:** resolved for existing HTML
+head-template parsing. Input ownership: **D9.1.1v4 / D9.1.3v2**.
+
+The in-head handler inserted templates but had no matching end-template branch.
+Following base, linked stylesheet and body nodes remained inside the template.
+The existing close-until-template and reset-insertion-mode helpers now close
+that scope, and resetting recognizes the containing head. This does not claim
+complete HTML template insertion-mode conformance.
+
+`ClosingHeadTemplatesPreservesFollowingMetadataAndBody` covers simple and nested
+head templates, then verifies sibling base/link metadata and the real body.
+It and the related context-fragment and script-enabled-noscript parser tests
+pass (three total). Final host controls also pass: six base/resource fixtures,
+inert metadata with active foreign SVG controls, and two persistent HTTP
+regressions. Evidence: `../../lambda/temp/online-visual-round62/`.
 
 
-<a id="li-066"></a>
+<a id="li-073"></a>
 
-### LI-066 — shape-outside rejects otherwise supported gradient images
+### LI-073 — Element discovery loses completion after byte-only prefetch
+
+**Status:** FIXED, 2026-11-17. **Lambda blocker:** resolved for the existing
+single-owner resource path. Network ownership remains in Input under
+**D9.1.1v4 / D9.1.3v2**; no runtime dependency or capture-clock change.
+
+Initial stylesheet prefetch registers RESOURCE_PREFETCH with no element. The
+later typed load returns that same URL resource without adopting its consumer.
+Thus both successful and failed initial links lose load/error events; a
+print-only sheet never runs its authored media activation handler. A preload
+link discovered without the initial stylesheet prefetch is an effective control.
+
+A byte-only prefetch now adopts a discovered typed element consumer. If its
+completion was already processed, it reenters the existing main-thread queue;
+settled optional failures retain error delivery. Request identity, priority,
+statistics and transfer bytes remain shared. Ownerless byte consumers retain
+their existing behavior. Radiant reuses the initial parsed sheet (RI-107).
+
+Verification: all **six NetworkResourceManager tests pass**, including queued
+and already-processed cached completion, once-only delivery and unchanged
+resource counts. The host's four initial-link HTTP regressions failed before
+and pass after; the adjacent ten resource-discovery/completion tests also pass.
+Chromium headless shell independently confirms load/error ordering, print-sheet
+activation and empty-sheet completion. No broad baseline was rerun.
+
+The existing resource API still has one element owner per URL; this repair does
+not introduce a multi-consumer subscription model. Failed-sheet CSSOM objects
+also differ from Chromium (which retains an empty sheet for this 404 fixture);
+that small CSSOM difference is outside the completion-event repair.
+
+
+<a id="li-072"></a>
+
+### LI-072 — Font-family lists reject pending substitutions and their fallback families
+
+**Status:** FIXED, 2026-11-17. **Lambda blocker:** resolved for the shared
+font-family declaration/value path. Input owns token parsing under
+**D9.1.1v4 / D9.1.3v2**. Existing document/variable ownership and **D10.1.7**
+capture clocks are unchanged; no formal ruling changes.
+
+Limitless supplies its Greycliff families through a custom property and uses
+font-family:var(--font-greycliff),system-ui,... . Native CSS.supports returns
+false and the page inherits serif/Times New Roman despite the custom property
+being present. Literal lists and a whole-value var() already work. The shared
+family token validator admits literal strings/identifiers only and runs before
+variable substitution; the duplicate property-value parser also treats an
+initial function as the entire value, losing later family groups.
+
+Both font-family entry points now share family grouping. Pending substitutions
+use the existing declaration component-sequence parser, extracted without a
+third implementation; nested fallback commas stay inside their function.
+Literal family grammar is checked after substitution, preserving invalid-value
+behavior and quoted-name separation. The duplicate family-list parser is
+removed. A shared token function-name helper handles decoded names that retain
+an opening parenthesis and is also used by ordinary function parsing. No font
+name, site condition, glyph metric, font cache or fallback result is hard-coded.
+The governing syntax is [CSS Variables section3](https://www.w3.org/TR/css-variables-1/#using-variables)
+and [CSS Fonts font-family](https://www.w3.org/TR/css-fonts-4/#font-family-prop).
+
+All205 focused Input tests pass (92 parser,113 engine). The new parser case
+checks six pending lists through both entry points. Three native document
+controls pass: the new Ahem/list/fallback/invalid-variable/live-update case,
+the adjacent monospace-size case and retained-font margin sizing. Before the
+repair, the list/fallback/late-variable glyph widths are72.2168px instead of100px.
+Chromium independently confirms admission and the real-font/invalid-variable/
+live-update expectations. The saved Limitless page now selects its declared
+Greycliff family chain and CSS.supports returns true. The first candidate's
+new unit exposed the raw FUNCTION token's retained parenthesis; that handling
+was corrected before qualification, and the first candidate is not published.
+
+Evidence: sibling Lambda temp/online-visual-round57/ holds source hashes,
+before/after parser and font controls, browser results, release pin and selected
+live capture/report qualification. Only focused tests are run for this repair;
+no new full baseline pass is claimed. Live page clearance requires visual
+review and is recorded in the online report, independently of exception or
+font-selection repair.
+
+<a id="li-071"></a>
+
+### LI-071 — shape-outside rejects otherwise supported gradient images
 
 **Status:** FIXED, 2026-11-16. **Dependent task blocker:** resolved for
 Radiant's CSS Shapes WPT gradient contours. Ownership is D9.1.1v4 /
@@ -44,6 +157,24 @@ with three skips across 109 executables. Radiant's final Shapes suite passes
 294/294 with the separate approved reference repairs recorded in RI-094.
 Evidence: `../Lambda-opus/temp/wpt-css-shapes/input-parser-final.log`,
 `input-baseline-continuation.log` and `completed-suite-final.log`.
+
+<a id="li-066"></a>
+
+### LI-066 — Individual translation rejects CSS math arguments
+
+**Status:** FIXED, 2026-11-16. **Lambda blocker:** no; Draftbit's primary
+navigation was shifted halfway offscreen. Input ownership D9.1.1v4 /
+D9.1.3v2; the native math resolver is tracked separately as RI-094.
+
+`translate:calc(calc(1 / 2 * 100%) * -1) 0` is a valid percentage translation.
+`css_value_is_individual_transform` admitted only literal lengths, percentages
+and zero, although `css_transform_argument_valid` already validates typed
+calculations. Individual translation now shares the `translate3d()` argument
+checker, retaining the third-axis percentage rejection and invalid-domain
+rejections. `CssEngineTest.SupportsIndividualTranslationMathUsesTransformArgumentTypes`
+and the existing supports-validation control pass. Seven native PNG controls
+and Chromium positions qualify the integrated repair; evidence is in Lambda
+`temp/online-visual-round39/`. No parser tolerance or capture policy changed.
 
 <a id="li-065"></a>
 
@@ -2080,3 +2211,168 @@ Historical owner declaration inventory (line numbers before removal):
 - `Item cow_path_borrow_home_keys` (line 3819)
 - `Item cow_place_leaf_fixed` (line 3830)
 - `Item cow_place_leaf_keys` (line 3834)
+
+<a id="li-067"></a>
+
+## LI-067 — Omitted flex basis collapsed content in auto-height columns
+
+**Status:** FIXED, 2026-11-17. Input owns the shared shorthand projection under
+D9.1.1v4/D9.1.3v2. No formal ruling changes. In `css_properties.cpp`,
+`css_project_shorthand_longhand` gave numeric `flex` shorthands an omitted
+basis of `0px`. In an auto-height column with hidden overflow this is definite
+zero, so `flex:1` / `flex:1 1` discarded content height. Cleanup.pictures' saved
+hydrated source reduced its first app from about920px to240px and exposed the
+black section below. The live page also has a separate client initialization
+path; a restored saved source alone does not establish a live clearance.
+
+The immutable shorthand default is now `0%`, shared by layout, substitution,
+inheritance and computed-style consumers. Explicit `0`, `0px`, `0%`, `auto`,
+`none`, and supplied bases retain their own meanings. This deliberately follows
+interoperable browser behavior, **not the current Flexbox specification's
+omitted-zero wording**. The distinction and collapsed-overflow consequences
+are documented in [CSSWG issue5742](https://github.com/w3c/csswg-drafts/issues/5742).
+There are no URL, class, content, viewport or capture-specific conditions.
+
+Evidence in Lambda `temp/online-visual-round43`: the8-case PNG test has3 genuine
+pre-fix failures, with explicit-zero and auto controls passing; independent
+Chromium confirms all8 heights and computed bases. Input's
+`FlexShorthandRetainsOmittedPercentageAndExplicitZeroBasis` directly checks8
+projection forms. Native
+`OmittedFlexBasisRetainsContentAcrossLiveShorthandChanges` checks6 live
+shorthand/substitution transitions and their retained percentage modes.
+Final qualification and page outcome are recorded in the round43 checkpoint
+and comparison report. Capture admission, clocks and tolerances are unchanged.
+
+<a id="li-068"></a>
+
+## LI-068 — Automatic font faces loaded and cached a fixed regular instance
+
+**Status:** FIXED, 2026-11-17. Input owns CSS descriptors and the unified font
+registry under D9.1.1v4/D9.1.3v2; Radiant's registration bridge preserves the
+new mode. Cache ownership remains D5.5.1. No formal ruling changes.
+
+Affinity's hero requested weight700 from a variable face whose invalid
+`font-weight:400 500 700` descriptor must be ignored. CSS Fonts4 §4.4 specifies
+an initial automatic descriptor: match as normal, but do not clamp variation
+axes. The parser instead initialized normal400. The font registry then loaded
+its descriptor weight and cached only by size, losing the caller's requested
+variable instance. Raster glyphs were visibly thin despite the existing
+CoreText variation backend. The independent local SFNS fixture reproduces
+this with omitted, explicit auto and invalid descriptors; all3 fail before
+repair, while an explicit400 control passes.
+
+`FONT_WEIGHT_AUTO` is a descriptor-only zero sentinel, without a data-layout
+change. Omitted/invalid and explicit auto weight retain that mode; explicit
+normal/numeric weights remain fixed. The registry matches auto as400, carries
+the requested effective axis weight through file, memory/data and local
+sources, and includes that weight in the retained-instance cache. Family and
+per-codepoint loading share the same producer. Fixed descriptors retain their
+clamp. Source selection and renderer clocks/budgets are unchanged. No page
+condition or downloaded proprietary-font fixture is introduced.
+
+This is scoped to automatic weights. General descriptor ranges, automatic
+style/width descriptors, extended numeric grammars and text-stroke rendering
+are not added here. [CSS Fonts4 §4.4](https://www.w3.org/TR/css-fonts-4/#font-prop-desc)
+is the external descriptor reference; browser experiments distinguish
+explicit400 from automatic weights rather than forwarding every request.
+
+Lambda `temp/online-visual-round45` records4PNG checks (Mac system SFNS,
+non-Mac skip explicit), four independent Chromium equivalences,10focused
+font-face parser tests,9font/context tests and4Radiant font tests passing.
+The generic registry controls use the existing FreeSans fixture and exercise
+cache/glyph selection at multiple weights; Mac controls independently compare
+4variable instances ×3glyph advances with their native raster face. Existing
+advance handling already passes; no additional metric patch was needed.
+A single broad baseline milestone and saved/live page outcomes are recorded
+in the round45 checkpoint/report. Focused evidence alone does not establish
+a live page clearance or a clean full baseline.
+
+Round45 milestone: Affinity's live mean error improves14.6559%→8.8302%,
+with the main variable headline restored. Four large corner images remain
+absent, so the page retains high severity by manual review. The broad Radiant
+run reports8488checks/8167passed/2failed/299partial/20skipped; neither failure
+was in font selection. The retained atomic-role regression and stale omitted
+flex-basis expectations were corrected; focused rechecks pass. The full
+baseline was not repeated. This does not claim a clean full baseline or page
+clearance. Evidence: Lambda round45 checkpoint and comparison repair gallery.
+
+<a id="li-069"></a>
+
+## LI-069 — Borrowed pseudo cascades invalidated authored ancestor inputs
+
+**Status:** FIXED, 2026-11-17. D5.5.1 requires intrinsic queries to preserve
+selected fragments; provider ownership is D9.1.1v4/D9.1.3v2. No ruling changes.
+Mymind's saved hydrated navigation emitted three selected-flow restoration
+errors. A release-visible trace showed list-item input revisions changing9→11
+inside a measurement, while generation, style epoch and mutation epoch stayed
+unchanged. An automated reduction retained three CSS rules and a small
+navigation with an unrelated custom-layout attribute.
+
+`dom_element_borrow_specified_style` reused authored-write invalidation when
+refreshing a generated box's derived cascade. It expired ancestor inputs and
+made the unchanged selected flow fail its valid stale-result guard. A shared
+local refresh now expires the generated box's own style/version/intrinsic
+cache and recompute flags. Same and replacement bindings use it; normal
+attribute/text/style writes still invalidate ancestor queries. The replay
+guard is unchanged. No page condition or capture policy is introduced.
+
+Lambda `temp/online-visual-round46` records same/replacement/rebound pseudo
+style controls and a real authored font write; the latter still invalidates
+the host. The old executable fails all three new rendering controls. After
+this repair and Radiant RI-101, seven PNG tests, four native tests, three
+independent Chromium equivalences and integer lint pass. Two existing owned
+flow/pseudo-font ownership tests also pass during implementation. The original
+saved Mymind page has zero restoration errors instead of three. Its live
+capture remains blank, so no high-severity clearance is claimed. Broad
+baselines were deferred after the round45 milestone.
+
+<a id="li-070"></a>
+
+## LI-070 — Backed insertion ignored the native slot of DOM-only references
+
+**Status:** FIXED, 2026-11-17. **Lambda blocker:** no.
+Owner boundaries are D9.1.1v4 / D9.1.3v2; retained node identity follows
+D5.5.1. No design ruling changes.
+
+`dom_insert_detached_backed_element` accepted MarkEditor's relink whenever
+the inserted child already had the requested parent. That proves membership,
+not position: a DOM-only reference such as a comment has no backing slot.
+Inserting a mixed fragment before that anchor reversed its element order,
+causing Svelte's later traversal to read a text node instead of its element.
+The helper now preserves the completed backing edit and places the live native
+node immediately before the actual reference, detaching only its native link
+when necessary. No new node, copied subtree or synthetic index is introduced.
+
+The new native test covers both UI and non-UI documents, two consecutive
+insertions, sibling identity and Mark ordering. It and the existing nested-array
+and mixed-node backing controls pass. Four Lambda PNG cases compare append,
+before, after and insertBefore with mixed comments/text/elements; the latter
+two fail before and all pass after. Together with RI-102 and Lambda's fragment
+and clone repairs, crates.io renders its main page instead of a blank green
+canvas. Evidence is in Lambda `temp/online-visual-round47`; the online report
+records the remaining visible differences and milestone qualification.
+The milestone's borrowed-fragment-text regression was corrected in Lambda;
+all nine persistent failed cases and the initial jQuery case pass focused checks.
+The full baseline was not repeated after that correction.
+
+
+<a id="li-075"></a>
+
+## LI-075 — Missing extracted document resource-base resolver
+
+**Status:** FIXED 2026-11-17. **Authority:** D9.1.1v4, D9.1.3v2.
+**Dependent blocker:** Lambda full release compilation.
+
+The extracted Input DOM API omitted `dom_document_resolve_url`, while Lambda's
+DOM and script host still called it. The standard release build failed with an
+undeclared function. Input now exports the owned resolver. It traverses source
+identity, ignores inert HTML template content, uses the first HTML base href,
+rejects invalid/data/javascript resource bases, and preserves the document URL.
+Lambda's remaining stale inert-template helper call now uses Input's existing
+source identity and namespace APIs.
+
+Verification: the standard Lambda release build passes; all 24
+`test_input_dom_native_gtest` cases pass, including
+`ResourceBasePreservesDocumentIdentityAndSkipsTemplates`. No vendor edits or
+Input-to-runtime dependency was introduced. Evidence is in the dependent
+checkout's `temp/sync-memory-impl/{build-p0.log,input-dom-tests2.log}`.

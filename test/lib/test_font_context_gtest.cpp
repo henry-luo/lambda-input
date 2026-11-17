@@ -12,6 +12,9 @@
 #include "lib/arena.h"
 #include "lib/hashmap_helpers.h"
 #include "lib/utf.h"
+#ifdef __APPLE__
+#include <CoreText/CoreText.h>
+#endif
 
 class FontVerticalTablesTest : public ::testing::Test {
 protected:
@@ -683,3 +686,75 @@ TEST(FontContextTest, LongSessionGlyphArenaUsePlateausAtConfiguredLimit) {
     arena_destroy(arena);
     pool_destroy(pool);
 }
+
+class FontFaceStyleTest : public ::testing::Test {
+protected:
+    FontContext* context = nullptr;
+    void SetUp() override {
+        FontContextConfig config = {}; config.pixel_ratio = 1.0f;
+        context = font_context_create(&config);
+        ASSERT_NE(context,nullptr);
+    }
+    void TearDown() override { if (context) font_context_destroy(context); }
+    void register_face(const char* family, FontWeight weight, const char* path) {
+        FontFaceSource source = {}; source.path = path;
+        FontFaceDesc face = {}; face.family = family; face.weight = weight;
+        face.sources = &source; face.source_count = 1;
+        ASSERT_TRUE(font_face_register(context,&face));
+    }
+};
+
+TEST_F(FontFaceStyleTest, AutoDescriptorRetainsRequestedWeightsAcrossCacheAndGlyphSelection) {
+    const char* path = "test/fixtures/fonts/FreeSans.woff";
+    register_face("AutoFace",FONT_WEIGHT_AUTO,path);
+    register_face("FixedFace",FONT_WEIGHT_NORMAL,path);
+    for (FontWeight weight : {FONT_WEIGHT_NORMAL,FONT_WEIGHT_BOLD,FONT_WEIGHT_LIGHT,FONT_WEIGHT_BOLD}) {
+        SCOPED_TRACE(weight);
+        FontStyleDesc style = {}; style.family = "AutoFace"; style.size_px = 32.0f; style.weight = weight;
+        FontHandle* handle = font_resolve(context,&style);
+        ASSERT_NE(handle,nullptr); EXPECT_EQ(handle->weight,weight);
+        EXPECT_TRUE(font_handle_is_document_font(handle));
+        font_handle_release(handle);
+        handle = font_resolve_document_face_for_codepoint(context,&style,'M');
+        ASSERT_NE(handle,nullptr); EXPECT_EQ(handle->weight,weight);
+        font_handle_release(handle);
+        style.family = "FixedFace";
+        handle = font_resolve(context,&style);
+        ASSERT_NE(handle,nullptr); EXPECT_EQ(handle->weight,FONT_WEIGHT_NORMAL);
+        font_handle_release(handle);
+    }
+}
+
+TEST_F(FontFaceStyleTest, AutoDescriptorMatchesAsNormalRatherThanZero) {
+    register_face("Weights",FONT_WEIGHT_AUTO,"test/fixtures/fonts/FreeSans.woff");
+    register_face("Weights",FONT_WEIGHT_LIGHT,"test/fixtures/fonts/FreeSans.woff");
+    FontStyleDesc style = {}; style.family = "Weights"; style.size_px = 16.0f; style.weight = FONT_WEIGHT_NORMAL;
+    const FontFaceDesc* face = font_face_find(context,&style);
+    ASSERT_NE(face,nullptr); EXPECT_EQ(face->weight,FONT_WEIGHT_AUTO);
+    style.weight = FONT_WEIGHT_LIGHT;
+    face = font_face_find(context,&style);
+    ASSERT_NE(face,nullptr); EXPECT_EQ(face->weight,FONT_WEIGHT_LIGHT);
+}
+
+#ifdef __APPLE__
+TEST_F(FontFaceStyleTest, AutoVariableWeightsUseSelectedNativeAdvances) {
+    register_face("VariableFace",FONT_WEIGHT_AUTO,"/System/Library/Fonts/SFNS.ttf");
+    for (FontWeight weight : {FONT_WEIGHT_LIGHT,FONT_WEIGHT_NORMAL,FONT_WEIGHT_BOLD,FONT_WEIGHT_BLACK}) {
+        SCOPED_TRACE(weight);
+        FontStyleDesc style = {}; style.family = "VariableFace"; style.size_px = 90.0f; style.weight = weight;
+        FontHandle* handle = font_resolve(context,&style);
+        ASSERT_NE(handle,nullptr);
+        CTFontRef native = (CTFontRef)handle->ct_raster_ref;
+        ASSERT_NE(native,nullptr);
+        for (UniChar character : {(UniChar)'M',(UniChar)'W',(UniChar)'i'}) {
+            SCOPED_TRACE(character);
+            CGGlyph glyph = 0; CGSize advance = {};
+            ASSERT_TRUE(CTFontGetGlyphsForCharacters(native,&character,&glyph,1));
+            CTFontGetAdvancesForGlyphs(native,kCTFontOrientationHorizontal,&glyph,&advance,1);
+            GlyphInfo info = font_get_glyph(handle,character);
+            EXPECT_NEAR(info.advance_x,(float)advance.width,1.0f/64.0f);
+        }
+        font_handle_release(handle);
+    }
+}
+#endif

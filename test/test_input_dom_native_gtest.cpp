@@ -303,6 +303,43 @@ TEST(InputDomNativeTest, CopiedTreeEditDoesNotReadSourceHeaderAgain) {
 }
 #endif
 
+TEST(InputDomNativeTest, BackedInsertionPreservesDomOnlyCommentReferenceOrder) {
+    for (bool ui_mode : {false, true}) {
+        SCOPED_TRACE(ui_mode);
+        Pool* pool = pool_create();
+        ASSERT_NE(pool, nullptr);
+        Input* input = Input::create(pool);
+        ASSERT_NE(input, nullptr);
+        input->ui_mode = ui_mode;
+        MarkBuilder builder(input);
+        Item source = builder.element("div").final();
+        DomDocument* document = dom_document_create(input);
+        ASSERT_NE(document, nullptr);
+        DomElement* root = build_dom_tree_from_element(source.element, document, nullptr);
+        ASSERT_NE(root, nullptr);
+        document->root = lam::up(root);
+        Item backing = builder.element("!--").child(builder.createStringItem("anchor")).final();
+        DomComment* anchor = dom_comment_create_detached(backing.element, document);
+        ASSERT_NE(anchor, nullptr);
+        ASSERT_TRUE(((DomNode*)root)->append_child(anchor));
+        DomElement* first = dom_create_backed_element_identity(document, "span", nullptr, false);
+        DomElement* second = dom_create_backed_element_identity(document, "b", nullptr, false);
+        ASSERT_NE(first, nullptr);
+        ASSERT_NE(second, nullptr);
+        ASSERT_TRUE(dom_insert_detached_backed_element(root, first, anchor));
+        ASSERT_TRUE(dom_insert_detached_backed_element(root, second, anchor));
+        EXPECT_EQ(root->first_child, first);
+        EXPECT_EQ(first->next_sibling, second);
+        EXPECT_EQ(second->next_sibling, anchor);
+        EXPECT_EQ(root->last_child, anchor);
+        EXPECT_EQ(dom_backed_node_index(root, first), 0);
+        EXPECT_EQ(dom_backed_node_index(root, second), 1);
+        EXPECT_EQ(dom_backed_node_index(root, anchor), -1);
+        dom_document_destroy(document);
+        pool_destroy(pool);
+    }
+}
+
 TEST(InputDomNativeTest, NestedArrayEditsKeepOwnedChildOccurrences) {
     for (bool ui_mode : {false, true}) {
         SCOPED_TRACE(ui_mode);
@@ -847,4 +884,67 @@ TEST(InputDomNativeTest, CopiedNominalTypeValueKeepsItsDeclaredLayout) {
     EXPECT_EQ(copied->name.length, 6u); EXPECT_EQ(memcmp(copied->name.str, "Record", 6), 0);
     EXPECT_EQ(copied->base, nullptr); EXPECT_EQ(copied->methods, nullptr);
     dom_document_destroy(document); pool_destroy(document_pool);
+}
+
+TEST(InputDomNativeTest, ResourceBasePreservesDocumentIdentityAndSkipsTemplates) {
+    Pool* pool = pool_create();
+    ASSERT_NE(pool, nullptr);
+    Input* input = Input::create(pool);
+    ASSERT_NE(input, nullptr);
+    MarkBuilder builder(input);
+    Item inert = builder.element("template").child(
+        builder.element("base").attr("href", "/inert/").final()).final();
+    Item base = builder.element("base").attr("href", "../assets/").final();
+    Item html = builder.element("html").child(builder.element("head").child(inert).child(base).final()).final();
+    DomDocument* document = dom_document_create(input);
+    ASSERT_NE(document, nullptr);
+    document->root = lam::up(build_dom_tree_from_element(html.element, document, nullptr));
+    document->url = lam::own(url_parse("https://example.test/docs/page.html"));
+    Url* resolved = dom_document_resolve_url(document);
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_STREQ(url_get_href(resolved), "https://example.test/assets/");
+    EXPECT_STREQ(url_get_href(document->url), "https://example.test/docs/page.html");
+    url_destroy(resolved);
+    const DomDocument* const_document = document;
+    resolved = dom_document_resolve_url(const_document, "entry.css");
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_STREQ(url_get_href(resolved), "https://example.test/assets/entry.css");
+    url_destroy(resolved);
+    DomElement* active = dom_find_element_for_source(document->root, base.element);
+    ASSERT_NE(active, nullptr);
+    ASSERT_TRUE(active->set_attribute("href", "javascript:bad"));
+    resolved = dom_document_resolve_url(document);
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_STREQ(url_get_href(resolved), "https://example.test/docs/page.html");
+    url_destroy(resolved);
+    dom_document_destroy(document);
+    pool_destroy(pool);
+}
+
+TEST(InputDomNativeTest, ScopedValueParserUsesExplicitLengthAndRestoresItsOwner) {
+    const char source[] = {'[', '1', ']', 'x'};
+    InputAllocationContext* previous = input_allocation_context;
+    const char* formats[] = {"json", "mark"};
+    for (const char* format : formats) {
+        Pool* pool = pool_create();
+        ASSERT_NE(pool, nullptr);
+        Input* input = Input::create(pool);
+        ASSERT_NE(input, nullptr);
+        ASSERT_TRUE(input_parse_value_n(input, source, 3, format));
+        EXPECT_FALSE(input->parse_failed);
+        EXPECT_EQ(input_allocation_context, previous);
+        EXPECT_EQ(input->parse_options, nullptr);
+        ASSERT_EQ(get_type_id(input->root), LMD_TYPE_ARRAY);
+        ASSERT_EQ(input->root.array->length, 1);
+        EXPECT_EQ(it2i(input->root.array->items[0]), 1);
+        pool_destroy(pool);
+    }
+    Pool* pool = pool_create();
+    ASSERT_NE(pool, nullptr);
+    Input* input = Input::create(pool);
+    const char nul_json[] = {'[', '1', ']', 0, 'x'};
+    ASSERT_TRUE(input_parse_value_n(input, nul_json, sizeof(nul_json), "json"));
+    EXPECT_TRUE(input->parse_failed);
+    EXPECT_EQ(input_allocation_context, previous);
+    pool_destroy(pool);
 }

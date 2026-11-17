@@ -153,6 +153,9 @@ bool input_parse_value_n(Input* input, const char* source, size_t length,
     const char* type, const InputParseOptions* options);
 // parse captured NUL-terminated source into a caller-owned Input; no acquisition.
 bool input_parse_source_exact(const char* type, Input* input, const char* source);
+// parse JSON/Mark values in an explicit invocation owner; no InputManager retention.
+bool input_parse_value_n(Input* input, const char* source, size_t length,
+    const char* type, const InputParseOptions* options = NULL);
 Input* input_from_source_n(const char* source, size_t source_len, Url* url,
     String* type, String* flavor);
 Input* input_from_source_n_with_name_parent(const char* source, size_t source_len,

@@ -1092,6 +1092,32 @@ TEST_F(HtmlParserTest, FragmentTokenScratchPreservesPublishedDataAndContinuation
     EXPECT_EQ(getAttr(body->items[1000].element, "id"), "later");
 }
 
+TEST_F(HtmlParserTest, ClosingHeadTemplatesPreservesFollowingMetadataAndBody) {
+    const char* sources[] = {
+        "<!doctype html><head><template><base href='/inert/'></template>"
+        "<base href='/assets/'><link rel=stylesheet href='entry.css'></head><body><p>after</p>",
+        "<!doctype html><head><template><template><base href='/inert/'></template>"
+        "<meta name='inside'></template><base href='/assets/'>"
+        "<link rel=stylesheet href='entry.css'></head><body><p>after</p>"
+    };
+    for (const char* source : sources) {
+        SCOPED_TRACE(source);
+        Item result = parseHtml5Document(source);
+        Element* head = findElementByTagAllSlots(result, "head");
+        Element* body = findElementByTagAllSlots(result, "body");
+        Element* inert = findElementByTagAllSlots(result, "template");
+        ASSERT_NE(head, nullptr);
+        ASSERT_NE(body, nullptr);
+        ASSERT_NE(inert, nullptr);
+        EXPECT_EQ(countDirectElementChildrenByTagAllSlots(head, "template"), 1);
+        EXPECT_EQ(countDirectElementChildrenByTagAllSlots(head, "base"), 1);
+        EXPECT_EQ(countDirectElementChildrenByTagAllSlots(head, "link"), 1);
+        EXPECT_EQ(countDirectElementChildrenByTagAllSlots(head, "p"), 0);
+        EXPECT_EQ(countDirectElementChildrenByTagAllSlots(body, "p"), 1);
+        EXPECT_EQ(countDirectElementChildrenByTagAllSlots(body, "base"), 0);
+    }
+}
+
 TEST_F(HtmlParserTest, HtmlContextFragmentsRetainAndCreateHeadAndBody) {
     const char* sources[] = {
         "<!DOCTYPE html><html><head><title>kept</title></head><body><p>text</p></body></html>",

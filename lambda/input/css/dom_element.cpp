@@ -19,6 +19,7 @@
 #include "lib/strview.h"
 #include "lib/str.h"
 #include "lib/language_preferences.h"
+#include "lib/url.h"
 #include "lib/utf.h"
 #include "lib/arena.h"
 #include "lib/memtrack.h"
@@ -284,11 +285,11 @@ bool dom_insert_detached_backed_element(DomElement* parent, DomElement* child, D
         log_error("dom_insert_backed_element: inline insert changed backing identity");
         return false;
     }
-    if (child->parent != (DomNode*)parent) {
-        // MarkEditor can insert the backing before its detached wrapper is linked.
-        return ((DomNode*)parent)->insert_before(child, reference);
-    }
-    return true;
+    // backing order cannot locate a DOM-only reference such as a comment anchor.
+    // relinking may already attach the child, so restore its exact native slot.
+    if (child->parent == parent && child->next_sibling == reference) return true;
+    if (child->parent && !child->parent->remove_child(child)) return false;
+    return ((DomNode*)parent)->insert_before(child, reference);
 }
 
 bool dom_remove_backed_element_item(DomElement* parent, DomElement* child, int64_t child_index) {
@@ -1304,6 +1305,47 @@ bool dom_document_replace_url(DomDocument* document, Url* replacement) {
     return url_replace_contents(document->url, replacement);
 }
 
+static Url* dom_document_resource_base(const DomDocument* document) {
+    if (!document) return nullptr;
+    DomNode* root = (DomNode*)document->root;
+    DomNode* node = root;
+    while (node) {
+        DomElement* element = node->is_element() ? node->as_element() : nullptr;
+        bool html = element && !strcmp(dom_element_namespace_uri(element), "http://www.w3.org/1999/xhtml");
+        if (html && !strcmp(element->tag_name, "base")) {
+            const char* href = element->get_attribute("href");
+            if (href) {
+                Url* resolved = document->url ? url_parse_with_base(href, document->url) : url_parse(href);
+                if (resolved && url_is_valid(resolved) && resolved->scheme != URL_SCHEME_DATA &&
+                        resolved->scheme != URL_SCHEME_JAVASCRIPT) return resolved;
+                if (resolved) url_destroy(resolved);
+                // the first base with href owns resolution, including invalid values.
+                break;
+            }
+        }
+        // template contents are inert and cannot supply the document resource base.
+        DomNode* child = element && !(html && !strcmp(element->tag_name, "template"))
+            ? dom_source_child(element, true) : nullptr;
+        if (child) { node = child; continue; }
+        while (node && node != root && !dom_source_sibling(node, true)) node = dom_source_parent(node);
+        node = node && node != root ? dom_source_sibling(node, true) : nullptr;
+    }
+    return document->url ? url_clone(document->url) : url_parse("about:blank");
+}
+
+Url* dom_document_resolve_url(DomDocument* document) {
+    return dom_document_resource_base(document);
+}
+
+Url* dom_document_resolve_url(const DomDocument* document, const char* reference) {
+    if (!document && reference) return url_parse_with_base(reference, nullptr);
+    Url* base = document ? dom_document_resource_base(document) : url_parse("about:blank");
+    if (!reference) return base;
+    Url* result = url_parse_with_base(reference, base);
+    if (base) url_destroy(base);
+    return result;
+}
+
 extern "C" __attribute__((weak)) void dom_css_document_language_changed(void* document) {
     DomDocument* doc = (DomDocument*)document;
     if (doc) { doc->mutation_epoch++; doc->style_content_epoch++; }
@@ -1944,14 +1986,22 @@ void dom_element_clear_cascaded_styles(DomElement* element) {
     }
 }
 
+static void dom_element_refresh_borrowed_style(DomElement* element) {
+    // derived pseudo cascades must not turn a measurement into an authored subtree edit.
+    element->set_styles_resolved(false);
+    element->set_flag(ELMT_FLAG_NEEDS_STYLE_RECOMPUTE, true);
+    element->style_version++;
+    element->intrinsic_input_revision++;
+    element->set_has_cached_intrinsic_widths(false);
+}
+
 void dom_element_borrow_specified_style(DomElement* element, StyleTree* style) {
     if (!element) return;
     if (element->specified_style_shared()) {
         style_epoch_unbind_element(element);
     } else if (element->specified_style_borrowed()) {
         if (element->specified_style == style) {
-            element->set_styles_resolved(false);
-            element->set_needs_style_recompute(true);
+            dom_element_refresh_borrowed_style(element);
             return;
         }
         style_tree_release_borrow(element->specified_style);
@@ -1971,8 +2021,7 @@ void dom_element_borrow_specified_style(DomElement* element, StyleTree* style) {
     else element->mark_specified_style_owned();
     // Borrowing changes the cascade input. A retained generated box may have
     // just inherited its host's font, so it must reapply its own declarations.
-    element->set_styles_resolved(false);
-    element->set_needs_style_recompute(true);
+    dom_element_refresh_borrowed_style(element);
 }
 
 void dom_element_destroy(DomElement* element) {

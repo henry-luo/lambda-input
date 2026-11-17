@@ -15,11 +15,83 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-076"></a>
+
+### LI-076 — FIXED
+
+Constrained error/null outcome metadata now follows its base. See the
+[shared-core repair](<Lib_Input_Issue_Ledger (fixed).md#li-076>).
+
+<a id="li-075"></a>
+
+### LI-075 — FIXED
+
+The extracted document resource-base resolver was missing from the public Input
+API, blocking Lambda release builds. See the
+[resource-base restoration](<Lib_Input_Issue_Ledger (fixed).md#li-075>).
+
+<a id="li-074"></a>
+
+### LI-074 — FIXED
+
+Closing head templates no longer captures following metadata and body.
+See the [parser repair](<Lib_Input_Issue_Ledger (fixed).md#li-074>).
+
+<a id="li-073"></a>
+
+### LI-073 — FIXED
+
+Element discovery loses completion after byte-only prefetch.
+See the [completion repair](<Lib_Input_Issue_Ledger (fixed).md#li-073>).
+
+<a id="li-072"></a>
+
+### LI-072 — FIXED
+
+Font-family lists rejected pending substitutions mixed with later fallback families.
+See the [shared family-list parsing repair](<Lib_Input_Issue_Ledger (fixed).md#li-072>).
+
+<a id="li-071"></a>
+
+### LI-071 — FIXED
+
+`shape-outside` rejected supported gradients before contour construction.
+See the [shape-outside gradient admission repair](<Lib_Input_Issue_Ledger (fixed).md#li-071>).
+
+<a id="li-070"></a>
+
+### LI-070 — FIXED
+
+Backing insertion misordered native children before DOM-only comment anchors.
+See the [native reference-order repair](<Lib_Input_Issue_Ledger (fixed).md#li-070>).
+
+<a id="li-069"></a>
+
+### LI-069 — FIXED
+
+Derived pseudo-style refresh invalidated unchanged authored host sizing inputs.
+See the [local borrowed-cascade repair](<Lib_Input_Issue_Ledger (fixed).md#li-069>).
+
+<a id="li-068"></a>
+
+### LI-068 — FIXED
+
+Automatic document font faces lost the requested variable weight.
+See the [automatic-weight and instance-cache repair](<Lib_Input_Issue_Ledger (fixed).md#li-068>).
+
+<a id="li-067"></a>
+
+### LI-067 — FIXED
+
+An omitted flex shorthand basis collapsed auto-height columns.
+See the [interoperable percentage default](<Lib_Input_Issue_Ledger (fixed).md#li-067>).
+
 <a id="li-066"></a>
 
 ### LI-066 — FIXED
 
-See the [shape-outside gradient admission repair](<Lib_Input_Issue_Ledger (fixed).md#li-066>).
+Individual `translate` rejected typed calculations accepted by `translate3d()`.
+See the [shared-validation repair](<Lib_Input_Issue_Ledger (fixed).md#li-066>).
 
 <a id="li-065"></a>
 
