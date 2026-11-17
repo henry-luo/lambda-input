@@ -2372,25 +2372,6 @@ bool input_path_is_ebook(const char* path) {
     return file_path_has_ext_ci(path, "epub");
 }
 
-bool input_parse_value_n(Input* input, const char* source, size_t length,
-        const char* type, const InputParseOptions* options) {
-    if (!input || !source || !type || (strcmp(type, "json") && strcmp(type, "mark"))) return false;
-    // Mark consumes a terminated source; immutable binary views need not have a trailing NUL.
-    const char* bounded = !strcmp(type, "mark") ? pool_dup_n(input->pool, source, length) : source;
-    if (!bounded) return false;
-    InputAllocationContext allocation = {input->pool, input->arena, input->ui_mode, input};
-    InputAllocationContext* previous = input_allocation_context;
-    input_allocation_context = &allocation;
-    input->source_positions = options && options->source_positions;
-    input->parse_options = options;
-    if (!strcmp(type, "json")) parse_json_n(input, bounded, length);
-    else input_parse_source_exact(type, input, bounded);
-    input->parse_options = NULL;
-    input_allocation_context = previous;
-    if (get_type_id(input->root) == LMD_TYPE_ERROR) input->parse_failed = true;
-    return true;
-}
-
 extern "C" Input* input_from_source_n_with_name_parent(const char* source,
         size_t source_len, Url* abs_url, String* type, String* flavor,
         NamePool* name_parent, const InputParseOptions* options) {
@@ -2967,6 +2948,7 @@ bool input_parse_value_n(Input* input, const char* source, size_t length,
     }
     input_allocation_context = saved;
     input->parse_options = NULL;
+    if (get_type_id(input->root) == LMD_TYPE_ERROR) input->parse_failed = true;
     return true;
 }
 

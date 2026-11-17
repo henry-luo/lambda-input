@@ -6,6 +6,17 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-077"></a>
+
+### LI-077 — Duplicate bounded parser after merge
+
+**Status:** FIXED, 2026-11-18. **Authority:** D9.1.1v4. A merge introduced
+both implementations of `input_parse_value_n`, causing a C++ redefinition
+error and blocking the dependent sync build. One implementation remains; it
+preserves bounded JSON/Mark input, embedded-math options, Input ownership and
+parse-error tracking. `InputDomNativeTest.ScopedValueParserUsesExplicitLengthAndRestoresItsOwner`
+passes after rebuilding. Evidence: Lambda `temp/sync-test-phase2/input-parser-test.log`.
+
 <a id="li-076"></a>
 
 ### LI-076 — Constrained error contracts are not admitted by the shared core

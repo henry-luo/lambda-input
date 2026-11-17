@@ -27,6 +27,10 @@
 #include <vector>
 #include <string>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <signal.h>
+#endif
 #include <unistd.h>
 #include <fcntl.h>
 #include <climits>
@@ -324,6 +328,61 @@ TEST_F(FileAnchorTest, ScratchIsAnonymousWithoutPrematureSync) {
     EXPECT_EQ(fclose(stream), 0);
 }
 
+TEST_F(FileAnchorTest, KilledScratchWriterLeavesDurableFileAndNoScratchName) {
+    FileAnchor* anchor = open(FILE_ANCHOR_STRICT_STORAGE); ASSERT_NE(anchor, nullptr);
+    ASSERT_EQ(file_anchor_write_atomic(anchor, "committed", "safe", 4, nullptr), 0);
+    int ready[2]; ASSERT_EQ(pipe(ready), 0);
+    pid_t child = fork(); ASSERT_GE(child, 0);
+    if (child == 0) {
+        close(ready[0]);
+        FILE* stream = file_anchor_create_scratch(anchor, "crash-scratch");
+        if (!stream || fwrite("unpublished", 1, 11, stream) != 11 || fflush(stream) ||
+                write(ready[1], "x", 1) != 1) _exit(1);
+        for (;;) pause();
+    }
+    close(ready[1]);
+    char byte = 0; ssize_t count = read(ready[0], &byte, 1); close(ready[0]);
+    kill(child, SIGKILL);
+    int status = 0; ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_EQ(count, 1); EXPECT_TRUE(WIFSIGNALED(status));
+    FileRevision revision;
+    EXPECT_FALSE(file_anchor_stat(anchor, "crash-scratch", &revision)); EXPECT_EQ(errno, ENOENT);
+    expect_text(anchor, "committed", "safe");
+}
+
+static bool pause_before_scratch_unlink(void* context, const char*, FileAnchorAction action,
+        const FileRevision*) {
+    if (action == FILE_ANCHOR_REMOVE) {
+        int descriptor = *(int*)context;
+        if (write(descriptor, "x", 1) != 1) _exit(1);
+        for (;;) pause();
+    }
+    return true;
+}
+
+TEST_F(FileAnchorTest, KilledBeforeScratchUnlinkLeavesOnlyAnEmptyReservedName) {
+    int ready[2]; ASSERT_EQ(pipe(ready), 0);
+    FileAnchor* guarded = open(FILE_ANCHOR_STRICT_STORAGE, pause_before_scratch_unlink, &ready[1]);
+    FileAnchor* normal = open(FILE_ANCHOR_STRICT_STORAGE);
+    ASSERT_NE(guarded, nullptr); ASSERT_NE(normal, nullptr);
+    pid_t child = fork(); ASSERT_GE(child, 0);
+    if (child == 0) {
+        close(ready[0]);
+        FILE* stream = file_anchor_create_scratch(guarded, ".lambda-spool-0123456789abcdef0123456789abcdef");
+        if (stream) fclose(stream);
+        _exit(1);
+    }
+    close(ready[1]);
+    char byte = 0; ssize_t count = read(ready[0], &byte, 1); close(ready[0]);
+    kill(child, SIGKILL);
+    int status = 0; ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_EQ(count, 1); EXPECT_TRUE(WIFSIGNALED(status));
+    FileRevision revision;
+    ASSERT_TRUE(file_anchor_stat(normal, ".lambda-spool-0123456789abcdef0123456789abcdef", &revision));
+    EXPECT_TRUE(revision.stat.is_file); EXPECT_EQ(revision.stat.size, 0U);
+    ASSERT_TRUE(file_anchor_remove(normal, ".lambda-spool-0123456789abcdef0123456789abcdef", &revision));
+}
+
 TEST_F(FileAnchorTest, NewRegularFileSyncFailureNeverPublishesAStreamOrRetriesCreation) {
     FileAnchor* anchor = open(); ASSERT_NE(anchor, nullptr);
     for (unsigned fail = 1; fail <= 2; fail++) {
@@ -555,8 +614,8 @@ static bool deny_scratch_remove(void*, const char*, FileAnchorAction action, con
 }
 
 TEST_F(FileAnchorTest, ScratchRespectsCollisionAndRemoveDenial) {
-    seed("occupied", "original");
     FileAnchor* normal = open(); ASSERT_NE(normal, nullptr);
+    ASSERT_EQ(file_anchor_write_atomic(normal, "occupied", "original", 8, nullptr), 0);
     EXPECT_EQ(file_anchor_create_scratch(normal, "occupied"), nullptr); EXPECT_EQ(errno, EEXIST);
     expect_text(normal, "occupied", "original");
     FileAnchor* guarded = open(FILE_ANCHOR_SAME_DEVICE, deny_scratch_remove, nullptr);

@@ -15,6 +15,13 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-077"></a>
+
+### LI-077 — FIXED
+
+A merge duplicated the bounded value-parser definition and blocked Input builds.
+See the [merge repair](<Lib_Input_Issue_Ledger (fixed).md#li-077>).
+
 <a id="li-076"></a>
 
 ### LI-076 — FIXED
