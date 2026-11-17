@@ -2929,6 +2929,48 @@ Input* input_from_target_with_name_parent(Target* target, String* type,
 }
 #endif // LAMBDA_IME_RESOURCE_IO
 
+// Value parsing keeps the caller's Input lifetime and bounds byte slices.
+bool input_parse_value_n(Input* input, const char* source, size_t length,
+        const char* type, const InputParseOptions* options) {
+    if (!input || !type || length == SIZE_MAX || (!source && length) ||
+            (strcmp(type, "json") && strcmp(type, "mark"))) return false;
+    if (!source) source = "";
+    input->source_positions = options && options->source_positions;
+    input->parse_embedded_math = options && options->embedded_math;
+    input->parse_options = options;
+    InputAllocationContext allocation_context = {};
+    allocation_context.pool = input->pool;
+    allocation_context.arena = input->arena;
+    allocation_context.ui_mode = input->ui_mode;
+    allocation_context.input = input;
+    InputAllocationContext* saved = input_allocation_context;
+    input_allocation_context = &allocation_context;
+    if (!strcmp(type, "json")) {
+        parse_json_n(input, source, length);
+#ifndef LAMBDA_IME_RESOURCE_IO
+    } else if (memchr(source, 0, length)) {
+        input->parse_failed = true;
+        input->parse_error_message = pool_strdup(input->pool, "Unexpected NUL byte in Mark");
+        input->root = ItemError;
+    } else {
+        char* bounded = (char*)pool_alloc(input->pool, length + 1);
+        if (!bounded) { input_allocation_context = saved; input->parse_options = NULL; return false; }
+        memcpy(bounded, source, length);
+        bounded[length] = 0;
+        parse_mark(input, bounded);
+#else
+    } else {
+        input_allocation_context = saved;
+        input->parse_options = NULL;
+        return false;
+#endif
+    }
+    input_allocation_context = saved;
+    input->parse_options = NULL;
+    return true;
+}
+
+
 Input* input_from_target_with_io(Target* target, String* type, String* flavor,
         NamePool* name_parent, const SecurityIOClient* io) {
     if (!io) return input_from_target_with_name_parent(target, type, flavor, name_parent);

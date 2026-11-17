@@ -1726,6 +1726,10 @@ bool lambda_type_accepts_error(Type* type) {
     if (type->type_id == LMD_TYPE_TYPE && type->kind == TYPE_KIND_CONSTRAINED)
         return lambda_type_accepts_error(((TypeConstrained*)type)->base);
     if (type->type_id == LMD_TYPE_ANY || type->type_id == LMD_TYPE_ERROR) return true;
+    // S11.4.6v4 admits constrained contracts by their base at boundaries.
+    if (type->type_id == LMD_TYPE_TYPE && type->kind == TYPE_KIND_CONSTRAINED)
+        return lambda_type_accepts_error(((TypeConstrained*)type)->base);
+
     // an optional error outcome still admits the error, alongside null.
     if (type->type_id == LMD_TYPE_TYPE && type->kind == TYPE_KIND_UNARY &&
             ((TypeUnary*)type)->op == OPERATOR_OPTIONAL)
