@@ -310,6 +310,20 @@ TEST_F(FileAnchorTest, NewRegularFileSyncsBeforeReturningAStream) {
     stream = file_anchor_open_read(anchor, "lock"); ASSERT_NE(stream, nullptr); fclose(stream); EXPECT_EQ(trace.calls, 2U);
 }
 
+TEST_F(FileAnchorTest, ScratchIsAnonymousWithoutPrematureSync) {
+    FileAnchor* anchor = open(FILE_ANCHOR_STRICT_STORAGE); ASSERT_NE(anchor, nullptr);
+    AnchorSyncTrace trace;
+    FILE* stream = file_anchor_create_scratch(anchor, "scratch"); ASSERT_NE(stream, nullptr);
+    EXPECT_EQ(trace.calls, 0U);
+    FileRevision revision;
+    EXPECT_FALSE(file_anchor_stat(anchor, "scratch", &revision)); EXPECT_EQ(errno, ENOENT);
+    ASSERT_EQ(fwrite("abc", 1, 3, stream), 3U);
+    ASSERT_EQ(fseek(stream, 0, SEEK_SET), 0);
+    char data[4] = {};
+    EXPECT_EQ(fread(data, 1, 3, stream), 3U); EXPECT_STREQ(data, "abc");
+    EXPECT_EQ(fclose(stream), 0);
+}
+
 TEST_F(FileAnchorTest, NewRegularFileSyncFailureNeverPublishesAStreamOrRetriesCreation) {
     FileAnchor* anchor = open(); ASSERT_NE(anchor, nullptr);
     for (unsigned fail = 1; fail <= 2; fail++) {
@@ -534,6 +548,24 @@ static bool protect_anchor_object(void* context, const char* relative,
     if (action == FILE_ANCHOR_REPLACE && state->external_change)
         return write_binary_file(state->external_change, "external changed bytes", 22) == 0;
     return true;
+}
+
+static bool deny_scratch_remove(void*, const char*, FileAnchorAction action, const FileRevision*) {
+    return action != FILE_ANCHOR_REMOVE;
+}
+
+TEST_F(FileAnchorTest, ScratchRespectsCollisionAndRemoveDenial) {
+    seed("occupied", "original");
+    FileAnchor* normal = open(); ASSERT_NE(normal, nullptr);
+    EXPECT_EQ(file_anchor_create_scratch(normal, "occupied"), nullptr); EXPECT_EQ(errno, EEXIST);
+    expect_text(normal, "occupied", "original");
+    FileAnchor* guarded = open(FILE_ANCHOR_SAME_DEVICE, deny_scratch_remove, nullptr);
+    ASSERT_NE(guarded, nullptr);
+    EXPECT_EQ(file_anchor_create_scratch(guarded, "denied-scratch"), nullptr); EXPECT_EQ(errno, EACCES);
+    FileRevision revision;
+    ASSERT_TRUE(file_anchor_stat(normal, "denied-scratch", &revision));
+    EXPECT_TRUE(revision.stat.is_file);
+    EXPECT_TRUE(file_anchor_remove(normal, "denied-scratch", &revision));
 }
 
 TEST_F(FileAnchorTest, GuardChecksEveryDirectoryAndKeepsChildScope) {

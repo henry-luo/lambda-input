@@ -1311,9 +1311,9 @@ FileAnchor* file_anchor_create_directory(FileAnchor* parent, const char* name, u
     return file_anchor_child(parent, name, false, true, flags);
 }
 
-bool file_anchor_remove(FileAnchor* anchor, const char* relative, const FileRevision* expected) {
+static bool file_anchor_remove_impl(FileAnchor* anchor, const char* relative, const FileRevision* expected, bool durable) {
 #if defined(_WIN32) || defined(__EMSCRIPTEN__)
-    (void)anchor; (void)relative; (void)expected; errno = ENOTSUP; return false;
+    (void)anchor; (void)relative; (void)expected; (void)durable; errno = ENOTSUP; return false;
 #else
     if (!expected) { errno = EINVAL; return false; }
     char* copy = NULL; const char* leaf = NULL;
@@ -1339,11 +1339,15 @@ bool file_anchor_remove(FileAnchor* anchor, const char* relative, const FileRevi
         if (valid && !pass) valid = file_anchor_guard(anchor, relative, FILE_ANCHOR_REMOVE, &actual);
     }
     valid = valid && unlinkat(parent, leaf, actual.stat.is_dir ? AT_REMOVEDIR : 0) == 0;
-    if (valid) valid = file_anchor_sync(parent, anchor->options.flags) == 0;
+    if (valid && durable) valid = file_anchor_sync(parent, anchor->options.flags) == 0;
     int error = errno;
     if (parent >= 0) close(parent);
     mem_free(copy); errno = error; return valid;
 #endif
+}
+
+bool file_anchor_remove(FileAnchor* anchor, const char* relative, const FileRevision* expected) {
+    return file_anchor_remove_impl(anchor, relative, expected, true);
 }
 
 bool file_anchor_stat(FileAnchor* anchor, const char* relative, FileRevision* out) {
@@ -1442,9 +1446,9 @@ bool file_anchor_visit_strict(FileAnchor* directory, uint32_t max_entries,
     return file_anchor_visit_impl(directory, max_entries, visitor, context, true);
 }
 
-static FILE* file_anchor_open_stream(FileAnchor* anchor, const char* relative, bool create) {
+static FILE* file_anchor_open_stream(FileAnchor* anchor, const char* relative, bool create, bool durable) {
 #if defined(_WIN32) || defined(__EMSCRIPTEN__)
-    (void)anchor; (void)relative; (void)create; errno = ENOTSUP; return NULL;
+    (void)anchor; (void)relative; (void)create; (void)durable; errno = ENOTSUP; return NULL;
 #else
     char* copy = NULL; const char* leaf = NULL;
     int parent = file_anchor_parent(anchor, relative, &copy, &leaf);
@@ -1462,7 +1466,7 @@ static FILE* file_anchor_open_stream(FileAnchor* anchor, const char* relative, b
     }
     // Publish a new lock/lease stream only after its empty inode and name have
     // been synced. Failure may leave that object, so exclusive retry must fail.
-    if (valid && create) valid = file_anchor_sync(fd, anchor->options.flags) == 0 &&
+    if (valid && create && durable) valid = file_anchor_sync(fd, anchor->options.flags) == 0 &&
         file_anchor_sync(parent, anchor->options.flags) == 0;
     FILE* stream = valid ? fdopen(fd, create ? "w+b" : "rb") : NULL;
     int error = errno;
@@ -1475,11 +1479,25 @@ static FILE* file_anchor_open_stream(FileAnchor* anchor, const char* relative, b
 }
 
 FILE* file_anchor_open_read(FileAnchor* anchor, const char* relative) {
-    return file_anchor_open_stream(anchor, relative, false);
+    return file_anchor_open_stream(anchor, relative, false, true);
 }
 
 FILE* file_anchor_create_regular(FileAnchor* anchor, const char* relative) {
-    return file_anchor_open_stream(anchor, relative, true);
+    return file_anchor_open_stream(anchor, relative, true, true);
+}
+
+FILE* file_anchor_create_scratch(FileAnchor* anchor, const char* relative) {
+    FILE* stream = file_anchor_open_stream(anchor, relative, true, false);
+    if (!stream) return NULL;
+    FileRevision revision = file_revision_stream(stream);
+    // Scratch is never published by name; its final atomic output has its own barrier.
+    if (!file_anchor_remove_impl(anchor, relative, &revision, false)) {
+        int error = errno;
+        fclose(stream);
+        errno = error;
+        return NULL;
+    }
+    return stream;
 }
 
 bool file_anchor_read_all(FileAnchor* anchor, const char* relative, uint64_t limit,

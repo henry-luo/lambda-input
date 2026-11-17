@@ -144,6 +144,8 @@ FILE* file_anchor_open_read(FileAnchor* anchor, const char* relative);
 // Create-only, synced empty inode and parent before returning the stream.
 // Later content needs its own flush/sync. Failure can leave the created object.
 FILE* file_anchor_create_regular(FileAnchor* anchor, const char* relative);
+// Create and unlink guarded scratch storage; only its eventual output is durable.
+FILE* file_anchor_create_scratch(FileAnchor* anchor, const char* relative);
 bool file_anchor_read_all(FileAnchor* anchor, const char* relative, uint64_t limit,
     MemCategory category, char** out_data, size_t* out_size, FileRevision* out_revision);
 // Capture bytes, revision and canonical name from the same held file. Named
