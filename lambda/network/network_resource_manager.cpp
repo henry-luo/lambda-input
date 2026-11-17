@@ -520,7 +520,22 @@ NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
     if (existing && existing->res) {
         // resource already exists
         NetworkResource* res = existing->res;
-        
+
+        // byte-only prefetches acquire element delivery when discovery finds their consumer.
+        if (res->type == RESOURCE_PREFETCH && type != RESOURCE_PREFETCH && owner) {
+            res->type = type;
+            res->owner_element = owner;
+            if (res->processed) {
+                res->processed = false;
+                // optional failures are counted as settled, but the new consumer still receives error.
+                if (res->optional_failure) res->state = STATE_FAILED;
+                if (res->state == STATE_COMPLETED || res->state == STATE_CACHED)
+                    queue_ready_resource_locked(mgr, res);
+                else if (res->state == STATE_FAILED)
+                    queue_failed_resource_locked(mgr, res);
+            }
+        }
+
         // if already completed or cached, return immediately
         if (res->state == STATE_COMPLETED || res->state == STATE_CACHED) {
             log_debug("network: reusing completed resource: %s", url);

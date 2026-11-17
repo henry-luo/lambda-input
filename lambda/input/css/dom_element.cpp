@@ -19,6 +19,7 @@
 #include "lib/strview.h"
 #include "lib/str.h"
 #include "lib/language_preferences.h"
+#include "lib/url.h"
 #include "lib/utf.h"
 #include "lib/arena.h"
 #include "lib/memtrack.h"
@@ -1304,7 +1305,7 @@ bool dom_document_replace_url(DomDocument* document, Url* replacement) {
     return url_replace_contents(document->url, replacement);
 }
 
-Url* dom_document_resolve_url(DomDocument* document) {
+static Url* dom_document_resource_base(const DomDocument* document) {
     if (!document) return nullptr;
     DomNode* root = (DomNode*)document->root;
     DomNode* node = root;
@@ -1330,6 +1331,19 @@ Url* dom_document_resolve_url(DomDocument* document) {
         node = node && node != root ? dom_source_sibling(node, true) : nullptr;
     }
     return document->url ? url_clone(document->url) : url_parse("about:blank");
+}
+
+Url* dom_document_resolve_url(DomDocument* document) {
+    return dom_document_resource_base(document);
+}
+
+Url* dom_document_resolve_url(const DomDocument* document, const char* reference) {
+    if (!document && reference) return url_parse_with_base(reference, nullptr);
+    Url* base = document ? dom_document_resource_base(document) : url_parse("about:blank");
+    if (!reference) return base;
+    Url* result = url_parse_with_base(reference, base);
+    if (base) url_destroy(base);
+    return result;
 }
 
 extern "C" __attribute__((weak)) void dom_css_document_language_changed(void* document) {

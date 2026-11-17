@@ -927,6 +927,14 @@ static void html5_process_in_head_mode(Html5Parser* parser, Html5Token* token) {
     if (token->type == HTML5_TOKEN_END_TAG) {
         const char* tag = token->tag_name->chars;
 
+        if (html5_token_is(token, MARKUP_NAME_TEMPLATE)) {
+            if (!html5_has_template_on_stack(parser)) return;
+            // closing a head template must not capture the following base, sheets or body.
+            html5_pop_until_tag(parser, HTML5_TAG(TEMPLATE));
+            html5_reset_insertion_mode(parser);
+            return;
+        }
+
         if (html5_token_is(token, MARKUP_NAME_HEAD)) {
             html5_pop_element(parser);  // pop <head>
             parser->mode = HTML5_MODE_AFTER_HEAD;
@@ -2656,6 +2664,10 @@ void html5_reset_insertion_mode(Html5Parser* parser) {
         }
         if (strcmp(tag, "table") == 0) {
             parser->mode = HTML5_MODE_IN_TABLE;
+            return;
+        }
+        if (strcmp(tag, "head") == 0) {
+            parser->mode = HTML5_MODE_IN_HEAD;
             return;
         }
         if (strcmp(tag, "body") == 0) {

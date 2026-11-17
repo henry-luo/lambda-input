@@ -8,6 +8,7 @@
 #include "lambda/network/enhanced_file_cache.h"
 #include "lambda/network/network_resource_manager.h"
 #include "lambda/network/network_scheduler.h"
+#include "lambda/network/resource_processor_hook.h"
 #include "lambda/input/css/dom_element.hpp"
 #include "lib/file.h"
 #include "lib/mem.h"
@@ -211,6 +212,50 @@ TEST(NetworkResourceManager, PrefetchAndTypedConsumerShareOneCachedResource) {
 
     resource_manager_destroy(manager);
     url_destroy(document.url);
+    enhanced_cache_destroy(cache);
+}
+
+static int prefetched_element_deliveries;
+static void count_prefetched_element_delivery(NetworkResource*, DomDocument*) {
+    prefetched_element_deliveries++;
+}
+
+TEST(NetworkResourceManager, ElementConsumerReceivesPrefetchCompletionOnce) {
+    const char* directory = "./temp/test_cache_prefetch_element";
+    const char* url = "https://example.test/initial.css";
+    ASSERT_TRUE(create_dir(directory));
+    EnhancedFileCache* cache = enhanced_cache_create(directory, 1024 * 1024, 10);
+    ASSERT_NE(cache, nullptr);
+    char* stored = enhanced_cache_store(cache, url, "body{}", 6, nullptr);
+    ASSERT_NE(stored, nullptr);
+    mem_free(stored);
+    const NetworkResourceProcessor* previous = network_resource_processor_get();
+    NetworkResourceProcessor processor = {};
+    processor.process_css = count_prefetched_element_delivery;
+    network_resource_processor_register(&processor);
+    for (int phase = 0; phase < 2; phase++) {
+        DomDocument document = {};
+        DomElement link = {};
+        NetworkResourceManager* manager = resource_manager_create(&document, nullptr, cache);
+        NetworkResource* prefetched = resource_manager_prefetch(manager, url, PRIORITY_HIGH);
+        EXPECT_NE(prefetched, nullptr);
+        if (phase) resource_manager_flush_layout_updates(manager);
+        prefetched_element_deliveries = 0;
+        NetworkResource* consumer = resource_manager_load(manager, url, RESOURCE_CSS, PRIORITY_NORMAL, &link);
+        EXPECT_EQ(consumer, prefetched);
+        EXPECT_EQ(consumer->owner_element, &link);
+        EXPECT_EQ(consumer->priority, PRIORITY_HIGH);
+        resource_manager_flush_layout_updates(manager);
+        EXPECT_EQ(prefetched_element_deliveries, 1);
+        resource_manager_load(manager, url, RESOURCE_CSS, PRIORITY_NORMAL, &link);
+        resource_manager_prefetch(manager, url, PRIORITY_NORMAL);
+        resource_manager_flush_layout_updates(manager);
+        EXPECT_EQ(prefetched_element_deliveries, 1);
+        EXPECT_EQ(manager->total_resources, 1);
+        EXPECT_EQ(manager->completed_resources, 1);
+        resource_manager_destroy(manager);
+    }
+    network_resource_processor_register(previous);
     enhanced_cache_destroy(cache);
 }
 

@@ -147,6 +147,7 @@ size_t css_token_array_remove_comments(Pool* pool, CssToken* tokens, size_t coun
 bool css_token_is_integer(const CssToken* token);
 // retain authored spelling while making tokens recovered at EOF safe to reparse.
 StrView css_token_source_text(const CssToken* token, Pool* pool);
+StrView css_token_function_name(const CssToken* token);
 static inline CssTokenType css_token_block_closer(CssTokenType type) {
     switch (type) {
     case CSS_TOKEN_FUNCTION: case CSS_TOKEN_LEFT_PAREN: return CSS_TOKEN_RIGHT_PAREN;
@@ -693,6 +694,7 @@ int css_skip_whitespace_tokens(const CssToken* tokens, int start, int token_coun
 bool css_selector_group_parse_consumed_all(const CssToken* tokens, int pos,
                                            int token_count);
 bool css_value_is_font_family_name(const CssValue* value);
+CssValue* css_parse_font_family_values(const CssToken* tokens, int value_start, int value_end, Pool* pool);
 
 static inline bool css_validate_font_family_tokens(const CssToken* tokens, int token_count) {
     if (!tokens || token_count <= 0) return false;

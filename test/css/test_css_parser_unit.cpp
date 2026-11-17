@@ -693,6 +693,42 @@ TEST_F(CssParserUnitTest, Declaration_FontFamilyValidLists) {
     css_property_system_cleanup();
 }
 
+TEST_F(CssParserUnitTest, FontFamilyPendingListsShareDeclarationAndValueGrouping) {
+    ASSERT_TRUE(css_property_system_init(pool.get()));
+    auto parser = CreateParser();
+    CssPropertyValueParser* value_parser = css_property_value_parser_create(pool.get());
+    const struct { const char* text; int count; CssEnum last; } cases[] = {
+        {"var(--faces), sans-serif", 2, CSS_VALUE_SANS_SERIF},
+        {"var(--faces, Arial), serif", 2, CSS_VALUE_SERIF},
+        {"var(--faces, Arial, Helvetica), monospace", 2, CSS_VALUE_MONOSPACE},
+        {"Arial, var(--faces), serif", 3, CSS_VALUE_SERIF},
+        {"var(--prefix) Roman, serif", 2, CSS_VALUE_SERIF},
+        {"env(custom-family, Arial), sans-serif", 2, CSS_VALUE_SANS_SERIF},
+    };
+    for (const auto& entry : cases) {
+        SCOPED_TRACE(entry.text);
+        char text[256];
+        str_fmt(text, sizeof(text), "font-family: %s", entry.text);
+        CssDeclaration* declaration = parser.ParseDeclaration(text);
+        ASSERT_NE(declaration, nullptr);
+        auto tokenizer = parser.Tokenize(entry.text);
+        CssValue* direct = css_parse_property_value(value_parser, tokenizer.tokens(),
+            (int)tokenizer.count(), "font-family");
+        for (CssValue* value : {declaration->value, direct}) {
+            ASSERT_NE(value, nullptr);
+            ASSERT_EQ(value->type, CSS_VALUE_TYPE_LIST);
+            EXPECT_TRUE(value->data.list.comma_separated);
+            ASSERT_EQ(value->data.list.count, entry.count);
+            EXPECT_TRUE(css_value_contains_pending_substitution(value));
+            CssValue* last = value->data.list.values[entry.count - 1];
+            ASSERT_NE(last, nullptr);
+            ASSERT_EQ(last->type, CSS_VALUE_TYPE_KEYWORD);
+            EXPECT_EQ(last->data.keyword, entry.last);
+        }
+    }
+    css_property_system_cleanup();
+}
+
 TEST_F(CssParserUnitTest, ValueParser_FontFamilyQuotedNameRequiresComma) {
     auto parser = CreateParser();
     auto tokenizer = parser.Tokenize("\"Trebuchet MS\" Arial, Helvetica");

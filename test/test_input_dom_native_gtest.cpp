@@ -905,6 +905,11 @@ TEST(InputDomNativeTest, ResourceBasePreservesDocumentIdentityAndSkipsTemplates)
     EXPECT_STREQ(url_get_href(resolved), "https://example.test/assets/");
     EXPECT_STREQ(url_get_href(document->url), "https://example.test/docs/page.html");
     url_destroy(resolved);
+    const DomDocument* const_document = document;
+    resolved = dom_document_resolve_url(const_document, "entry.css");
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_STREQ(url_get_href(resolved), "https://example.test/assets/entry.css");
+    url_destroy(resolved);
     DomElement* active = dom_find_element_for_source(document->root, base.element);
     ASSERT_NE(active, nullptr);
     ASSERT_TRUE(active->set_attribute("href", "javascript:bad"));
