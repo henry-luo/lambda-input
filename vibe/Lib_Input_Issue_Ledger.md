@@ -15,6 +15,14 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-072"></a>
+
+### LI-072 — FIXED
+
+The extracted document resource-base resolver was missing from the public Input
+API, blocking Lambda release builds. See the
+[resource-base restoration](<Lib_Input_Issue_Ledger (fixed).md#li-072>).
+
 <a id="li-071"></a>
 
 ### LI-071 — FIXED

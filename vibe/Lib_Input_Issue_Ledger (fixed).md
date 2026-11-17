@@ -2222,3 +2222,25 @@ records the remaining visible differences and milestone qualification.
 The milestone's borrowed-fragment-text regression was corrected in Lambda;
 all nine persistent failed cases and the initial jQuery case pass focused checks.
 The full baseline was not repeated after that correction.
+
+
+<a id="li-072"></a>
+
+## LI-072 — Missing extracted document resource-base resolver
+
+**Status:** FIXED 2026-11-17. **Authority:** D9.1.1v4, D9.1.3v2.
+**Dependent blocker:** Lambda full release compilation.
+
+The extracted Input DOM API omitted `dom_document_resolve_url`, while Lambda's
+DOM and script host still called it. The standard release build failed with an
+undeclared function. Input now exports the owned resolver. It traverses source
+identity, ignores inert HTML template content, uses the first HTML base href,
+rejects invalid/data/javascript resource bases, and preserves the document URL.
+Lambda's remaining stale inert-template helper call now uses Input's existing
+source identity and namespace APIs.
+
+Verification: the standard Lambda release build passes; all 24
+`test_input_dom_native_gtest` cases pass, including
+`ResourceBasePreservesDocumentIdentityAndSkipsTemplates`. No vendor edits or
+Input-to-runtime dependency was introduced. Evidence is in the dependent
+checkout's `temp/sync-memory-impl/{build-p0.log,input-dom-tests2.log}`.

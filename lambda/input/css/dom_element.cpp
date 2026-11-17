@@ -1304,6 +1304,34 @@ bool dom_document_replace_url(DomDocument* document, Url* replacement) {
     return url_replace_contents(document->url, replacement);
 }
 
+Url* dom_document_resolve_url(DomDocument* document) {
+    if (!document) return nullptr;
+    DomNode* root = (DomNode*)document->root;
+    DomNode* node = root;
+    while (node) {
+        DomElement* element = node->is_element() ? node->as_element() : nullptr;
+        bool html = element && !strcmp(dom_element_namespace_uri(element), "http://www.w3.org/1999/xhtml");
+        if (html && !strcmp(element->tag_name, "base")) {
+            const char* href = element->get_attribute("href");
+            if (href) {
+                Url* resolved = document->url ? url_parse_with_base(href, document->url) : url_parse(href);
+                if (resolved && url_is_valid(resolved) && resolved->scheme != URL_SCHEME_DATA &&
+                        resolved->scheme != URL_SCHEME_JAVASCRIPT) return resolved;
+                if (resolved) url_destroy(resolved);
+                // the first base with href owns resolution, including invalid values.
+                break;
+            }
+        }
+        // template contents are inert and cannot supply the document resource base.
+        DomNode* child = element && !(html && !strcmp(element->tag_name, "template"))
+            ? dom_source_child(element, true) : nullptr;
+        if (child) { node = child; continue; }
+        while (node && node != root && !dom_source_sibling(node, true)) node = dom_source_parent(node);
+        node = node && node != root ? dom_source_sibling(node, true) : nullptr;
+    }
+    return document->url ? url_clone(document->url) : url_parse("about:blank");
+}
+
 extern "C" __attribute__((weak)) void dom_css_document_language_changed(void* document) {
     DomDocument* doc = (DomDocument*)document;
     if (doc) { doc->mutation_epoch++; doc->style_content_epoch++; }
