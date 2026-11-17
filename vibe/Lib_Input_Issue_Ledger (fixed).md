@@ -6,6 +6,25 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-067"></a>
+
+### LI-067 — constrained error bases omitted from error-channel discovery
+
+**Status:** FIXED, 2026-11-17. **Dependent task blocker:** resolved for the
+Lambda TeX reader. S11.4.2v3 and S11.4.6v4 govern error unions and the
+base-only constrained admission rule.
+
+`lambda_type_accepts_error` ignored constrained wrappers, so a function
+with an `int | CaptureError` return was rejected with E312. The shared core
+now follows constrained bases recursively; the Lambda compiler separately
+unwraps nested constraint layers at static admission. The paired Lambda
+`constrained_error_return` fixture passes interpreter, JIT and AUTO, and
+checks direct and nested returns, successful values and predicate-filtered
+handlers. The native metadata test verifies constrained error and non-error
+bases. Six reader/GC checks and 18 adjacent checks pass; aggregate gates are
+recorded in Lambda's issue ledger. Evidence: `../Lambda/temp/capture-error/`.
+
+
 <a id="li-066"></a>
 
 ### LI-066 — shape-outside rejects otherwise supported gradient images
