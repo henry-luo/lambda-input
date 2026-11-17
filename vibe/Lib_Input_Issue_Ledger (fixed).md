@@ -6,6 +6,106 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-074"></a>
+
+### LI-074 — Closing a template in the head swallows following document metadata and body
+
+**Status:** FIXED, 2026-11-17. **Lambda blocker:** resolved for existing HTML
+head-template parsing. Input ownership: **D9.1.1v4 / D9.1.3v2**.
+
+The in-head handler inserted templates but had no matching end-template branch.
+Following base, linked stylesheet and body nodes remained inside the template.
+The existing close-until-template and reset-insertion-mode helpers now close
+that scope, and resetting recognizes the containing head. This does not claim
+complete HTML template insertion-mode conformance.
+
+`ClosingHeadTemplatesPreservesFollowingMetadataAndBody` covers simple and nested
+head templates, then verifies sibling base/link metadata and the real body.
+It and the related context-fragment and script-enabled-noscript parser tests
+pass (three total). Final host controls also pass: six base/resource fixtures,
+inert metadata with active foreign SVG controls, and two persistent HTTP
+regressions. Evidence: `../../lambda/temp/online-visual-round62/`.
+
+
+<a id="li-073"></a>
+
+### LI-073 — Element discovery loses completion after byte-only prefetch
+
+**Status:** FIXED, 2026-11-17. **Lambda blocker:** resolved for the existing
+single-owner resource path. Network ownership remains in Input under
+**D9.1.1v4 / D9.1.3v2**; no runtime dependency or capture-clock change.
+
+Initial stylesheet prefetch registers RESOURCE_PREFETCH with no element. The
+later typed load returns that same URL resource without adopting its consumer.
+Thus both successful and failed initial links lose load/error events; a
+print-only sheet never runs its authored media activation handler. A preload
+link discovered without the initial stylesheet prefetch is an effective control.
+
+A byte-only prefetch now adopts a discovered typed element consumer. If its
+completion was already processed, it reenters the existing main-thread queue;
+settled optional failures retain error delivery. Request identity, priority,
+statistics and transfer bytes remain shared. Ownerless byte consumers retain
+their existing behavior. Radiant reuses the initial parsed sheet (RI-107).
+
+Verification: all **six NetworkResourceManager tests pass**, including queued
+and already-processed cached completion, once-only delivery and unchanged
+resource counts. The host's four initial-link HTTP regressions failed before
+and pass after; the adjacent ten resource-discovery/completion tests also pass.
+Chromium headless shell independently confirms load/error ordering, print-sheet
+activation and empty-sheet completion. No broad baseline was rerun.
+
+The existing resource API still has one element owner per URL; this repair does
+not introduce a multi-consumer subscription model. Failed-sheet CSSOM objects
+also differ from Chromium (which retains an empty sheet for this 404 fixture);
+that small CSSOM difference is outside the completion-event repair.
+
+
+<a id="li-072"></a>
+
+### LI-072 — Font-family lists reject pending substitutions and their fallback families
+
+**Status:** FIXED, 2026-11-17. **Lambda blocker:** resolved for the shared
+font-family declaration/value path. Input owns token parsing under
+**D9.1.1v4 / D9.1.3v2**. Existing document/variable ownership and **D10.1.7**
+capture clocks are unchanged; no formal ruling changes.
+
+Limitless supplies its Greycliff families through a custom property and uses
+font-family:var(--font-greycliff),system-ui,... . Native CSS.supports returns
+false and the page inherits serif/Times New Roman despite the custom property
+being present. Literal lists and a whole-value var() already work. The shared
+family token validator admits literal strings/identifiers only and runs before
+variable substitution; the duplicate property-value parser also treats an
+initial function as the entire value, losing later family groups.
+
+Both font-family entry points now share family grouping. Pending substitutions
+use the existing declaration component-sequence parser, extracted without a
+third implementation; nested fallback commas stay inside their function.
+Literal family grammar is checked after substitution, preserving invalid-value
+behavior and quoted-name separation. The duplicate family-list parser is
+removed. A shared token function-name helper handles decoded names that retain
+an opening parenthesis and is also used by ordinary function parsing. No font
+name, site condition, glyph metric, font cache or fallback result is hard-coded.
+The governing syntax is [CSS Variables section3](https://www.w3.org/TR/css-variables-1/#using-variables)
+and [CSS Fonts font-family](https://www.w3.org/TR/css-fonts-4/#font-family-prop).
+
+All205 focused Input tests pass (92 parser,113 engine). The new parser case
+checks six pending lists through both entry points. Three native document
+controls pass: the new Ahem/list/fallback/invalid-variable/live-update case,
+the adjacent monospace-size case and retained-font margin sizing. Before the
+repair, the list/fallback/late-variable glyph widths are72.2168px instead of100px.
+Chromium independently confirms admission and the real-font/invalid-variable/
+live-update expectations. The saved Limitless page now selects its declared
+Greycliff family chain and CSS.supports returns true. The first candidate's
+new unit exposed the raw FUNCTION token's retained parenthesis; that handling
+was corrected before qualification, and the first candidate is not published.
+
+Evidence: sibling Lambda temp/online-visual-round57/ holds source hashes,
+before/after parser and font controls, browser results, release pin and selected
+live capture/report qualification. Only focused tests are run for this repair;
+no new full baseline pass is claimed. Live page clearance requires visual
+review and is recorded in the online report, independently of exception or
+font-selection repair.
+
 <a id="li-071"></a>
 
 ### LI-071 — shape-outside rejects otherwise supported gradient images

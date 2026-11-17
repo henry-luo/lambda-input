@@ -19,6 +19,7 @@
 #include "lib/strview.h"
 #include "lib/str.h"
 #include "lib/language_preferences.h"
+#include "lib/url.h"
 #include "lib/utf.h"
 #include "lib/arena.h"
 #include "lib/memtrack.h"
@@ -1293,6 +1294,36 @@ bool dom_document_finalize_loader_pool(DomDocument* document, Pool* pool) {
         mem_pool_destroy(pool);
     }
     return true;
+}
+
+static DomElement* dom_first_base_with_href(DomNode* node) {
+    if (!node || !node->is_element()) return nullptr;
+    DomElement* element = node->as_element();
+    if (dom_element_is_html_tag(element, MARKUP_NAME_BASE) && element->has_attribute("href"))
+        return element;
+    // template contents and shadow trees are outside the document's base-element search.
+    if (dom_element_is_html_tag(element, MARKUP_NAME_TEMPLATE)) return nullptr;
+    for (DomNode* child = element->first_child; child; child = child->next_sibling) {
+        if (DomElement* base = dom_first_base_with_href(child)) return base;
+    }
+    return nullptr;
+}
+
+Url* dom_document_resolve_url(const DomDocument* document, const char* reference) {
+    const Url* fallback = document ? document->url.get() : nullptr;
+    DomElement* element = document ? dom_first_base_with_href(document->root) : nullptr;
+    Url* base = element ? url_parse_with_base(element->get_attribute("href"), fallback) : nullptr;
+    // the first href wins even when empty or invalid; later bases cannot replace it.
+    if (base && (!url_is_valid(base) || base->scheme == URL_SCHEME_DATA ||
+                 base->scheme == URL_SCHEME_JAVASCRIPT)) {
+        url_destroy(base);
+        base = nullptr;
+    }
+    const Url* effective = base ? base : fallback;
+    Url* result = reference ? url_parse_with_base(reference, effective)
+        : effective ? url_clone(effective) : url_parse("about:blank");
+    if (base) url_destroy(base);
+    return result;
 }
 
 bool dom_document_replace_url(DomDocument* document, Url* replacement) {

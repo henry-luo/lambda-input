@@ -15,6 +15,27 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-074"></a>
+
+### LI-074 — FIXED
+
+Closing head templates no longer captures following metadata and body.
+See the [parser repair](<Lib_Input_Issue_Ledger (fixed).md#li-074>).
+
+<a id="li-073"></a>
+
+### LI-073 — FIXED
+
+Element discovery loses completion after byte-only prefetch.
+See the [completion repair](<Lib_Input_Issue_Ledger (fixed).md#li-073>).
+
+<a id="li-072"></a>
+
+### LI-072 — FIXED
+
+Font-family lists rejected pending substitutions mixed with later fallback families.
+See the [shared family-list parsing repair](<Lib_Input_Issue_Ledger (fixed).md#li-072>).
+
 <a id="li-071"></a>
 
 ### LI-071 — FIXED
