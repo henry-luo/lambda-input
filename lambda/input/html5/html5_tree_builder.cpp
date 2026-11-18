@@ -314,7 +314,6 @@ static void html5_process_in_after_head_mode(Html5Parser* parser, Html5Token* to
 static void html5_process_in_body_mode(Html5Parser* parser, Html5Token* token);
 static void html5_process_in_after_body_mode(Html5Parser* parser, Html5Token* token);
 static void html5_process_in_text_mode(Html5Parser* parser, Html5Token* token);
-static void html5_process_in_select_mode(Html5Parser* parser, Html5Token* token);
 
 // Token strings go to a private scratch arena for the parse. It is reset once
 // it holds more than this and no token is in flight (the tokenizer has emitted
@@ -592,7 +591,6 @@ static void html5_process_in_after_head_mode(Html5Parser* parser, Html5Token* to
 static void html5_process_in_after_after_document_mode(Html5Parser* parser, Html5Token* token);
 static void html5_process_in_table_mode(Html5Parser* parser, Html5Token* token);
 static void html5_process_in_table_body_mode(Html5Parser* parser, Html5Token* token);
-static void html5_process_in_select_in_table_mode(Html5Parser* parser, Html5Token* token);
 static void html5_process_in_row_mode(Html5Parser* parser, Html5Token* token);
 static void html5_process_in_cell_mode(Html5Parser* parser, Html5Token* token);
 static void html5_process_in_caption_mode(Html5Parser* parser, Html5Token* token);
@@ -664,12 +662,6 @@ void html5_process_token(Html5Parser* parser, Html5Token* token) {
             break;
         case HTML5_MODE_TEXT:
             html5_process_in_text_mode(parser, token);
-            break;
-        case HTML5_MODE_IN_SELECT:
-            html5_process_in_select_mode(parser, token);
-            break;
-        case HTML5_MODE_IN_SELECT_IN_TABLE:
-            html5_process_in_select_in_table_mode(parser, token);
             break;
         case HTML5_MODE_IN_FRAMESET:
             html5_process_in_frameset_mode(parser, token);
@@ -1459,6 +1451,13 @@ static void html5_process_in_body_mode(Html5Parser* parser, Html5Token* token) {
             if (html5_has_element_in_button_scope(parser, HTML5_TAG(P))) {
                 html5_close_p_element(parser);
             }
+            if (html5_has_element_in_scope(parser, HTML5_TAG(SELECT))) {
+                html5_generate_implied_end_tags(parser);
+                if (html5_has_element_in_scope(parser, HTML5_TAG(OPTION)) ||
+                    html5_has_element_in_scope(parser, HTML5_TAG(OPTGROUP))) {
+                    log_error("html5 select: <hr> after a non-implied option or optgroup descendant");
+                }
+            }
             html5_insert_html_element(parser, token);
             html5_pop_element(parser);  // immediately pop void element
             return;
@@ -1491,54 +1490,34 @@ static void html5_process_in_body_mode(Html5Parser* parser, Html5Token* token) {
             return;
         }
 
-        // <select> switches to IN_SELECT mode
+        // HTML's in-body select rules preserve the button and rich option subtrees.
         if (html5_token_is(token, MARKUP_NAME_SELECT)) {
-            html5_reconstruct_active_formatting_elements(parser);
-            html5_insert_html_element(parser, token);
-            parser->frameset_ok = false;
-            // Table-context selects must leave select mode before table structure resumes.
-            bool in_table_context = parser->mode == HTML5_MODE_IN_TABLE ||
-                parser->mode == HTML5_MODE_IN_CAPTION ||
-                parser->mode == HTML5_MODE_IN_TABLE_BODY ||
-                parser->mode == HTML5_MODE_IN_ROW ||
-                parser->mode == HTML5_MODE_IN_CELL;
-            parser->mode = in_table_context ? HTML5_MODE_IN_SELECT_IN_TABLE
-                                            : HTML5_MODE_IN_SELECT;
-            return;
-        }
-
-        // <option> closes any previous <option> element on the stack
-        if (html5_token_is(token, MARKUP_NAME_OPTION)) {
-            // If current node is an option, pop it
-            Element* current = html5_current_node(parser);
-            if (current) {
-                const char* current_tag = ((TypeElmt*)current->type)->name.str;
-                if (strcmp(current_tag, "option") == 0) {
-                    html5_pop_element(parser);
-                }
+            if (parser->fragment_context_tag == MARKUP_NAME_SELECT) {
+                log_error("html5 select: ignoring nested select in a select fragment");
+                return;
+            }
+            if (html5_has_element_in_scope(parser, HTML5_TAG(SELECT))) {
+                log_error("html5 select: nested select closes the open select");
+                html5_pop_until_tag(parser, HTML5_TAG(SELECT));
+                return;
             }
             html5_reconstruct_active_formatting_elements(parser);
             html5_insert_html_element(parser, token);
+            parser->frameset_ok = false;
             return;
         }
 
-        // <optgroup> closes any previous <option> or <optgroup> element
-        if (html5_token_is(token, MARKUP_NAME_OPTGROUP)) {
-            // If current node is an option, pop it
-            Element* current = html5_current_node(parser);
-            if (current) {
-                const char* current_tag = ((TypeElmt*)current->type)->name.str;
-                if (strcmp(current_tag, "option") == 0) {
-                    html5_pop_element(parser);
-                    // Check again after popping
-                    current = html5_current_node(parser);
-                    if (current) {
-                        current_tag = ((TypeElmt*)current->type)->name.str;
-                    }
+        bool option_start = html5_token_is(token, MARKUP_NAME_OPTION);
+        if (option_start || html5_token_is(token, MARKUP_NAME_OPTGROUP)) {
+            if (html5_has_element_in_scope(parser, HTML5_TAG(SELECT))) {
+                if (option_start) html5_generate_implied_end_tags_except(parser, HTML5_TAG(OPTGROUP));
+                else html5_generate_implied_end_tags(parser);
+                if (html5_has_element_in_scope(parser, HTML5_TAG(OPTION)) ||
+                    (!option_start && html5_has_element_in_scope(parser, HTML5_TAG(OPTGROUP)))) {
+                    log_error("html5 select: <%s> after a non-implied option or optgroup descendant", tag);
                 }
-                if (current && strcmp(current_tag, "optgroup") == 0) {
-                    html5_pop_element(parser);
-                }
+            } else if (Element* current = html5_current_node(parser)) {
+                if (html5_element_tag_id(current) == MARKUP_NAME_OPTION) html5_pop_element(parser);
             }
             html5_reconstruct_active_formatting_elements(parser);
             html5_insert_html_element(parser, token);
@@ -1583,11 +1562,23 @@ static void html5_process_in_body_mode(Html5Parser* parser, Html5Token* token) {
 
         // void elements (do NOT close <p>)
         // NOTE: <col> is NOT included here - it's only valid inside tables
+        bool input_start = html5_token_is(token, MARKUP_NAME_INPUT);
+        if (input_start) {
+            if (parser->fragment_context_tag == MARKUP_NAME_SELECT) {
+                log_error("html5 select: ignoring input in a select fragment");
+                return;
+            }
+            if (html5_has_element_in_scope(parser, HTML5_TAG(SELECT))) {
+                log_error("html5 select: input closes the open select");
+                html5_pop_until_tag(parser, HTML5_TAG(SELECT));
+            }
+        }
         if (html5_token_is(token, MARKUP_NAME_IMG) || html5_token_is(token, MARKUP_NAME_BR) ||
-            html5_token_is(token, MARKUP_NAME_INPUT) || html5_token_is(token, MARKUP_NAME_META) || html5_token_is(token, MARKUP_NAME_LINK) ||
+            input_start || html5_token_is(token, MARKUP_NAME_META) || html5_token_is(token, MARKUP_NAME_LINK) ||
             html5_token_is(token, MARKUP_NAME_AREA) || html5_token_is(token, MARKUP_NAME_BASE) ||
             html5_token_is(token, MARKUP_NAME_EMBED) || html5_token_is(token, MARKUP_NAME_PARAM) || html5_token_is(token, MARKUP_NAME_SOURCE) ||
-            html5_token_is(token, MARKUP_NAME_TRACK) || html5_token_is(token, MARKUP_NAME_WBR)) {
+            html5_token_is(token, MARKUP_NAME_TRACK) || html5_token_is(token, MARKUP_NAME_WBR) ||
+            html5_token_is(token, MARKUP_NAME_KEYGEN)) {
             // Reconstruct active formatting before void elements too
             html5_reconstruct_active_formatting_elements(parser);
             html5_insert_html_element(parser, token);
@@ -1732,7 +1723,7 @@ static void html5_process_in_body_mode(Html5Parser* parser, Html5Token* token) {
         // Special handling for block elements that generate implied end tags
         // Per WHATWG: address, article, aside, blockquote, button, center, details,
         // dialog, dir, div, fieldset, figcaption, figure, footer, header, hgroup,
-        // listing, main, menu, nav, pre, search, section, summary
+        // listing, main, menu, nav, pre, search, section, select, summary
         if (html5_token_is(token, MARKUP_NAME_ADDRESS) || html5_token_is(token, MARKUP_NAME_ARTICLE) ||
             html5_token_is(token, MARKUP_NAME_ASIDE) || html5_token_is(token, MARKUP_NAME_BLOCKQUOTE) ||
             html5_token_is(token, MARKUP_NAME_BUTTON) || html5_token_is(token, MARKUP_NAME_CENTER) ||
@@ -1744,7 +1735,8 @@ static void html5_process_in_body_mode(Html5Parser* parser, Html5Token* token) {
             html5_token_is(token, MARKUP_NAME_LISTING) || html5_token_is(token, MARKUP_NAME_MAIN) ||
             html5_token_is(token, MARKUP_NAME_MENU) || html5_token_is(token, MARKUP_NAME_NAV) ||
             html5_token_is(token, MARKUP_NAME_PRE) || strcmp(tag, "search") == 0 ||
-            html5_token_is(token, MARKUP_NAME_SECTION) || html5_token_is(token, MARKUP_NAME_SUMMARY)) {
+            html5_token_is(token, MARKUP_NAME_SECTION) || html5_token_is(token, MARKUP_NAME_SELECT) ||
+            html5_token_is(token, MARKUP_NAME_SUMMARY)) {
             if (!html5_has_element_in_scope(parser, html5_token_tag_id(token), tag)) {
                 log_error("html5: </%s> without matching tag in scope", tag);
                 return;
@@ -1970,24 +1962,14 @@ static void html5_process_in_table_mode(Html5Parser* parser, Html5Token* token) 
         // Per WHATWG spec 13.2.6.4.9 "in table text":
         // For non-space characters, enable foster parenting and process using in-body rules
         // This ensures active formatting elements are reconstructed
-        Element* current = html5_current_node(parser);
-        if (current != nullptr) {
-            const char* current_tag = ((TypeElmt*)current->type)->name.str;
-            bool is_table_element = (strcmp(current_tag, "table") == 0 ||
-                                     strcmp(current_tag, "tbody") == 0 ||
-                                     strcmp(current_tag, "tfoot") == 0 ||
-                                     strcmp(current_tag, "thead") == 0 ||
-                                     strcmp(current_tag, "tr") == 0);
-            if (!is_table_element) {
-                // Current node is not a table element (e.g., foster parented element)
-                // Insert characters normally
-                if (token->data != nullptr && token->data->len > 0) {
-                    for (size_t i = 0; i < token->data->len; i++) {
-                        html5_insert_character(parser, token->data->chars[i]);
-                    }
+        if (html5_current_node(parser) && !html5_at_table_insertion_target(parser)) {
+            // text inside a fostered element belongs to its subtree.
+            if (token->data != nullptr) {
+                for (size_t i = 0; i < token->data->len; i++) {
+                    html5_insert_character(parser, token->data->chars[i]);
                 }
-                return;
             }
+            return;
         }
         // Check if text contains any non-whitespace characters
         bool has_non_whitespace = token->data != nullptr && token->data->len > 0 &&
@@ -2001,14 +1983,7 @@ static void html5_process_in_table_mode(Html5Parser* parser, Html5Token* token) 
             parser->foster_parenting = true;
             html5_reconstruct_active_formatting_elements(parser);
 
-            // Check if current node is now a table element or the reconstructed element
-            Element* current = html5_current_node(parser);
-            const char* current_tag = current ? ((TypeElmt*)current->type)->name.str : "";
-            bool is_table_element = (strcmp(current_tag, "table") == 0 ||
-                                     strcmp(current_tag, "tbody") == 0 ||
-                                     strcmp(current_tag, "tfoot") == 0 ||
-                                     strcmp(current_tag, "thead") == 0 ||
-                                     strcmp(current_tag, "tr") == 0);
+            bool is_table_element = html5_at_table_insertion_target(parser);
 
             // Insert text
             if (token->data != nullptr && token->data->len > 0) {
@@ -2424,210 +2399,6 @@ static void html5_process_in_cell_mode(Html5Parser* parser, Html5Token* token) {
 
     // Anything else: process using IN_BODY rules
     html5_process_in_body_mode(parser, token);
-}
-
-// ===== IN SELECT MODE =====
-static void html5_process_in_select_mode(Html5Parser* parser, Html5Token* token) {
-    if (token->type == HTML5_TOKEN_CHARACTER) {
-        if (token->data && token->data->len > 0) {
-            for (uint32_t i = 0; i < token->data->len; i++) {
-                char c = token->data->chars[i];
-                if (c == '\0') {
-                    log_error("html5: null character in select");
-                    continue;
-                }
-                html5_insert_character(parser, c);
-            }
-        }
-        return;
-    }
-
-    if (html5_handle_comment_or_doctype(parser, token, "select mode", false)) return;
-
-    if (token->type == HTML5_TOKEN_START_TAG) {
-        const char* tag = token->tag_name->chars;
-
-        if (html5_token_is(token, MARKUP_NAME_HTML)) {
-            // Process using in body mode rules
-            html5_process_in_body_mode(parser, token);
-            return;
-        }
-
-        if (html5_token_is(token, MARKUP_NAME_OPTION)) {
-            // If current node is an option, pop it
-            Element* current = html5_current_node(parser);
-            if (current) {
-                const char* current_tag = ((TypeElmt*)current->type)->name.str;
-                if (strcmp(current_tag, "option") == 0) {
-                    html5_pop_element(parser);
-                }
-            }
-            html5_insert_html_element(parser, token);
-            return;
-        }
-
-        if (html5_token_is(token, MARKUP_NAME_OPTGROUP)) {
-            // If current node is an option, pop it
-            Element* current = html5_current_node(parser);
-            if (current) {
-                const char* current_tag = ((TypeElmt*)current->type)->name.str;
-                if (strcmp(current_tag, "option") == 0) {
-                    html5_pop_element(parser);
-                }
-            }
-            // If current node is now optgroup, pop it too
-            current = html5_current_node(parser);
-            if (current) {
-                const char* current_tag = ((TypeElmt*)current->type)->name.str;
-                if (strcmp(current_tag, "optgroup") == 0) {
-                    html5_pop_element(parser);
-                }
-            }
-            html5_insert_html_element(parser, token);
-            return;
-        }
-
-        // Another <select> closes the current select and reprocesses in body mode
-        if (html5_token_is(token, MARKUP_NAME_SELECT)) {
-            log_error("html5: nested <select> - closing current select");
-            // Pop until <select>
-            html5_pop_until_tag(parser, HTML5_TAG(SELECT));
-            html5_reset_insertion_mode(parser);
-            return;
-        }
-
-        // input, keygen, textarea - close select and reprocess
-        if (html5_token_is(token, MARKUP_NAME_INPUT) || html5_token_is(token, MARKUP_NAME_KEYGEN) ||
-            html5_token_is(token, MARKUP_NAME_TEXTAREA)) {
-            log_error("html5: <%s> in select - closing select", tag);
-            if (!html5_has_element_in_select_scope(parser, HTML5_TAG(SELECT))) {
-                log_error("html5: no select in scope");
-                return;
-            }
-            // Pop until <select>
-            html5_pop_until_tag(parser, HTML5_TAG(SELECT));
-            html5_reset_insertion_mode(parser);
-            html5_process_token(parser, token);
-            return;
-        }
-
-        // script, template - process in head rules
-        if (html5_token_is(token, MARKUP_NAME_SCRIPT) || html5_token_is(token, MARKUP_NAME_TEMPLATE)) {
-            html5_process_in_head_mode(parser, token);
-            return;
-        }
-
-        // formatting elements - insert and add to active formatting elements
-        // Per html5lib tests, formatting elements should be inserted in select
-        // (even though WHATWG says "any other start tag - ignore")
-        if (html5_is_formatting_element(html5_token_tag_id(token), tag)) {
-            html5_insert_html_element(parser, token);
-            html5_push_active_formatting_element(parser, html5_current_node(parser), token);
-            return;
-        }
-
-        // hr inside select: allowed per updated HTML spec (WHATWG 2022+)
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=2008003
-        if (html5_token_is(token, MARKUP_NAME_HR)) {
-            html5_insert_html_element(parser, token);
-            html5_pop_element(parser);  // hr is void, immediately pop
-            return;
-        }
-
-        // Anything else - parse error, ignore
-        log_error("html5: ignoring <%s> in select mode", tag);
-        return;
-    }
-
-    if (token->type == HTML5_TOKEN_END_TAG) {
-        const char* tag = token->tag_name->chars;
-
-        if (html5_token_is(token, MARKUP_NAME_OPTGROUP)) {
-            // If current node is option and previous is optgroup, pop option first
-            Element* current = html5_current_node(parser);
-            if (current && parser->open_elements->length >= 2) {
-                const char* current_tag = ((TypeElmt*)current->type)->name.str;
-                if (strcmp(current_tag, "option") == 0) {
-                    Element* prev = (Element*)parser->open_elements->items[parser->open_elements->length - 2].element;
-                    const char* prev_tag = ((TypeElmt*)prev->type)->name.str;
-                    if (strcmp(prev_tag, "optgroup") == 0) {
-                        html5_pop_element(parser);
-                    }
-                }
-            }
-            // If current node is optgroup, pop it
-            current = html5_current_node(parser);
-            if (current) {
-                const char* current_tag = ((TypeElmt*)current->type)->name.str;
-                if (strcmp(current_tag, "optgroup") == 0) {
-                    html5_pop_element(parser);
-                }
-            }
-            return;
-        }
-
-        if (html5_token_is(token, MARKUP_NAME_OPTION)) {
-            // If current node is option, pop it
-            Element* current = html5_current_node(parser);
-            if (current) {
-                const char* current_tag = ((TypeElmt*)current->type)->name.str;
-                if (strcmp(current_tag, "option") == 0) {
-                    html5_pop_element(parser);
-                }
-            }
-            return;
-        }
-
-        if (html5_token_is(token, MARKUP_NAME_SELECT)) {
-            if (!html5_has_element_in_select_scope(parser, HTML5_TAG(SELECT))) {
-                log_error("html5: </select> without select in scope");
-                return;
-            }
-            // Pop until <select>
-            html5_pop_until_tag(parser, HTML5_TAG(SELECT));
-            html5_reset_insertion_mode(parser);
-            return;
-        }
-
-        if (html5_token_is(token, MARKUP_NAME_TEMPLATE)) {
-            html5_process_in_head_mode(parser, token);
-            return;
-        }
-
-        // Anything else - parse error, ignore
-        log_error("html5: ignoring </%s> in select mode", tag);
-        return;
-    }
-
-    if (token->type == HTML5_TOKEN_EOF) {
-        // Process using in body rules
-        html5_process_in_body_mode(parser, token);
-        return;
-    }
-}
-
-// ===== IN SELECT IN TABLE MODE =====
-// Table-structure tokens close the select, reset the insertion mode, and are reprocessed.
-static void html5_process_in_select_in_table_mode(Html5Parser* parser, Html5Token* token) {
-    bool is_table_token = false;
-    if (token->type == HTML5_TOKEN_START_TAG || token->type == HTML5_TOKEN_END_TAG) {
-        const char* tag = token->tag_name ? token->tag_name->chars : nullptr;
-        is_table_token = tag && (
-            strcmp(tag, "caption") == 0 || strcmp(tag, "table") == 0 ||
-            strcmp(tag, "tbody") == 0 || strcmp(tag, "tfoot") == 0 ||
-            strcmp(tag, "thead") == 0 || strcmp(tag, "tr") == 0 ||
-            strcmp(tag, "td") == 0 || strcmp(tag, "th") == 0);
-    }
-    if (!is_table_token) {
-        html5_process_in_select_mode(parser, token);
-        return;
-    }
-
-    log_error("html5: table token in select-in-table mode; closing select");
-    if (!html5_has_element_in_select_scope(parser, HTML5_TAG(SELECT))) return;
-    html5_pop_until_tag(parser, HTML5_TAG(SELECT));
-    html5_reset_insertion_mode(parser);
-    html5_process_token(parser, token);
 }
 
 // helper: close the current cell (td/th)

@@ -152,8 +152,6 @@ enum Html5InsertionMode {
     HTML5_MODE_IN_TABLE_BODY,
     HTML5_MODE_IN_ROW,
     HTML5_MODE_IN_CELL,
-    HTML5_MODE_IN_SELECT,
-    HTML5_MODE_IN_SELECT_IN_TABLE,
     HTML5_MODE_IN_TEMPLATE,
     HTML5_MODE_AFTER_BODY,
     HTML5_MODE_IN_FRAMESET,
@@ -303,7 +301,6 @@ enum Html5TagClass : uint32_t {
     HTML5_TAG_BUTTON_SCOPE    = 1u << 1,   // button scope adds these
     HTML5_TAG_LIST_ITEM_SCOPE = 1u << 2,   // list item scope adds these
     HTML5_TAG_TABLE_SCOPE     = 1u << 3,   // markers of "in table scope"
-    HTML5_TAG_SELECT_PASS     = 1u << 4,   // select scope passes only these
     HTML5_TAG_IMPLIED_END     = 1u << 5,   // "generate implied end tags"
     HTML5_TAG_FORMATTING      = 1u << 6,
     HTML5_TAG_SPECIAL         = 1u << 7,
@@ -365,7 +362,7 @@ bool html5_has_element_in_scope(Html5Parser* parser, NameId tag_id, const char* 
 bool html5_has_element_in_button_scope(Html5Parser* parser, NameId tag_id, const char* tag_name);
 bool html5_has_element_in_table_scope(Html5Parser* parser, NameId tag_id, const char* tag_name);
 bool html5_has_element_in_list_item_scope(Html5Parser* parser, NameId tag_id, const char* tag_name);
-bool html5_has_element_in_select_scope(Html5Parser* parser, NameId tag_id, const char* tag_name);
+bool html5_at_table_insertion_target(Html5Parser* parser);
 
 // Foreign-content namespace check (defined in html5_parser.cpp)
 bool html5_is_in_svg_namespace(Html5Parser* parser);

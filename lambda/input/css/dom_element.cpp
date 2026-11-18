@@ -597,6 +597,33 @@ DomNode* dom_source_sibling(DomNode* node, bool forward) {
     }
 }
 
+DomNode* dom_source_tree_root(DomNode* node) {
+    if (!node) return nullptr;
+    while (DomNode* parent = dom_source_parent(node)) node = parent;
+    return node;
+}
+
+DomNode* dom_source_next_in_tree(DomNode* root, DomNode* node) {
+    DomElement* element = node ? node->as_element() : nullptr;
+    // The retained HTML template's physical children belong to its content fragment.
+    if (element && !dom_element_is_html_tag(element, MARKUP_NAME_TEMPLATE)) {
+        if (DomNode* child = dom_source_child(element, true)) return child;
+    }
+    for (; node && node != root; node = dom_source_parent(node)) {
+        if (DomNode* sibling = dom_source_sibling(node, true)) return sibling;
+    }
+    return nullptr;
+}
+
+DomElement* dom_find_source_element_by_id(DomNode* root, const char* id) {
+    if (!id || !*id) return nullptr;
+    for (DomNode* node = root; node; node = dom_source_next_in_tree(root, node)) {
+        DomElement* element = node->as_element();
+        if (element && element->id && strcmp(element->id, id) == 0) return element;
+    }
+    return nullptr;
+}
+
 void dom_collect_text_content(DomNode* node, StrBuf* output) {
     if (!node || !output || dom_is_generated_pseudo_node(node)) return;
     if (DomText* text = node->as_text()) {
@@ -627,7 +654,7 @@ static void dom_mark_dirty_subtree(DomNode* root) {
 }
 
 void dom_mark_dirty_ancestors(DomNode* node) {
-    for (DomNode* cur = node; cur; cur = cur->parent) {
+    for (DomNode* cur = node; cur; cur = dom_shadow_including_parent(cur)) {
         cur->layout_dirty = true;
         if (cur->is_element()) {
             DomElement* elem = cur->as_element();
@@ -648,7 +675,7 @@ extern "C" void dom_invalidate_layout_subtree(void* node) {
 // its generation. `moves_only` marks a non-inherited presentation write, which leaves its
 // own target's layer content unchanged.
 void dom_layer_note_mutation(DomNode* node, bool moves_only) {
-    for (DomNode* cur = node; cur; cur = cur->parent) {
+    for (DomNode* cur = node; cur; cur = dom_shadow_including_parent(cur)) {
         if (cur->is_element() && !(moves_only && cur == node)) cur->as_element()->layer_generation++;
     }
 }
@@ -923,9 +950,8 @@ bool dom_subtree_contains_node(DomNode* root, DomNode* target) {
 }
 
 DomElement* dom_shadow_root(DomNode* node) {
-    if (!node) return nullptr;
-    while (node->parent) node = node->parent;
-    DomElement* root = node->as_element();
+    node = dom_source_tree_root(node);
+    DomElement* root = node ? node->as_element() : nullptr;
     return root && root->shadow_host_element() ? root : nullptr;
 }
 
@@ -933,28 +959,27 @@ static bool dom_is_html_slot(DomElement* element) {
     return dom_element_is_html_tag(element, MARKUP_NAME_SLOT);
 }
 
+bool dom_node_is_slottable(DomNode* node) {
+    return node && (node->is_text() || dom_is_css_element_child(node));
+}
+
 bool dom_slot_assignment_matches(DomElement* slot, DomNode* child) {
-    if (!dom_is_html_slot(slot) || !child) return false;
+    if (!dom_is_html_slot(slot) || !dom_node_is_slottable(child)) return false;
     const char* name = dom_element_attribute_value_ns(slot, "", "name");
     if (!name) name = "";
     if (child->is_text()) return !*name;
-    if (!child->is_element() || child->as_element()->is_synthetic()) return false;
     const char* assigned = dom_element_attribute_value_ns(child->as_element(), "", "slot");
     return strcmp(name, assigned ? assigned : "") == 0;
 }
 
 DomElement* dom_shadow_first_matching_slot(DomNode* root, const char* name) {
     // named assignment uses source tree order, excluding inert template contents and generated boxes.
-    for (DomNode* node = root; node;) {
+    for (DomNode* node = root; node; node = dom_source_next_in_tree(root, node)) {
         DomElement* element = node->as_element();
         if (dom_is_html_slot(element)) {
             const char* candidate = dom_element_attribute_value_ns(element, "", "name");
             if (strcmp(candidate ? candidate : "", name ? name : "") == 0) return element;
         }
-        bool inert = element && (element->is_synthetic() ||
-            dom_element_is_html_tag(element, MARKUP_NAME_TEMPLATE));
-        node = element && !inert && element->first_child ? element->first_child :
-            dom_next_after_subtree(root, node);
     }
     return nullptr;
 }
@@ -966,17 +991,24 @@ DomElement* dom_slot_assignment_host(DomElement* slot) {
         ? root->shadow_host_element() : nullptr;
 }
 
+DomElement* dom_find_assigned_slot(DomNode* node) {
+    if (!dom_node_is_slottable(node)) return nullptr;
+    DomNode* parent = dom_source_parent(node);
+    DomElement* host = parent ? parent->as_element() : nullptr;
+    DomElement* root = host ? host->shadow_root_element() : nullptr;
+    if (!root) return nullptr;
+    DomElement* element = node->as_element();
+    const char* name = element ? dom_element_attribute_value_ns(element, "", "slot") : nullptr;
+    return dom_shadow_first_matching_slot(root, name);
+}
+
 DomElement* dom_flat_tree_parent(DomElement* element) {
     DomNode* source_parent = dom_source_parent(element);
     if (source_parent && source_parent->is_element() && source_parent->as_element()->shadow_host_element())
         return source_parent->as_element()->shadow_host_element();
     DomElement* parent = dom_parent_element(element);
     if (!parent) return nullptr;
-    DomElement* shadow = parent->shadow_root_element();
-    if (shadow) {
-        const char* name = dom_element_attribute_value_ns(element, "", "slot");
-        return dom_shadow_first_matching_slot(shadow, name);
-    }
+    if (parent->shadow_root_element()) return dom_find_assigned_slot(element);
     if (dom_is_html_slot(parent)) {
         DomElement* host = dom_slot_assignment_host(parent);
         for (DomNode* child = host ? host->first_child.get() : nullptr; child; child = child->next_sibling)
@@ -1110,6 +1142,8 @@ static void dom_option_collect_normalized_text(DomNode* node, StrBuf* out,
     }
     if (!node->is_element()) return;
     DomElement* element = node->as_element();
+    // The option label's HTML-aware text excludes script contents.
+    if (element->tag() == MARKUP_NAME_SCRIPT) return;
     for (DomNode* child = element->first_child; child; child = child->next_sibling) {
         dom_option_collect_normalized_text(child, out, previous_whitespace);
     }
@@ -1118,8 +1152,7 @@ static void dom_option_collect_normalized_text(DomNode* node, StrBuf* out,
 void dom_option_text_normalized(DomElement* option, StrBuf* out) {
     if (!option || option->tag() != MARKUP_NAME_OPTION || !out) return;
     bool previous_whitespace = true;
-    dom_option_collect_normalized_text(option->first_child, out,
-                                       &previous_whitespace);
+    dom_option_collect_normalized_text(option, out, &previous_whitespace);
     while (out->length > 0 && out->str[out->length - 1] == ' ') {
         out->str[--out->length] = '\0';
     }
