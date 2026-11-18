@@ -277,7 +277,7 @@ CssValue* css_value_create_computed_color(Pool* pool, const CssComputedColor* co
     }
     bool rgb = color->type == CSS_COLOR_RGB;
     bool polar = color->type == CSS_COLOR_HSL || color->type == CSS_COLOR_HWB;
-    bool perceptual = color->type == CSS_COLOR_OKLAB || color->type == CSS_COLOR_OKLCH;
+    bool perceptual = css_color_type_is_perceptual(color->type);
     bool predefined = color->type == CSS_COLOR_COLOR;
     if (!rgb && !polar && !perceptual && !predefined) return nullptr;
     // Canonical function trees retain floating channels and `none` under D5.5.1.
@@ -306,7 +306,7 @@ CssValue* css_value_create_computed_color(Pool* pool, const CssComputedColor* co
         count = 1;
     }
     return css_value_create_function(pool, predefined ? "color" : rgb ? "rgba"
-        : color->type == CSS_COLOR_OKLAB ? "oklab" : color->type == CSS_COLOR_OKLCH ? "oklch"
+        : perceptual ? css_color_type_to_string(color->type)
         : color->type == CSS_COLOR_HSL ? "hsl" : "hwb",
         args, count);
 }

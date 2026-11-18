@@ -273,6 +273,8 @@ typedef enum CssColorType {
     CSS_COLOR_SYSTEM          // system colors
 } CssColorType;
 
+bool css_color_type_is_perceptual(CssColorType type);
+
 // Computed components retain precision and missing channels until painting/interpolation.
 // RGB components are normalized; HSL/HWB use degrees and unit fractions.
 struct CssComputedColor {

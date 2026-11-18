@@ -73,3 +73,14 @@ TEST(ColorTest, ParseFormatRoundTrip) {
     color_format_hex(c.r, c.g, c.b, out);
     EXPECT_STREQ(out, "#deadbe");
 }
+
+TEST(ColorTest, LabRoundTripRetainsExtendedSrgbAndReferenceWhite) {
+    const double d50[3] = {0.9642956764, 1, 0.8251046025};
+    const double colors[][3] = {{0,0,0},{1,1,1},{1,0,0},{0,0,1},{.2,.5,.7},{-.05,.3,1.1}};
+    for (const auto& source : colors) {
+        double lab[3], result[3];
+        color_rgb_to_lab(source[0], source[1], source[2], d50, lab);
+        color_lab_to_rgb(lab[0], lab[1], lab[2], d50, result);
+        for (int i = 0; i < 3; i++) EXPECT_NEAR(result[i], source[i], 1e-5);
+    }
+}

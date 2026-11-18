@@ -15,6 +15,15 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-078"></a>
+
+### LI-078 — FIXED
+
+The shared color engine now computes absolute Lab and rectangular Lab mixes,
+retaining their computed model through cloning/serialization and used sRGB
+conversion. Stylesheets can select their real Lab-supported branch.
+See the [bounded Lab repair](<Lib_Input_Issue_Ledger (fixed).md#li-078>).
+
 <a id="li-077"></a>
 
 ### LI-077 — FIXED

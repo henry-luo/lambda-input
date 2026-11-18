@@ -117,34 +117,58 @@ static inline double color_linear_to_srgb(double channel) {
         : copysign(1.055 * pow(magnitude, 1.0 / 2.4) - 0.055, channel);
 }
 
-// CIELab uses its declared reference white; Bradford adapts it to sRGB's D65.
-static inline void color_lab_to_rgb(double lightness, double a, double b,
-                                    const double white[3], double rgb[3]) {
+static const double color_d65_white[3] = {0.9504559271, 1.0, 1.0890577508};
+
+// share Bradford adaptation through the reference-white contract in both Lab directions.
+static inline void color_adapt_xyz(double xyz[3], const double from[3], const double to[3]) {
     const double bradford[3][3] = {{0.8951,0.2664,-0.1614},
         {-0.7502,1.7135,0.0367},{0.0389,-0.0685,1.0296}};
     const double inverse[3][3] = {{0.9869929,-0.1470543,0.1599627},
         {0.4323053,0.5183603,0.0492912},{-0.0085287,0.0400428,0.9684867}};
-    const double d65[3] = {0.9504559271,1,1.0890577508};
-    const double srgb[3][3] = {{3.24096994,-1.53738318,-0.49861076},
-        {-0.96924364,1.8759675,0.04155506},{0.05563008,-0.20397696,1.05697151}};
-    double y = (lightness + 16) / 116;
-    double lab[3] = {y + a / 500, y, y - b / 200}, xyz[3], lms[3] = {};
-    for (int c = 0; c < 3; c++) xyz[c] = white[c] * (lab[c] > 6.0 / 29
-        ? lab[c] * lab[c] * lab[c] : (lab[c] - 4.0 / 29) * 108.0 / 841);
+    double lms[3] = {};
     for (int c = 0; c < 3; c++) {
-        double source = 0, destination = 0;
+        double source = 0.0, destination = 0.0;
         for (int j = 0; j < 3; j++) {
             lms[c] += bradford[c][j] * xyz[j];
-            source += bradford[c][j] * white[j]; destination += bradford[c][j] * d65[j];
+            source += bradford[c][j] * from[j]; destination += bradford[c][j] * to[j];
         }
         lms[c] *= destination / source;
     }
     for (int c = 0; c < 3; c++) {
-        xyz[c] = 0;
+        xyz[c] = 0.0;
         for (int j = 0; j < 3; j++) xyz[c] += inverse[c][j] * lms[j];
     }
+}
+
+// CIELab uses its declared reference white; Bradford adapts it to sRGB's D65.
+static inline void color_lab_to_rgb(double lightness, double a, double b,
+                                    const double white[3], double rgb[3]) {
+    const double srgb[3][3] = {{3.24096994,-1.53738318,-0.49861076},
+        {-0.96924364,1.8759675,0.04155506},{0.05563008,-0.20397696,1.05697151}};
+    double y = (lightness + 16) / 116;
+    double lab[3] = {y + a / 500, y, y - b / 200}, xyz[3];
+    for (int c = 0; c < 3; c++) xyz[c] = white[c] * (lab[c] > 6.0 / 29
+        ? lab[c] * lab[c] * lab[c] : (lab[c] - 4.0 / 29) * 108.0 / 841);
+    color_adapt_xyz(xyz, white, color_d65_white);
     for (int c = 0; c < 3; c++) rgb[c] = color_linear_to_srgb(
         srgb[c][0] * xyz[0] + srgb[c][1] * xyz[1] + srgb[c][2] * xyz[2]);
+}
+
+static inline void color_rgb_to_lab(double red, double green, double blue,
+                                    const double white[3], double lab[3]) {
+    const double srgb[3][3] = {{0.4123907993,0.3575843394,0.1804807884},
+        {0.2126390059,0.7151686788,0.0721923154},{0.0193308187,0.1191947798,0.9505321522}};
+    double rgb[3] = {color_srgb_to_linear(red), color_srgb_to_linear(green), color_srgb_to_linear(blue)};
+    double xyz[3];
+    for (int c = 0; c < 3; c++) xyz[c] = srgb[c][0] * rgb[0] + srgb[c][1] * rgb[1] + srgb[c][2] * rgb[2];
+    color_adapt_xyz(xyz, color_d65_white, white);
+    for (int c = 0; c < 3; c++) {
+        double component = xyz[c] / white[c];
+        xyz[c] = component > 216.0 / 24389.0 ? cbrt(component) : (24389.0 / 27.0 * component + 16) / 116;
+    }
+    lab[0] = 116 * xyz[1] - 16;
+    lab[1] = 500 * (xyz[0] - xyz[1]);
+    lab[2] = 200 * (xyz[1] - xyz[2]);
 }
 
 // CSS Color 4 §19: Oklab's D65 LMS transform composed with linear sRGB.
