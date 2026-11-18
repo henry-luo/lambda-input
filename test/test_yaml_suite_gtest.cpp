@@ -169,8 +169,11 @@ static bool json_objects_equal(const char* a, const char* b) {
     return pa == pb;
 }
 
-// test suite directory path
-static const char* YAML_SUITE_DIR = "test/yaml";
+// resolve the shared YAML corpus selected for this checkout.
+static std::string yaml_suite_dir() {
+    const char* corpus_root = getenv("LAMBDA_TEST_DIR");
+    return corpus_root ? std::string(corpus_root) + "/yaml" : "../lambda-test/yaml";
+}
 
 // data structure for a single test case
 struct YamlTestCase {
@@ -186,10 +189,11 @@ struct YamlTestCase {
 // collect all test cases from the suite directory
 static std::vector<YamlTestCase> collect_test_cases() {
     std::vector<YamlTestCase> cases;
+    std::string suite_dir = yaml_suite_dir();
 
-    DIR* dir = opendir(YAML_SUITE_DIR);
+    DIR* dir = opendir(suite_dir.c_str());
     if (!dir) {
-        fprintf(stderr, "Cannot open yaml test suite directory: %s\n", YAML_SUITE_DIR);
+        fprintf(stderr, "Cannot open yaml test suite directory: %s\n", suite_dir.c_str());
         return cases;
     }
 
@@ -199,7 +203,7 @@ static std::vector<YamlTestCase> collect_test_cases() {
         if (strcmp(entry->d_name, "name") == 0 || strcmp(entry->d_name, "tags") == 0) continue;
 
         char test_dir[512];
-        snprintf(test_dir, sizeof(test_dir), "%s/%s", YAML_SUITE_DIR, entry->d_name);
+        snprintf(test_dir, sizeof(test_dir), "%s/%s", suite_dir.c_str(), entry->d_name);
 
         if (!is_directory(test_dir)) continue;
 
@@ -390,7 +394,7 @@ protected:
         if (!cases_loaded) {
             all_cases = collect_test_cases();
             cases_loaded = true;
-            printf("Loaded %zu YAML test cases from %s\n", all_cases.size(), YAML_SUITE_DIR);
+            printf("Loaded %zu YAML test cases from %s\n", all_cases.size(), yaml_suite_dir().c_str());
         }
     }
 };
