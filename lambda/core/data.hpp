@@ -1177,6 +1177,7 @@ typedef struct TypeParam : Type {
     // parameters use TYPE_ANY_NO_ERROR while explicit `any` uses TYPE_ANY.
     Type* contract_type;
     bool has_explicit_contract;
+    uint32_t default_callback_effects;  // S12.1.4: bound when the slot is omitted
     TypeBinder* binder;       // non-null for an explicit `T: type` parameter
     struct AstNode* type_expr; // source contract, retained for binder ordering checks
 } TypeParam;
@@ -1210,11 +1211,16 @@ typedef struct TypeFunc : Type {
     bool may_defect;
     bool defect_known;
     bool has_explicit_return_contract;
-    // S12.1.4v2: declared with `function` — the value is `fn`, but a call is
-    // `pn` when a `function`-typed argument is (its polymorphic slots)
+    // S12.1.4: declared with `function`; its polymorphic slots contribute
+    // their effects in addition to the value's intrinsic and captured effects.
     bool is_colour_poly;
+    bool may_acquire_resources; // legacy reader calls still count in a restricted body
+    bool has_effect_summary;    // a definition or builtin, rather than a nominal fn type
     uint16_t binder_count;
+    uint32_t declared_effects;  // S12.1.6: zero means no explicit procedure bound
+    uint32_t intrinsic_effects; // S12.1.4: own effects of a `function` body
     TypeBinder** binders;       // canonical binder for each slot
+    const uint8_t* effect_captures; // zero-terminated, one-based snapshot slots
 } TypeFunc;
 
 typedef struct TypeType : Type {
@@ -1387,6 +1393,17 @@ static inline TypeFunc* lambda_type_func_signature(Type* type) {
 static inline bool lambda_type_func_is_proc(Type* type) {
     TypeFunc* signature = lambda_type_func_signature(type);
     return signature && signature->is_proc;
+}
+
+// The value's runtime colour can be procedural while its declaration still
+// uses functional collection and control.
+static inline bool lambda_signature_value_is_proc(const TypeFunc* signature) {
+    return signature && (signature->is_proc || signature->intrinsic_effects != 0);
+}
+
+static inline uint32_t lambda_signature_procedure_bound(const TypeFunc* signature) {
+    if (!signature) return 0;
+    return signature->is_proc ? signature->declared_effects : signature->intrinsic_effects;
 }
 
 // S12.1.4v2(1): a polymorphic slot of a `function` declaration is a parameter
