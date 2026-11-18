@@ -6,6 +6,25 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-079"></a>
+
+### LI-079 — Select insertion modes discard customizable select content
+
+**Status:** FIXED for tree construction, 2026-11-18. Input owns HTML parsing
+under **D9.1.1v4 / D9.1.3v2**.
+
+`lambda convert` dropped a select's `<button>`, `<selectedcontent>` and rich
+option descendants. The old select insertion modes ignored these tokens.
+The [HTML in-body rules](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+now handle select, option, optgroup and recovery through the normal stack.
+Foster parenting moves only a node whose insertion target is a table
+structural element, so rich descendants stay inside a fostered select.
+
+The native parser, negative parser and html5lib suites passed 83, 126 and
+364 tests respectively. The split Lambda CLI roundtrip preserved the custom
+button, selectedcontent and option markup. Selected-content mirroring and
+picker presentation belong to the downstream DOM and layout implementations.
+
 <a id="li-078"></a>
 
 ### LI-078 — Incomplete Lab computation selects a bright fallback hero

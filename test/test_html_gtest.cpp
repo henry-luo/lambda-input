@@ -309,6 +309,59 @@ TEST_F(HtmlParserTest, BasicParsingSimpleDiv) {
     EXPECT_TRUE(strview_equal(&type->name, "div"));
 }
 
+TEST_F(HtmlParserTest, SelectKeepsCustomButtonAndRichOptions) {
+    Item document = parseHtml5Document(
+        "<select><button><selectedcontent></selectedcontent></button>"
+        "<option><span>First</span><img src='first.png'>"
+        "<option>Second<hr><optgroup label='More'><legend>More</legend>"
+        "<option>Third</select><p>After</p>");
+    Element* select = findElementByTag(document, "select");
+    ASSERT_NE(select, nullptr);
+    ASSERT_EQ(select->length, 5);
+    const char* tags[] = {"button", "option", "option", "hr", "optgroup"};
+    for (size_t i = 0; i < sizeof(tags) / sizeof(tags[0]); i++) {
+        ASSERT_EQ(get_type_id(select->items[i]), LMD_TYPE_ELEMENT);
+        EXPECT_STREQ(ElementReader(select->items[i]).tagName(), tags[i]);
+    }
+    EXPECT_NE(findElementByTag(select->items[0], "selectedcontent"), nullptr);
+    EXPECT_NE(findElementByTag(select->items[1], "span"), nullptr);
+    EXPECT_NE(findElementByTag(select->items[1], "img"), nullptr);
+    EXPECT_NE(findElementByTag(select->items[4], "legend"), nullptr);
+    EXPECT_EQ(findElementByTag(Item{.element = select}, "p"), nullptr);
+    EXPECT_NE(findElementByTag(document, "p"), nullptr);
+}
+
+TEST_F(HtmlParserTest, FosteredSelectKeepsItsDescendantsOutsideTheTable) {
+    Item document = parseHtml5Document(
+        "<table><select><button><selectedcontent></selectedcontent></button>"
+        "<option><span>Choice</span><tr><td>Cell</table>");
+    Element* body = findElementByTag(document, "body");
+    ASSERT_NE(body, nullptr);
+    ASSERT_EQ(body->length, 2);
+    EXPECT_STREQ(ElementReader(body->items[0]).tagName(), "select");
+    EXPECT_STREQ(ElementReader(body->items[1]).tagName(), "table");
+    EXPECT_NE(findElementByTag(body->items[0], "selectedcontent"), nullptr);
+    EXPECT_NE(findElementByTag(body->items[0], "span"), nullptr);
+    EXPECT_NE(findElementByTag(body->items[1], "td"), nullptr);
+}
+
+TEST_F(HtmlParserTest, SelectContextFragmentsIgnoreInputAndNestedSelect) {
+    Input* input = Input::create(pool);
+    ASSERT_NE(input, nullptr);
+    Html5Parser* parser = html5_fragment_parser_create(input->pool, input->arena, input, "select");
+    ASSERT_NE(parser, nullptr);
+    Html5ParserScope scope(parser);
+    ASSERT_TRUE(html5_fragment_parse(parser,
+        "<button><selectedcontent></selectedcontent></button><select><option><span>Choice</span><input>"));
+    Element* fragment = html5_fragment_get_body(parser);
+    ASSERT_NE(fragment, nullptr);
+    ASSERT_EQ(fragment->length, 2);
+    EXPECT_NE(findElementByTag(fragment->items[0], "selectedcontent"), nullptr);
+    EXPECT_NE(findElementByTag(fragment->items[1], "span"), nullptr);
+    EXPECT_EQ(findElementByTag(Item{.element = fragment}, "input"), nullptr);
+    EXPECT_EQ(findElementByTag(Item{.element = fragment}, "select"), nullptr);
+}
+
 TEST_F(HtmlParserTest, RubyStartTagsCloseImpliedBasesAndPreserveAnnotationContainers) {
     struct Case {
         const char* source;

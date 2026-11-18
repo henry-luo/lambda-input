@@ -44,6 +44,7 @@ typedef struct LayoutContext LayoutContext;  // From radiant/layout.hpp
 typedef struct DocState DocState;  // From radiant/state_store.h
 typedef struct StateStore StateStore;  // From radiant/state_store.hpp
 typedef struct Url Url;  // From lib/url.h
+struct DomScriptReaction;
 
 // Node-level style and presentation invalidation is shared by both hosts.
 void dom_mark_dirty_ancestors(DomNode* node);
@@ -57,6 +58,8 @@ DomElement* dom_shadow_root(DomNode* node);
 DomElement* dom_shadow_first_matching_slot(DomNode* root, const char* name);
 bool dom_slot_assignment_matches(DomElement* slot, DomNode* child);
 DomElement* dom_slot_assignment_host(DomElement* slot);
+DomElement* dom_find_assigned_slot(DomNode* node);
+bool dom_node_is_slottable(DomNode* node);
 DomElement* dom_flat_tree_parent(DomElement* element);
 bool dom_node_is_inert(DomNode* node);
 
@@ -196,6 +199,7 @@ struct DomJsRuntime {
     Runtime* runtime;
     void* doc_node;
     bool implicit_doctype;
+    bool selected_content_initialized;
     int mutation_count;
     uint32_t mutation_sequence;
     uint32_t mutation_kind_mask;
@@ -233,6 +237,13 @@ struct DomJsRuntime {
     DomNode* write_cursor;
     void (*write_script_subtree)(void* context, DomElement* element);
     void* write_script_context; // borrowed only during the loader's script scheduler.
+    void (*prepare_inline_script)(DomElement* element, StrBuf** source_owner);
+    void* preparing_script_preamble; // borrowed during the initial script drain.
+    DomScriptReaction* pending_scripts;
+    DomScriptReaction* pending_scripts_tail;
+    DomScriptReaction* running_scripts;
+    uint32_t script_reaction_depth;
+    bool has_shadow_roots;
 
     DomJsRuntime() : mir_ctx(nullptr), preamble_state(nullptr), runtime(nullptr),
         doc_node(nullptr), implicit_doctype(true), mutation_count(0), mutation_sequence(0), mutation_kind_mask(0),
@@ -246,7 +257,9 @@ struct DomJsRuntime {
         virtual_clock_enabled(false), virtual_clock_ms(0.0),
         post_load_settle_ms(0.0),
         redirect_stdout_to_stderr(false), current_script(nullptr), write_cursor(nullptr),
-        write_script_subtree(nullptr), write_script_context(nullptr) {}
+        write_script_subtree(nullptr), write_script_context(nullptr), prepare_inline_script(nullptr),
+        preparing_script_preamble(nullptr), pending_scripts(nullptr), pending_scripts_tail(nullptr),
+        running_scripts(nullptr), script_reaction_depth(0), has_shadow_roots(false) {}
 };
 
 // tier-1: document-owned semantic zoom and raster-output scale inputs
@@ -722,6 +735,9 @@ DomNode* dom_source_inclusive_ancestor(DomNode* node);
 DomNode* dom_source_parent(DomNode* node);
 DomNode* dom_source_child(DomElement* element, bool first);
 DomNode* dom_source_sibling(DomNode* node, bool forward);
+DomNode* dom_source_tree_root(DomNode* node);
+DomNode* dom_source_next_in_tree(DomNode* root, DomNode* node);
+DomElement* dom_find_source_element_by_id(DomNode* root, const char* id);
 void dom_collect_text_content(DomNode* node, StrBuf* output);
 const CssCustomProp* dom_element_lookup_own_custom_property_entry(DomElement* element,
     const char* name, size_t name_length = (size_t)-1, bool exclude_animations = false);
@@ -946,6 +962,9 @@ struct DomElementExt {
     bool has_animated_display;
     lam::Up<DomElement> shadow_host;
     lam::Own<DomElement> shadow_root;
+    lam::Up<CssStylesheet> shadow_inline_stylesheet;
+    bool shadow_closed;
+    bool shadow_delegates_focus;
     float pending_element_scroll_x;
     float pending_element_scroll_y;
     bool has_inline_cb_edge_snapshot;
@@ -967,7 +986,12 @@ struct DomElementExt {
     bool has_ruby_parallel_fragments; // selected text rectangles own each line's allocation
     bool popover_open;
     bool dialog_modal;
+    bool dialog_cancel_dispatching;
     lam::Own<const char> dialog_return_value; // document-pooled WebIDL state, independent of JS expandos
+    bool selected_content_pending;
+    bool selected_content_reset_pending;
+    bool script_already_started;
+    bool script_parser_pending;
     // Deferred text-control events are DOM task state, so their queue links
     // outlive layout-property teardown while a control is detached.
     uint8_t selectionchange_event_pending;
@@ -1485,16 +1509,27 @@ LAM_NODE_OF(DomElement, NodeDocument);
 LAM_NODE_OF(DomElementExt, NodeDocument);
 LAM_NODE_OF(DomDocument, NodeDocument);
 
-// A node is connected only while its parent chain reaches the owning root.
-inline bool dom_node_is_connected(const DomNode* node) {
-    DomDocument* document = dom_node_ancestor_document(const_cast<DomNode*>(node));
-    if (!document || !document->root) return false;
-    const DomNode* root = document->root;
-    while (node) {
+inline const DomNode* dom_shadow_including_parent(const DomNode* node) {
+    if (node->parent) return node->parent;
+    const DomElement* element = node->as_element();
+    return element ? element->shadow_host_element() : nullptr;
+}
+
+inline DomNode* dom_shadow_including_parent(DomNode* node) {
+    return const_cast<DomNode*>(dom_shadow_including_parent(static_cast<const DomNode*>(node)));
+}
+
+inline bool dom_shadow_including_contains(const DomNode* root, const DomNode* node) {
+    for (; node; node = dom_shadow_including_parent(node)) {
         if (node == root) return true;
-        node = node->parent;
     }
     return false;
+}
+
+// A shadow tree is connected when its host is connected.
+inline bool dom_node_is_connected(const DomNode* node) {
+    DomDocument* document = dom_node_ancestor_document(const_cast<DomNode*>(node));
+    return document && dom_shadow_including_contains(document->root, node);
 }
 
 inline bool dom_element_is_connected(const DomElement* element) {

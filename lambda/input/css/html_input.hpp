@@ -14,14 +14,20 @@ enum FormInputKind {
     FORM_INPUT_KIND_COLOR, FORM_INPUT_KIND_COUNT,
 };
 
-struct HtmlInputTypeData { const char* keyword; bool auto_direction_value; };
+struct HtmlInputTypeData {
+    const char* keyword;
+    bool auto_direction_value;
+    bool uses_datalist;
+};
 inline constexpr HtmlInputTypeData HTML_INPUT_TYPES[] = {
-    {"text", true}, {"password", true}, {"email", true}, {"url", true},
-    {"search", true}, {"tel", true}, {"number", false}, {"checkbox", false},
-    {"radio", false}, {"button", true}, {"submit", true}, {"reset", true},
-    {"image", false}, {"hidden", true}, {"range", false}, {"file", false},
-    {"date", false}, {"time", false}, {"datetime-local", false},
-    {"month", false}, {"week", false}, {"color", false},
+    {"text", true, true}, {"password", true, false}, {"email", true, true},
+    {"url", true, true}, {"search", true, true}, {"tel", true, true},
+    {"number", false, true}, {"checkbox", false, false}, {"radio", false, false},
+    {"button", true, false}, {"submit", true, false}, {"reset", true, false},
+    {"image", false, false}, {"hidden", true, false}, {"range", false, true},
+    {"file", false, false}, {"date", false, true}, {"time", false, true},
+    {"datetime-local", false, true}, {"month", false, true}, {"week", false, true},
+    {"color", false, true},
 };
 static_assert(sizeof(HTML_INPUT_TYPES) / sizeof(*HTML_INPUT_TYPES) == FORM_INPUT_KIND_COUNT);
 

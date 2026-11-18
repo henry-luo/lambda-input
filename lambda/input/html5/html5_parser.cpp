@@ -25,7 +25,6 @@ static const char* const HTML5_SCOPE_TAGS[] = {
 static const char* const HTML5_BUTTON_SCOPE_TAGS[] = {"button"};
 static const char* const HTML5_LIST_ITEM_SCOPE_TAGS[] = {"ol", "ul"};
 static const char* const HTML5_TABLE_SCOPE_TAGS[] = {"html", "table", "template"};
-static const char* const HTML5_SELECT_PASS_TAGS[] = {"optgroup", "option"};
 static const char* const HTML5_IMPLIED_END_TAGS[] = {
     "dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"
 };
@@ -82,7 +81,6 @@ static const struct {
     HTML5_TAG_LIST(HTML5_BUTTON_SCOPE_TAGS, HTML5_TAG_BUTTON_SCOPE),
     HTML5_TAG_LIST(HTML5_LIST_ITEM_SCOPE_TAGS, HTML5_TAG_LIST_ITEM_SCOPE),
     HTML5_TAG_LIST(HTML5_TABLE_SCOPE_TAGS, HTML5_TAG_TABLE_SCOPE),
-    HTML5_TAG_LIST(HTML5_SELECT_PASS_TAGS, HTML5_TAG_SELECT_PASS),
     HTML5_TAG_LIST(HTML5_IMPLIED_END_TAGS, HTML5_TAG_IMPLIED_END),
     HTML5_TAG_LIST(HTML5_FORMATTING_TAGS, HTML5_TAG_FORMATTING),
     HTML5_TAG_LIST(HTML5_SPECIAL_TAGS, HTML5_TAG_SPECIAL),
@@ -551,22 +549,12 @@ bool html5_has_element_in_list_item_scope(Html5Parser* parser, NameId tag_id, co
         HTML5_TAG_SCOPE | HTML5_TAG_LIST_ITEM_SCOPE);
 }
 
-bool html5_has_element_in_select_scope(Html5Parser* parser, NameId target_id, const char* tag_name) {
-    // select scope = all elements EXCEPT optgroup and option
-    for (int i = (int)parser->open_elements->length - 1; i >= 0; i--) {
-        Element* elem = (Element*)parser->open_elements->items[i].element;
-        NameId elem_id = html5_element_tag_id(elem);
-        const char* elem_tag = html5_element_tag(elem);
-
-        if (html5_same_tag(elem_id, elem_tag, target_id, tag_name)) {
-            return true;
-        }
-
-        if (!(html5_tag_classes(elem_id, elem_tag) & HTML5_TAG_SELECT_PASS)) {
-            return false;
-        }
-    }
-    return false;
+bool html5_at_table_insertion_target(Html5Parser* parser) {
+    Element* current = html5_current_node(parser);
+    if (!current) return false;
+    NameId tag = html5_element_tag_id(current);
+    return tag == MARKUP_NAME_TABLE || tag == MARKUP_NAME_TBODY ||
+        tag == MARKUP_NAME_TFOOT || tag == MARKUP_NAME_THEAD || tag == MARKUP_NAME_TR;
 }
 
 // implied end tags - implements "generate implied end tags" from WHATWG spec
@@ -692,7 +680,7 @@ void html5_reconstruct_active_formatting_elements(Html5Parser* parser) {
         Element* new_elem = elem_builder.final().element;
 
         // Insert into appropriate place - check for foster parenting
-        if (parser->foster_parenting) {
+        if (parser->foster_parenting && html5_at_table_insertion_target(parser)) {
             int table_index = -1;
             Element* table_element = html5_find_last_table(parser, &table_index);
 
@@ -756,8 +744,8 @@ Element* html5_insert_html_element(Html5Parser* parser, Html5Token* token) {
     // Create element with attributes from token
     Element* elem = html5_create_element_for_token(parser, token);
 
-    // Check if foster parenting is enabled (inside table but outside cells)
-    if (parser->foster_parenting) {
+    // descendants of a fostered element stay in that element's subtree.
+    if (parser->foster_parenting && html5_at_table_insertion_target(parser)) {
         int table_index = -1;
         Element* table_element = html5_find_last_table(parser, &table_index);
 

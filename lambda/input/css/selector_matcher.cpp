@@ -278,6 +278,13 @@ static bool selector_matcher_matches_column(SelectorMatcher* matcher,
 static bool selector_matcher_matches_complex_at(SelectorMatcher* matcher,
     CssSelector* selector, int compound_index, DomElement* element);
 
+static DomElement* selector_relation_parent(SelectorMatcher* matcher, DomElement* element) {
+    DomNode* node = dom_source_parent(element);
+    DomElement* parent = node ? node->as_element() : nullptr;
+    // A shadow fragment is a boundary, except for an explicitly bound query scope.
+    return parent && (!parent->shadow_host_element() || matcher->scope_element == parent) ? parent : nullptr;
+}
+
 static bool selector_matcher_matches_complex_relation(SelectorMatcher* matcher,
     CssSelector* selector, int compound_index, DomElement* element) {
     CssCombinator combinator = selector->combinators[compound_index - 1];
@@ -285,15 +292,15 @@ static bool selector_matcher_matches_complex_relation(SelectorMatcher* matcher,
         case CSS_COMBINATOR_DESCENDANT: {
             // A descendant combinator may need to skip a matching ancestor so
             // that an earlier child/sibling combinator can still be satisfied.
-            for (DomElement* ancestor = static_cast<DomElement*>(dom_source_parent(element));
-                 ancestor; ancestor = static_cast<DomElement*>(dom_source_parent(ancestor))) {
+            for (DomElement* ancestor = selector_relation_parent(matcher, element);
+                 ancestor; ancestor = selector_relation_parent(matcher, ancestor)) {
                 if (selector_matcher_matches_complex_at(
                         matcher, selector, compound_index - 1, ancestor)) return true;
             }
             return false;
         }
         case CSS_COMBINATOR_CHILD: {
-            DomElement* parent = static_cast<DomElement*>(dom_source_parent(element));
+            DomElement* parent = selector_relation_parent(matcher, element);
             return parent && selector_matcher_matches_complex_at(
                 matcher, selector, compound_index - 1, parent);
         }
@@ -1691,13 +1698,13 @@ bool selector_matcher_has_ancestor(SelectorMatcher* matcher,
         return false;
     }
 
-    DomElement* ancestor = static_cast<DomElement*>(dom_source_parent(element));
+    DomElement* ancestor = selector_relation_parent(matcher, element);
     while (ancestor) {
         if (selector_matcher_matches_compound(matcher, selector, ancestor)) {
             if (matched_ancestor) *matched_ancestor = ancestor;
             return true;
         }
-        ancestor = static_cast<DomElement*>(dom_source_parent(ancestor));
+        ancestor = selector_relation_parent(matcher, ancestor);
     }
 
     return false;
@@ -1710,7 +1717,7 @@ bool selector_matcher_has_parent(SelectorMatcher* matcher,
         return false;
     }
 
-    return selector_matcher_matches_compound(matcher, selector, static_cast<DomElement*>(dom_source_parent(element)));
+    return selector_matcher_matches_compound(matcher, selector, selector_relation_parent(matcher, element));
 }
 
 bool selector_matcher_has_prev_sibling(SelectorMatcher* matcher,
