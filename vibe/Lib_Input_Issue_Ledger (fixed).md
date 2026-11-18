@@ -6,6 +6,52 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-078"></a>
+
+### LI-078 — Incomplete Lab computation selects a bright fallback hero
+
+**Status:** FIXED, 2026-11-18. Shared color/value computation belongs to Input
+(**D9.1.1v4 / D9.1.3v2**). Computed expression snapshots retain owned values
+under **D5.5.1**. This adds a bounded existing color-engine increment, not a
+native feature-query exception.
+
+Rogo's saved stylesheet gates its subtle sRGB gradient behind a Lab color-mix
+feature query. Ordinary sRGB mixing and gradients work in an isolated control.
+The authored fallback uses opaque white and produces the large bright hero
+glow. The engine correctly rejected the feature test because only sRGB/Oklab
+mixing was implemented; its existing Lab type and library conversion were not
+connected to computed parsing, mixing or model-preserving transport.
+
+Absolute Lab channels/percentages and alpha now use the existing computed color
+path. Rectangular Lab mixing shares the existing weight, currentColor and
+premultiplied-alpha logic. Lab components stay in D50 until used-color conversion.
+A shared Bradford adaptation helper serves both conversion directions; the
+existing color-name implementation now matches its public declaration and is
+reused by computed trees and formatting. No duplicate color table is added.
+See [CSS Color 4 §8 and §19](https://www.w3.org/TR/css-color-4/#lab-colors)
+and [CSS Color 5 mixing](https://www.w3.org/TR/css-color-5/#color-mix).
+
+LCH/polar interpolation, relative colors, missing-component interpolation,
+additional spaces, gamut mapping and Lab interpolation inside gradients remain
+outside this increment. A Lab gradient feature query remains unsupported.
+
+Five native paint cases fail before the repair; all five are confirmed by
+Chromium. After the repair, all 15 focused color/condition/stylesheet checks
+pass. Input's focused color/perceptual parser checks pass 10/10, including
+computed transport and serialization; shared color-library checks pass 10/10,
+including extended-sRGB conversion round trips. The new Lab transport check
+compares lightness to its specified value because converting white can carry
+reference-white roundoff above the Lab syntax bound; other components retain
+exact values. No existing assertion or baseline tolerance changes.
+
+Rogo's identical saved-source error falls from 13.28% to 1.90%. Its normal live
+hero background is repaired (3.97% coarse error), but navigation, the remainder
+of its headline, copy and action are still absent. A manual high review keeps
+those omissions visible. No live clearance, capture delay, reference update or
+full baseline repeat is claimed. The preceding round79 Radiant milestone is
+retained. Reproduction, focused logs and PNGs are under the Lambda checkout's
+`temp/online-visual-round81/`.
+
 <a id="li-077"></a>
 
 ### LI-077 — Duplicate bounded parser after merge

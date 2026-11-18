@@ -231,12 +231,13 @@ static bool format_computed_color(CssFormatter* formatter, const CssValue* value
     }
     bool missing = color.missing != 0;
     bool rgb = color.type == CSS_COLOR_RGB;
-    bool perceptual = color.type == CSS_COLOR_OKLAB || color.type == CSS_COLOR_OKLCH;
+    bool perceptual = css_color_type_is_perceptual(color.type);
     bool modern = missing || perceptual || color.type == CSS_COLOR_COLOR;
     bool alpha = color.components[3] != 1.0 || (color.missing & 8);
     if (color.type == CSS_COLOR_COLOR) stringbuf_append_all(formatter->output, 3, "color(", color.color_space, " ");
-    else stringbuf_append_str(formatter->output, perceptual ? color.type == CSS_COLOR_OKLAB ? "oklab(" : "oklch("
-        : rgb ? missing ? "color(srgb " : alpha ? "rgba(" : "rgb("
+    else if (perceptual) stringbuf_append_all(formatter->output, 2, css_color_type_to_string(color.type), "(");
+    else stringbuf_append_str(formatter->output,
+        rgb ? missing ? "color(srgb " : alpha ? "rgba(" : "rgb("
         : color.type == CSS_COLOR_HSL ? "hsl(" : "hwb(");
     for (int i = 0; i < 3; i++) {
         if (i) stringbuf_append_str(formatter->output, modern ? " " : ", ");

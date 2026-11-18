@@ -447,7 +447,7 @@ const char* css_token_type_to_str(CssTokenType type) {
     }
 }
 
-const char* css_color_type_to_str(CssColorType type) {
+const char* css_color_type_to_string(CssColorType type) {
     switch (type) {
         case CSS_COLOR_HEX: return "hex";
         case CSS_COLOR_RGB: return "rgb";

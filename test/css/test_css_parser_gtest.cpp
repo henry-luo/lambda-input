@@ -2730,3 +2730,40 @@ TEST_F(CssParserTest, CssShapesRegistersAndValidatesCoreGrammar) {
     EXPECT_STREQ(css_property_get_by_code(CSS_PROPERTY_SHAPE_MARGIN)->initial_value, "0px");
     EXPECT_STREQ(css_property_get_by_code(CSS_PROPERTY_SHAPE_IMAGE_THRESHOLD)->initial_value, "0");
 }
+
+TEST_F(CssEngineParserTest, LabColorsAndMixesRetainTheirComputedSpace) {
+    struct Case {const char* source; double lightness, alpha; uint8_t gray;};
+    const Case cases[] = {
+        {"lab(50% 0 0)", 50, 1, 119},
+        {"lab(150 0 0 / 25%)", 100, .25, 255},
+        {"lab(-5 0 0)", 0, 1, 0},
+        {"color-mix(in lab, white, black)", 50, 1, 119},
+        {"color-mix(in lab, white 20%, white 20%)", 100, .4, 255},
+    };
+    for (const Case& entry : cases) {
+        SCOPED_TRACE(entry.source);
+        CssDeclaration* declaration = css_parse_property_declaration(
+            "color", 5, entry.source, strlen(entry.source), pool);
+        ASSERT_NE(declaration, nullptr);
+        CssComputedColor color;
+        ASSERT_TRUE(css_color_compute(declaration->value, &color));
+        EXPECT_EQ(color.type, CSS_COLOR_LAB);
+        EXPECT_NEAR(color.components[0], entry.lightness, 1e-4);
+        EXPECT_NEAR(color.components[3], entry.alpha, 1e-9);
+        uint8_t r, g, b, a;
+        ASSERT_TRUE(css_color_to_rgba(&color, &r, &g, &b, &a));
+        EXPECT_EQ(r, entry.gray); EXPECT_EQ(g, entry.gray); EXPECT_EQ(b, entry.gray);
+        CssValue* retained = css_value_create_computed_color(pool, &color);
+        ASSERT_NE(retained, nullptr);
+        CssComputedColor copy;
+        ASSERT_TRUE(css_color_compute(retained, &copy));
+        EXPECT_EQ(copy.type, CSS_COLOR_LAB);
+        // bounded Lab syntax can clamp a converted white with reference-white roundoff.
+        EXPECT_NEAR(copy.components[0], entry.lightness, 1e-4);
+        for (int i = 1; i < 4; i++) EXPECT_DOUBLE_EQ(copy.components[i], color.components[i]);
+        CssFormatter* formatter = css_formatter_create(pool, CSS_FORMAT_COMPACT);
+        formatter->options.computed_colors = true;
+        css_format_value(formatter, retained);
+        EXPECT_EQ(strncmp(stringbuf_to_string(formatter->output)->chars, "lab(", 4), 0);
+    }
+}
