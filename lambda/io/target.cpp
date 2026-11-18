@@ -271,7 +271,7 @@ Target* item_to_target(uint64_t item, Url* cwd) {
             return NULL;
         }
         if (path_get_scheme(path) == PATH_SCHEME_FILE &&
-                !path_file_authority_is_local(path)) {
+                !path_file_authority_is_available(path)) {
             log_error("item_to_target: remote file authority is not supported");
             mem_free(target);
             return NULL;
@@ -362,7 +362,7 @@ void* target_to_local_path(Target* target, Url* cwd) {
             path = path_qualify_default(pool, path);
         }
         if (path_get_scheme(path) == PATH_SCHEME_FILE &&
-                !path_file_authority_is_local(path)) {
+                !path_file_authority_is_available(path)) {
             log_error("target_to_local_path: remote file authority is not supported");
             strbuf_free(path_buf);
             return NULL;

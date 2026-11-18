@@ -1270,6 +1270,7 @@ typedef struct PathMeta PathMeta;
 
 // Path construction API (called by JIT-generated code)
 Path* path_new(Pool* pool, int scheme);                           // Create new path with scheme
+// A null file authority preserves the explicit file./ spelling.
 Path* path_new_authority(Pool* pool, int scheme, const char* authority);
 Path* path_clone(Pool* pool, Path* source);                       // Clone immutable path spine into pool
 Path* path_extend(Pool* pool, Path* base, const char* segment);   // Extend path with segment
@@ -1279,6 +1280,7 @@ Path* path_select_parent(Pool* pool, Path* base);
 Path* path_select_root(Pool* pool, Path* base);
 Path* path_qualify_default(Pool* pool, Path* path);
 bool path_file_authority_is_local(Path* path);
+bool path_file_authority_is_available(Path* path);
 bool path_equal(Path* left, Path* right);
 uint64_t path_hash(Path* path, uint64_t seed0, uint64_t seed1);
 Path* path_concat(Pool* pool, Path* base, Path* suffix);          // Concatenate two paths

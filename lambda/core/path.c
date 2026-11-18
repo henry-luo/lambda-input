@@ -24,6 +24,9 @@ extern DateTime* datetime_from_unix(Pool* pool, int64_t unix_timestamp);
 #include <string.h>
 #include <stdlib.h>
 
+// Root-only spelling metadata. The normalized local authority is shared.
+#define PATH_FLAG_FILE_SLASH 0x10u
+
 static PathPoolProvider path_pool_provider = NULL;
 
 static PathTypePrinter path_type_printer = NULL;
@@ -65,7 +68,8 @@ static const char* scheme_names[PATH_SCHEME_COUNT] = {
     ".",      // PATH_SCHEME_REL (relative)
     "..",     // PATH_SCHEME_PARENT (legacy only)
     "/",      // PATH_SCHEME_LOGICAL
-    "temp"    // PATH_SCHEME_TEMP (in-memory documents, PTH44v2)
+    "temp",   // PATH_SCHEME_TEMP (in-memory documents, PTH44v2)
+    "~doc"    // PATH_SCHEME_DOCUMENT (evaluation-supplied document)
 };
 
 static Path* path_root_of(Path* path) {
@@ -153,10 +157,16 @@ Path* path_append_len(Path* parent, const char* segment, size_t len) {
 }
 
 Path* path_new_authority(Pool* pool, int scheme, const char* authority) {
-    if (!pool || !authority || !*authority) return NULL;
+    if (!pool || (authority ? !*authority : scheme != PATH_SCHEME_FILE)) return NULL;
     if (scheme < 0 || scheme >= PATH_SCHEME_COUNT) return NULL;
     Path* root = path_new(pool, scheme);
     if (!root) return NULL;
+    if (!authority) {
+        root->flags |= PATH_FLAG_FILE_SLASH;
+        return root;
+    }
+    // RFC 8089 uses localhost for the empty authority on the current machine.
+    if (scheme == PATH_SCHEME_FILE && strcmp(authority, "localhost") == 0) return root;
     root->authority_kind = PATH_AUTHORITY_NAMED;
     size_t len = strlen(authority);
     char* copy = pool_dup_n(pool, authority, len);
@@ -203,7 +213,7 @@ bool path_is_absolute(Path* path) {
            scheme == PATH_SCHEME_HTTP ||
            scheme == PATH_SCHEME_HTTPS ||
            scheme == PATH_SCHEME_SYS ||
-           scheme == PATH_SCHEME_TEMP ||
+           scheme == PATH_SCHEME_TEMP || scheme == PATH_SCHEME_DOCUMENT ||
            scheme == PATH_SCHEME_LOGICAL;
 }
 
@@ -263,8 +273,8 @@ static void path_print_op(StrBuf* out, Path* op) {
     }
 }
 
-/** Convert a path to its canonical Lambda spelling. */
-void path_to_string(Path* path, void* out_ptr) {
+/** Render normalized identity or the Lambda source spelling. */
+static void path_print(Path* path, void* out_ptr, bool source) {
     StrBuf* out = (StrBuf*)out_ptr;
     if (!path || !out) return;
 
@@ -286,27 +296,50 @@ void path_to_string(Path* path, void* out_ptr) {
         // `./` form and never routes through here.
         strbuf_append_char(out, '\\');
     } else if (scheme == PATH_SCHEME_FILE) {
+        if (source) strbuf_append_str(out, "\\.");
         strbuf_append_str(out, "file.");
         if (root->authority_kind == PATH_AUTHORITY_NAMED) {
             // Quote hostnames that are not one identifier token so a dotted or
             // hyphenated authority cannot be reparsed as path child keys.
             path_print_name(out, root->authority_name);
         } else {
-            strbuf_append_char(out, '/');
+            bool spell_localhost = source && !(root->flags & PATH_FLAG_FILE_SLASH);
+            strbuf_append_str(out, spell_localhost ? "localhost" : "/");
         }
     } else if (scheme == PATH_SCHEME_PARENT) {
         // same escape as PATH_SCHEME_REL above: bare `.~~` no longer parses.
         strbuf_append_str(out, "\\.~~");
+    } else if (scheme == PATH_SCHEME_DOCUMENT) {
+        if (source) strbuf_append_str(out, "\\.");
+        strbuf_append_str(out, "~doc");
+        // The evaluation assigns each supplied document its own identity.
+        if (!source && root->authority_name) {
+            strbuf_append_char(out, ':');
+            strbuf_append_str(out, root->authority_name);
+        }
     } else {
+        if (source) strbuf_append_str(out, "\\.");
         strbuf_append_str(out, scheme_names[scheme]);
     }
 
     // every step follows its root with a dot, as `/.a` and `\.a` read
     for (int i = ops->length - 1; i >= 0; i--) {
-        path_print_op(out, (Path*)arraylist_get(ops, i));
+        Path* step = (Path*)arraylist_get(ops, i);
+        if (source && scheme == PATH_SCHEME_REL && i == ops->length - 1 &&
+                PATH_GET_SEG_TYPE(step) == LPATH_SEG_NORMAL && step->name &&
+                (strcmp(step->name, "file") == 0 || strcmp(step->name, "http") == 0 ||
+                 strcmp(step->name, "https") == 0 || strcmp(step->name, "sys") == 0 ||
+                 strcmp(step->name, "temp") == 0)) {
+            strbuf_append_all(out, 3, "['", step->name, "']");
+        } else {
+            path_print_op(out, step);
+        }
     }
     arraylist_free(ops);
 }
+
+void path_to_string(Path* path, void* out) { path_print(path, out, false); }
+void path_to_source(Path* path, void* out) { path_print(path, out, true); }
 
 bool path_equal(Path* left, Path* right) {
     if (left == right) return true;
@@ -354,16 +387,32 @@ static void path_append_os_component(StrBuf* out, Path* op) {
     }
 }
 
+// A UNC authority must not become a Windows device namespace or another path.
+static bool path_unc_authority_valid(const char* host) {
+    if (!host || !*host || strcmp(host, ".") == 0 || strcmp(host, "..") == 0) return false;
+    for (const unsigned char* p = (const unsigned char*)host; *p; p++) {
+        if (*p < 32 || strchr("\\/:*?\"<>|", *p)) return false;
+    }
+    return true;
+}
+
+static bool path_file_authority_local_for_platform(Path* path, bool windows);
+
 /**
  * Convert path to OS file path (e.g., "/etc/hosts" or "C:\Users\name").
  * Handles wildcards properly using segment type flags.
  */
-void path_to_os_path(Path* path, void* out_ptr) {
+static void path_to_platform_path(Path* path, void* out_ptr, bool windows) {
     StrBuf* out = (StrBuf*)out_ptr;
     if (!path || !out) return;
-    if (path_get_scheme(path) == PATH_SCHEME_FILE &&
-            !path_file_authority_is_local(path)) {
+    bool remote_file = path_get_scheme(path) == PATH_SCHEME_FILE &&
+        !path_file_authority_local_for_platform(path, windows);
+    if (remote_file && !windows) {
         log_error("path_to_os_path: remote file authority is not supported");
+        return;
+    }
+    if (remote_file && !path_unc_authority_valid(path_root_of(path)->authority_name)) {
+        log_error("path_to_os_path: invalid UNC authority");
         return;
     }
     if (path_get_scheme(path) == PATH_SCHEME_LOGICAL) {
@@ -384,8 +433,11 @@ void path_to_os_path(Path* path, void* out_ptr) {
     } else if (scheme == PATH_SCHEME_PARENT) {
         strbuf_append_str(out, "../");
     } else if (scheme == PATH_SCHEME_FILE || scheme == PATH_SCHEME_LOGICAL) {
-#ifdef _WIN32
-        if (ops->length > 0) {
+        if (remote_file) {
+            // A Windows remote authority is a UNC server, not a local prefix.
+            strbuf_append_str(out, "\\\\");
+            strbuf_append_str(out, root->authority_name);
+        } else if (windows && ops->length > 0) {
             Path* first = (Path*)arraylist_get(ops, ops->length - 1);
             const char* drive = path_get_os_segment_name(first);
             if (strlen(drive) == 1 && ((drive[0] >= 'A' && drive[0] <= 'Z') ||
@@ -396,12 +448,11 @@ void path_to_os_path(Path* path, void* out_ptr) {
             } else {
                 strbuf_append_char(out, '\\');
             }
-        } else {
+        } else if (windows) {
             strbuf_append_char(out, '\\');
+        } else {
+            strbuf_append_char(out, '/');
         }
-#else
-        strbuf_append_char(out, '/');
-#endif
     } else {
         strbuf_append_all(out, 2, scheme_names[scheme], "://");
     }
@@ -417,11 +468,23 @@ void path_to_os_path(Path* path, void* out_ptr) {
         }
         if (out->length > 0) {
             char last = out->str[out->length - 1];
-            if (last != '/' && last != '\\') strbuf_append_char(out, '/');
+            if (last != '/' && last != '\\') strbuf_append_char(out, remote_file ? '\\' : '/');
         }
         path_append_os_component(out, op);
     }
     arraylist_free(ops);
+}
+
+void path_to_windows_path(Path* path, void* out) {
+    path_to_platform_path(path, out, true);
+}
+
+void path_to_os_path(Path* path, void* out) {
+#ifdef _WIN32
+    path_to_windows_path(path, out);
+#else
+    path_to_platform_path(path, out, false);
+#endif
 }
 
 /**
@@ -496,6 +559,7 @@ Path* path_clone(Pool* pool, Path* source) {
         ? path_new_authority(pool, source->root_scheme, source->authority_name)
         : path_new(pool, source->root_scheme);
     if (!root) return NULL;
+    root->flags |= path_root_of(source)->flags & PATH_FLAG_FILE_SLASH;
 
     // Replaying the spine gives the destination its own names and deliberately
     // omits resolved content and metadata cached by the source path.
@@ -568,10 +632,12 @@ Path* path_select_root(Pool* pool, Path* base) {
     return path_alloc_op(pool, root, LPATH_SEG_ROOT, NULL, 0, 0);
 }
 
-bool path_file_authority_is_local(Path* path) {
+static bool path_file_authority_local_for_platform(Path* path, bool windows) {
     if (!path || path_get_scheme(path) != PATH_SCHEME_FILE) return false;
     Path* root = path_root_of(path);
     if (root->authority_kind != PATH_AUTHORITY_NAMED) return true;
+    // S2.4.5v6: every named Windows host addresses its UNC namespace.
+    if (windows) return false;
 #ifdef LAMBDA_NO_SYSINFO
     // a named file authority cannot be verified without host discovery.
     return false;
@@ -580,6 +646,26 @@ bool path_file_authority_is_local(Path* path) {
     bool local = current && root->authority_name && strcmp(current, root->authority_name) == 0;
     if (current) mem_free(current);
     return local;
+#endif
+}
+
+bool path_file_authority_is_local(Path* path) {
+#ifdef _WIN32
+    return path_file_authority_local_for_platform(path, true);
+#else
+    return path_file_authority_local_for_platform(path, false);
+#endif
+}
+
+bool path_file_authority_is_available(Path* path) {
+#ifdef _WIN32
+    // Windows can project a remote file authority as an OS UNC path.
+    if (!path || path_get_scheme(path) != PATH_SCHEME_FILE) return false;
+    Path* root = path_root_of(path);
+    return root->authority_kind != PATH_AUTHORITY_NAMED ||
+        path_unc_authority_valid(root->authority_name);
+#else
+    return path_file_authority_is_local(path);
 #endif
 }
 

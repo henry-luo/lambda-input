@@ -398,9 +398,50 @@ TEST_F(PathTest, StructuralEqualityAndHash) {
     EXPECT_NE(path_hash(left, 11, 29), path_hash(other, 11, 29));
 }
 
+TEST_F(PathTest, LocalFileAuthoritySpellingSurvivesCloning) {
+    Path* slash = path_append(path_new_authority(pool, PATH_SCHEME_FILE, nullptr), "tmp");
+    Path* localhost = path_append(path_new_authority(pool, PATH_SCHEME_FILE, "localhost"), "tmp");
+    ASSERT_NE(slash, nullptr);
+    ASSERT_NE(localhost, nullptr);
+    EXPECT_TRUE(path_equal(slash, localhost));
+    EXPECT_EQ(path_hash(slash, 11, 29), path_hash(localhost, 11, 29));
+
+    Path* clone = path_clone(pool, slash);
+    ASSERT_NE(clone, nullptr);
+    StrBuf* slash_text = strbuf_new();
+    StrBuf* localhost_text = strbuf_new();
+    path_to_source(clone, slash_text);
+    path_to_source(localhost, localhost_text);
+    EXPECT_STREQ(slash_text->str, "\\.file./.tmp");
+    EXPECT_STREQ(localhost_text->str, "\\.file.localhost.tmp");
+    strbuf_free(slash_text);
+    strbuf_free(localhost_text);
+}
+
+TEST_F(PathTest, CapturedDocumentIdentitySurvivesCloning) {
+    Path* first = path_new_authority(pool, PATH_SCHEME_DOCUMENT, "first");
+    Path* second = path_new_authority(pool, PATH_SCHEME_DOCUMENT, "second");
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    Path* selected = path_extend(pool, first, "body");
+    Path* clone = path_clone(pool, selected);
+    ASSERT_NE(clone, nullptr);
+    EXPECT_TRUE(path_equal(selected, clone));
+    EXPECT_EQ(path_hash(selected, 11, 29), path_hash(clone, 11, 29));
+    EXPECT_FALSE(path_equal(first, second));
+    StrBuf* spelling = strbuf_new();
+    path_to_source(clone, spelling);
+    EXPECT_STREQ(spelling->str, "\\.~doc.body");
+    strbuf_free(spelling);
+}
+
 TEST_F(PathTest, NamedFileAuthority) {
     char* hostname = shell_get_hostname();
     ASSERT_NE(hostname, nullptr);
+    if (strcmp(hostname, "localhost") == 0) {
+        mem_free(hostname);
+        GTEST_SKIP() << "the current host name is the reserved local authority";
+    }
     Path* named = path_new_authority(pool, PATH_SCHEME_FILE, hostname);
     ASSERT_NE(named, nullptr);
     Path* child = path_append(named, "tmp");
@@ -420,7 +461,18 @@ TEST_F(PathTest, NamedFileAuthority) {
     if (quote_authority) strbuf_append_char(expected, '\'');
     strbuf_append_str(expected, ".tmp");
     EXPECT_STREQ(buf->str, expected->str);
+#ifdef _WIN32
+    EXPECT_FALSE(path_file_authority_is_local(child));
+#else
     EXPECT_TRUE(path_file_authority_is_local(child));
+#endif
+    strbuf_reset(buf);
+    path_to_windows_path(child, buf);
+    StrBuf* unc = strbuf_create("\\\\");
+    strbuf_append_str(unc, hostname);
+    strbuf_append_str(unc, "\\tmp");
+    EXPECT_STREQ(buf->str, unc->str);
+    strbuf_free(unc);
     strbuf_free(expected);
     strbuf_free(buf);
     mem_free(hostname);
@@ -432,6 +484,45 @@ TEST_F(PathTest, RemoteFileAuthorityStaysConstructibleButNotLocal) {
     EXPECT_FALSE(path_file_authority_is_local(remote));
     StrBuf* buf = strbuf_new();
     path_to_os_path(remote, buf);
+#ifdef _WIN32
+    EXPECT_STREQ(buf->str, "\\\\other-host");
+#else
     EXPECT_EQ(buf->length, 0u);
+#endif
     strbuf_free(buf);
+}
+
+TEST_F(PathTest, WindowsProjectsRemoteAuthorityAsUnc) {
+    Path* remote = path_new_authority(pool, PATH_SCHEME_FILE, "other-host");
+    ASSERT_NE(remote, nullptr);
+#ifdef _WIN32
+    EXPECT_TRUE(path_file_authority_is_available(remote));
+#endif
+    remote = path_append(remote, "share");
+    remote = path_append(remote, "document.txt");
+    StrBuf* buf = strbuf_new();
+    path_to_windows_path(remote, buf);
+    EXPECT_STREQ(buf->str, "\\\\other-host\\share\\document.txt");
+    strbuf_reset(buf);
+    Path* local = path_new_authority(pool, PATH_SCHEME_FILE, "localhost");
+    local = path_append(local, "C");
+    local = path_append(local, "document.txt");
+    path_to_windows_path(local, buf);
+    EXPECT_STREQ(buf->str, "C:\\document.txt");
+    strbuf_free(buf);
+}
+
+TEST_F(PathTest, WindowsRejectsDeviceAndPathAuthorities) {
+    const char* invalid[] = {".", "..", "?", "other-host\\share", "other-host/share"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+        Path* path = path_new_authority(pool, PATH_SCHEME_FILE, invalid[i]);
+        ASSERT_NE(path, nullptr);
+#ifdef _WIN32
+        EXPECT_FALSE(path_file_authority_is_available(path));
+#endif
+        StrBuf* buf = strbuf_new();
+        path_to_windows_path(path, buf);
+        EXPECT_EQ(buf->length, 0u);
+        strbuf_free(buf);
+    }
 }

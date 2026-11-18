@@ -77,6 +77,7 @@ typedef enum {
     // identity by being placed in a document under it; the documents live for
     // the evaluation (SO20). Unrelated to `sys.temp`, the OS temp directory.
     PATH_SCHEME_TEMP,
+    PATH_SCHEME_DOCUMENT,    // S2.4.8 evaluation-supplied document
     PATH_SCHEME_COUNT
 } PathScheme;
 
@@ -98,7 +99,9 @@ bool path_is_root(Path* path);                          // Check if path is a ro
 bool path_is_absolute(Path* path);                      // Check if path is absolute (not . or ..)
 int path_depth(Path* path);                             // Get path depth (segment count)
 void path_to_string(Path* path, void* out);             // Convert to string (StrBuf*)
+void path_to_source(Path* path, void* out);            // Canonical Lambda reference syntax
 void path_to_os_path(Path* path, void* out);            // Convert to OS path (StrBuf*)
+void path_to_windows_path(Path* path, void* out);       // Project a path using Windows rules
 
 // Wildcard query functions
 bool path_is_wildcard(Path* path);                                // Check if segment is *

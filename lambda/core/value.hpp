@@ -1011,10 +1011,13 @@ static_assert(offsetof(VMapVtable, trace) == LAMBDA_GC_OFF_VMAP_VTABLE_TRACE,
 
 // D9.5.5: VArray and Velmt use the same host metadata prefix as VMap while
 // exposing structural callbacks for their actual semantic container kind.
+// Metadata-style display avoids acquiring a virtual node's lazy children.
+#define VIRTUAL_PRINT_METADATA 1u
+
 struct VirtualVtable {
     uint32_t abi_version;
     TypeId carrier_type;
-    uint8_t reserved[3];
+    uint8_t flags[3];
     void (*destroy)(void* data);
     void (*trace)(void* data, gc_heap* gc);
     uint64_t (*version)(void* data);

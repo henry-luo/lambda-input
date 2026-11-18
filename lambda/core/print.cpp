@@ -351,7 +351,7 @@ void print_typeditem(StrBuf *strbuf, TypedItem *titem, int depth, const char* in
         format_binary_literal(strbuf, titem->binary);
         break;
     case LMD_TYPE_PATH:
-        path_to_string(titem->path, strbuf);
+        path_to_source(titem->path, strbuf);
         break;
     case LMD_TYPE_ARRAY:  case LMD_TYPE_ARRAY_NUM:
     case LMD_TYPE_RANGE:  case LMD_TYPE_MAP:  case LMD_TYPE_ELEMENT:   {
@@ -638,7 +638,9 @@ struct PrintItemVisitor {
 
     void operator()(lam::ItemOf<LMD_TYPE_VELMT> item) const {
         Velmt* element = item.ptr();
-        Item error = virtual_content_error({.velmt = element});
+        bool metadata_only = element && element->vtable &&
+            (element->vtable->common.flags[0] & VIRTUAL_PRINT_METADATA);
+        Item error = metadata_only ? ItemNull : virtual_content_error({.velmt = element});
         if (get_type_id(error) == LMD_TYPE_ERROR) { print_item(strbuf, error, depth + 1, indent); return; }
         Item tag = ItemNull;
         if (element && element->vtable && element->vtable->element.tag) {
@@ -666,7 +668,7 @@ struct PrintItemVisitor {
             strbuf_append_str(strbuf, ": ");
             print_item(strbuf, value, depth + 1, indent);
         }
-        int64_t child_count = velmt_child_count(element);
+        int64_t child_count = metadata_only ? 0 : velmt_child_count(element);
         if (child_count > 0) {
             if (attr_count > 0) strbuf_append_char(strbuf, ',');
             for (int64_t i = 0; i < child_count; i++) {
@@ -776,14 +778,7 @@ struct PrintItemVisitor {
     }
 
     void operator()(lam::ItemOf<LMD_TYPE_PATH> item) const {
-        Path* path = item.ptr();
-        if (path_get_scheme(path) == PATH_SCHEME_SYS) {
-            if (path->result != 0) {
-                print_item(strbuf, {.item = path->result}, depth, indent);
-                return;
-            }
-        }
-        path_to_string(path, strbuf);
+        path_to_source(item.ptr(), strbuf);
     }
 
     void operator()(lam::ItemOf<LMD_TYPE_ERROR> item) const {
