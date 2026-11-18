@@ -53,11 +53,25 @@ extern "C" void dom_invalidate_layout_subtree(void* node);
 extern "C" void dom_svg_invalidate_presentation(void* node);
 extern "C" uint64_t dom_mutation_epoch(DomDocument* doc);
 
-// shared named-slot assignment for HTML directionality and the renderer.
+// shared slot assignment for the DOM, HTML directionality and the renderer.
+struct DomSlotAssignment {
+    DomElement* slot;
+    DomElement* host;
+    bool manual;
+};
+struct DomManualSlotInput {
+    DomDocument* document;
+    DomNode* node;
+};
 DomElement* dom_shadow_root(DomNode* node);
 DomElement* dom_shadow_first_matching_slot(DomNode* root, const char* name);
-bool dom_slot_assignment_matches(DomElement* slot, DomNode* child);
-DomElement* dom_slot_assignment_host(DomElement* slot);
+DomSlotAssignment dom_slot_assignment(DomElement* slot);
+DomNode* dom_slot_assigned_adjacent(const DomSlotAssignment& assignment,
+                                  DomNode* current = nullptr, bool forward = true);
+bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* inputs,
+                                   int count, ArrayList* affected_roots);
+void dom_slot_release_manual_links(DomNode* node, DomManualSlotLink* binding);
+void dom_slot_transfer_manual_link(DomManualSlotLink** source, DomManualSlotLink** destination);
 DomElement* dom_find_assigned_slot(DomNode* node);
 bool dom_node_is_slottable(DomNode* node);
 DomElement* dom_flat_tree_parent(DomElement* element);
@@ -137,7 +151,8 @@ typedef enum DomJsMutationKind {
     DOM_JS_MUTATION_CONTROL_VALUE = 8,
     // A direct element.style/style-attribute write already updates the
     // element's inline declarations and cannot change selector matching.
-    DOM_JS_MUTATION_INLINE_STYLE = 9
+    DOM_JS_MUTATION_INLINE_STYLE = 9,
+    DOM_JS_MUTATION_SLOT_DISTRIBUTION = 10,
 } DomJsMutationKind;
 
 // authored and presentation writes share repaint versus recascade classification.
@@ -158,6 +173,7 @@ typedef enum DomJsMutationAttribute {
     DOM_JS_MUTATION_ATTRIBUTE_CLASS,
     // a data/ARIA attribute absent from relational selector dependencies
     DOM_JS_MUTATION_ATTRIBUTE_LOCAL,
+    DOM_JS_MUTATION_ATTRIBUTE_SLOT_DISTRIBUTION,
 } DomJsMutationAttribute;
 
 // tier-1: document-owned journal, survives relayout
@@ -297,7 +313,7 @@ struct ReconcileLog {
 struct DomDocumentServices {
     void* mem_ctx;
     void* cached_css_engine;
-    lam::Up<CssStylesheet> ua_focus_stylesheet; // document-pool UA rules, excluded from CSSOM styleSheets
+    lam::Up<CssStylesheet> ua_stylesheet; // document-pool UA rules, excluded from CSSOM styleSheets
     void* keyframe_registry;
     void* registered_property_set; // document-owned CSS.registerProperty definitions
     uint32_t element_count;
@@ -320,7 +336,7 @@ struct DomDocumentServices {
     bool svg_source_document = false; // standalone SVG source uses DOM serialization on SVG save
     bool svg_image_document; // SVG image processing forbids external subordinate resources
 
-    DomDocumentServices() : mem_ctx(nullptr), cached_css_engine(nullptr), ua_focus_stylesheet(nullptr),
+    DomDocumentServices() : mem_ctx(nullptr), cached_css_engine(nullptr), ua_stylesheet(nullptr),
         keyframe_registry(nullptr), registered_property_set(nullptr), element_count(0), ext_allocations(0),
         layout_cache_allocations(0), node_registry(nullptr),
         style_epoch_manager(nullptr), scene3d_registry(nullptr), canvas_registry(nullptr),
@@ -738,6 +754,7 @@ DomNode* dom_source_sibling(DomNode* node, bool forward);
 DomNode* dom_source_tree_root(DomNode* node);
 DomNode* dom_source_next_in_tree(DomNode* root, DomNode* node);
 DomElement* dom_find_source_element_by_id(DomNode* root, const char* id);
+DomElement* dom_details_first_summary(DomElement* details);
 void dom_collect_text_content(DomNode* node, StrBuf* output);
 const CssCustomProp* dom_element_lookup_own_custom_property_entry(DomElement* element,
     const char* name, size_t name_length = (size_t)-1, bool exclude_animations = false);
@@ -965,6 +982,11 @@ struct DomElementExt {
     lam::Up<CssStylesheet> shadow_inline_stylesheet;
     bool shadow_closed;
     bool shadow_delegates_focus;
+    bool shadow_manual_slot_assignment;
+    lam::Own<DomManualSlotLink> manual_slot_first;
+    lam::Up<DomManualSlotLink> manual_slot_last;
+    lam::OwnArr<DomNodeRef> signaled_slot_assignment;
+    size_t signaled_slot_assignment_count;
     float pending_element_scroll_x;
     float pending_element_scroll_y;
     bool has_inline_cb_edge_snapshot;
@@ -988,6 +1010,8 @@ struct DomElementExt {
     bool dialog_modal;
     bool dialog_cancel_dispatching;
     lam::Own<const char> dialog_return_value; // document-pooled WebIDL state, independent of JS expandos
+    int64_t form_image_selected_x;
+    int64_t form_image_selected_y;
     bool selected_content_pending;
     bool selected_content_reset_pending;
     bool script_already_started;

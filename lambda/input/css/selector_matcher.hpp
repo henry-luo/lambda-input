@@ -232,6 +232,10 @@ bool selector_matcher_matches_group(SelectorMatcher* matcher,
                                     DomElement* element,
                                     MatchResult* result);
 
+// Search the source tree. With a result list, append all matches in tree order.
+DomElement* selector_matcher_query_group(SelectorMatcher* matcher, CssSelectorGroup* group,
+                                        DomElement* root, bool include_root, ArrayList* results = nullptr);
+
 /**
  * Find all elements that match a selector in a tree
  * @param matcher Selector matcher

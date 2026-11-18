@@ -624,6 +624,14 @@ DomElement* dom_find_source_element_by_id(DomNode* root, const char* id) {
     return nullptr;
 }
 
+DomElement* dom_details_first_summary(DomElement* details) {
+    for (DomNode* child = dom_source_child(details, true); child; child = dom_source_sibling(child, true)) {
+        DomElement* element = child->as_element();
+        if (dom_element_is_html_tag(element, MARKUP_NAME_SUMMARY)) return element;
+    }
+    return nullptr;
+}
+
 void dom_collect_text_content(DomNode* node, StrBuf* output) {
     if (!node || !output || dom_is_generated_pseudo_node(node)) return;
     if (DomText* text = node->as_text()) {
@@ -963,8 +971,8 @@ bool dom_node_is_slottable(DomNode* node) {
     return node && (node->is_text() || dom_is_css_element_child(node));
 }
 
-bool dom_slot_assignment_matches(DomElement* slot, DomNode* child) {
-    if (!dom_is_html_slot(slot) || !dom_node_is_slottable(child)) return false;
+static bool dom_named_slot_matches(DomElement* slot, DomNode* child) {
+    if (!dom_node_is_slottable(child)) return false;
     const char* name = dom_element_attribute_value_ns(slot, "", "name");
     if (!name) name = "";
     if (child->is_text()) return !*name;
@@ -984,11 +992,76 @@ DomElement* dom_shadow_first_matching_slot(DomNode* root, const char* name) {
     return nullptr;
 }
 
-DomElement* dom_slot_assignment_host(DomElement* slot) {
-    if (!dom_is_html_slot(slot)) return nullptr;
-    DomElement* root = dom_shadow_root(slot);
-    return root && dom_shadow_first_matching_slot(root, dom_element_attribute_value_ns(slot, "", "name")) == slot
-        ? root->shadow_host_element() : nullptr;
+struct DomManualSlotLink {
+    lam::Up<DomElement> slot;
+    lam::Up<DomNode> node;
+    DomManualSlotLink** binding;
+    lam::Up<DomManualSlotLink> previous;
+    lam::Own<DomManualSlotLink> next;
+};
+
+static void dom_manual_slot_unlink(DomManualSlotLink* link) {
+    if (!link) return;
+    DomElementExt* state = link->slot->ext;
+    if (link->previous) link->previous->next = link->next;
+    else state->manual_slot_first = link->next;
+    if (link->next) link->next->previous = link->previous;
+    else state->manual_slot_last = link->previous;
+    *link->binding = nullptr;
+    mem_free(link);
+}
+
+void dom_slot_release_manual_links(DomNode* node, DomManualSlotLink* binding) {
+    // Links are weak on both ends. Retirement and document teardown unlink
+    // them before either endpoint can recycle, including across adoption.
+    dom_manual_slot_unlink(binding);
+    DomElement* element = node->as_element();
+    while (element && element->ext && element->ext->manual_slot_first)
+        dom_manual_slot_unlink(element->ext->manual_slot_first);
+}
+
+void dom_slot_transfer_manual_link(DomManualSlotLink** source, DomManualSlotLink** destination) {
+    *destination = *source;
+    if (*destination) (*destination)->binding = destination;
+    *source = nullptr;
+}
+
+static DomManualSlotLink* dom_manual_slot_link(DomDocument* document, DomNode* node) {
+    DomManualSlotLink** binding = dom_node_manual_slot_binding(document, node);
+    return binding ? *binding : nullptr;
+}
+
+DomSlotAssignment dom_slot_assignment(DomElement* slot) {
+    DomElement* root = dom_is_html_slot(slot) ? dom_shadow_root(slot) : nullptr;
+    if (!root) return {slot, nullptr, false};
+    bool manual = root->ext->shadow_manual_slot_assignment;
+    if (manual || dom_shadow_first_matching_slot(
+            root, dom_element_attribute_value_ns(slot, "", "name")) == slot)
+        return {slot, root->shadow_host_element(), manual};
+    return {slot, nullptr, false};
+}
+
+DomNode* dom_slot_assigned_adjacent(const DomSlotAssignment& assignment,
+                                  DomNode* current, bool forward) {
+    if (!assignment.host) return nullptr;
+    if (assignment.manual) {
+        DomElementExt* state = assignment.slot->ext;
+        if (!state) return nullptr;
+        DomManualSlotLink* link = dom_manual_slot_link(assignment.host->doc, current);
+        if (current && (!link || link->slot != assignment.slot)) return nullptr;
+        link = link ? (forward ? link->next.get() : link->previous.get())
+            : (forward ? state->manual_slot_first.get() : state->manual_slot_last.get());
+        for (; link; link = forward ? link->next.get() : link->previous.get()) {
+            if (dom_source_parent(link->node) == assignment.host) return link->node;
+        }
+        return nullptr;
+    }
+    DomNode* child = current ? dom_source_sibling(current, forward)
+        : dom_source_child(assignment.host, forward);
+    for (; child; child = dom_source_sibling(child, forward)) {
+        if (dom_named_slot_matches(assignment.slot, child)) return child;
+    }
+    return nullptr;
 }
 
 DomElement* dom_find_assigned_slot(DomNode* node) {
@@ -997,9 +1070,77 @@ DomElement* dom_find_assigned_slot(DomNode* node) {
     DomElement* host = parent ? parent->as_element() : nullptr;
     DomElement* root = host ? host->shadow_root_element() : nullptr;
     if (!root) return nullptr;
+    if (root->ext->shadow_manual_slot_assignment) {
+        DomManualSlotLink* link = dom_manual_slot_link(host->doc, node);
+        DomElement* slot = link ? link->slot.get() : nullptr;
+        return slot && dom_shadow_root(slot) == root ? slot : nullptr;
+    }
     DomElement* element = node->as_element();
     const char* name = element ? dom_element_attribute_value_ns(element, "", "slot") : nullptr;
     return dom_shadow_first_matching_slot(root, name);
+}
+
+static bool dom_slot_add_changed_root(ArrayList* roots, DomElement* root) {
+    if (!root) return true;
+    for (int i = 0; i < roots->length; i++) {
+        if (roots->data[i] == root) return true;
+    }
+    return arraylist_append(roots, root);
+}
+
+bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* inputs,
+                                   int count, ArrayList* affected_roots) {
+    DomElementExt* state = count ? slot->ensure_ext() : slot->ext.get();
+    if (!state) return count == 0;
+    struct NodeIdentity { DomNode* node; };
+    TypedHashMap<NodeIdentity, HashMapPointerMemberKeyOps<NodeIdentity, &NodeIdentity::node>> seen = {};
+    if (count && !seen.init(count)) return false;
+
+    DomManualSlotLink* first = nullptr;
+    DomManualSlotLink* last = nullptr;
+    bool prepared = true;
+    for (int i = 0; i < count; i++) {
+        DomNode* node = inputs[i].node;
+        if (seen.get({node})) continue;
+        seen.set({node});
+        if (seen.oom()) { prepared = false; break; }
+        DomManualSlotLink** binding = dom_node_manual_slot_binding(inputs[i].document, node);
+        if (!binding) { prepared = false; break; }
+        DomManualSlotLink* old = *binding;
+        if (old && old->slot != slot && dom_find_assigned_slot(node) == old->slot &&
+            !dom_slot_add_changed_root(affected_roots, dom_shadow_root(old->slot))) {
+            prepared = false;
+            break;
+        }
+        DomManualSlotLink* link = (DomManualSlotLink*)mem_calloc(1, sizeof(DomManualSlotLink), MEM_CAT_DOM);
+        if (!link) { prepared = false; break; }
+        link->slot = lam::up(slot);
+        link->node = lam::up(node);
+        link->binding = binding;
+        link->previous = lam::up(last);
+        if (last) last->next = lam::own(link);
+        else first = link;
+        last = link;
+    }
+    seen.destroy();
+
+    // Build the ordered set before changing any existing relationships.
+    if (!prepared || !dom_slot_add_changed_root(affected_roots, dom_shadow_root(slot))) {
+        while (first) {
+            DomManualSlotLink* next = first->next;
+            mem_free(first);
+            first = next;
+        }
+        return false;
+    }
+    while (state->manual_slot_first) dom_manual_slot_unlink(state->manual_slot_first);
+    for (DomManualSlotLink* link = first; link; link = link->next) {
+        dom_manual_slot_unlink(*link->binding);
+        *link->binding = link;
+    }
+    state->manual_slot_first = lam::own(first);
+    state->manual_slot_last = lam::up(last);
+    return true;
 }
 
 DomElement* dom_flat_tree_parent(DomElement* element) {
@@ -1009,11 +1150,7 @@ DomElement* dom_flat_tree_parent(DomElement* element) {
     DomElement* parent = dom_parent_element(element);
     if (!parent) return nullptr;
     if (parent->shadow_root_element()) return dom_find_assigned_slot(element);
-    if (dom_is_html_slot(parent)) {
-        DomElement* host = dom_slot_assignment_host(parent);
-        for (DomNode* child = host ? host->first_child.get() : nullptr; child; child = child->next_sibling)
-            if (dom_slot_assignment_matches(parent, child)) return nullptr;
-    }
+    if (dom_is_html_slot(parent) && dom_slot_assigned_adjacent(dom_slot_assignment(parent))) return nullptr;
     return parent;
 }
 
@@ -1106,12 +1243,9 @@ int dom_element_directionality(DomElement* element,
                 if (!value) value = ""; // void input descendants never contribute to its value.
             }
             if (value) return utf8_bidi_strong_direction(value, strlen(value), true) > 0 ? 1 : -1;
-            DomElement* assignment_host = dom_slot_assignment_host(current);
-            bool assigned = false;
-            for (DomNode* child = assignment_host ? assignment_host->first_child.get() : nullptr;
-                 child; child = child->next_sibling) {
-                if (!dom_slot_assignment_matches(current, child)) continue;
-                assigned = true;
+            DomSlotAssignment assignment = dom_slot_assignment(current);
+            DomNode* assigned = dom_slot_assigned_adjacent(assignment);
+            for (DomNode* child = assigned; child; child = dom_slot_assigned_adjacent(assignment, child)) {
                 int strong = dom_find_strong_direction(child, true, true, false, resolve_value, context);
                 if (strong) return strong;
             }
@@ -2216,6 +2350,7 @@ void dom_element_release_retired_storage(DomElement* element) {
         }
         pool_free(element->storage_pool(),
                   (void*)element->ext->attribute_names_cache);
+        pool_free(element->storage_pool(), element->ext->signaled_slot_assignment.get());
         pool_free(element->storage_pool(), element->ext);
         element->ext = nullptr;
     }

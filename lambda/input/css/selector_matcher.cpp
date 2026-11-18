@@ -611,26 +611,19 @@ bool selector_matcher_matches_group(SelectorMatcher* matcher,
     return best_result.matches;
 }
 
-// Helper for find_all - recursive tree traversal
-static void traverse_and_collect_matches(SelectorMatcher* matcher,
-                                         CssSelector* selector,
-                                         DomElement* element,
-                                         ArrayList* matched) {
-    if (!element) return;
-
-    // Check if current element matches
-    if (!element->is_synthetic() && selector_matcher_matches(matcher, selector, element, NULL)) {
-        arraylist_append(matched, element);
+DomElement* selector_matcher_query_group(SelectorMatcher* matcher, CssSelectorGroup* group,
+                                        DomElement* root, bool include_root, ArrayList* results) {
+    if (!matcher || !group || !root) return nullptr;
+    DomNode* first = include_root ? root : dom_source_next_in_tree(root, root);
+    // HTML template content and shadow roots are separate query scopes.
+    for (DomNode* node = first; node; node = dom_source_next_in_tree(root, node)) {
+        DomElement* element = node->as_element();
+        if (!element || element->is_synthetic() ||
+            !selector_matcher_matches_group(matcher, group, element, nullptr)) continue;
+        if (!results) return element;
+        if (!arraylist_append(results, element)) break;
     }
-
-    // Traverse children (only element nodes)
-    DomNode* child_node = dom_source_child(element, true);
-    while (child_node) {
-        if (child_node->is_element()) {
-            traverse_and_collect_matches(matcher, selector, static_cast<DomElement*>(child_node), matched);
-        }
-        child_node = dom_source_sibling(child_node, true);
-    }
+    return nullptr;
 }
 
 bool selector_matcher_find_all(SelectorMatcher* matcher,
@@ -648,8 +641,8 @@ bool selector_matcher_find_all(SelectorMatcher* matcher,
         return false;
     }
 
-    // Recursive tree traversal
-    traverse_and_collect_matches(matcher, selector, root, matched);
+    CssSelectorGroup group = {&selector, 1};
+    selector_matcher_query_group(matcher, &group, root, true, matched);
 
     // Convert ArrayList to array
     *count = matched->length;
@@ -671,35 +664,6 @@ bool selector_matcher_find_all(SelectorMatcher* matcher,
     return true;
 }
 
-// Helper for find_first - recursive tree traversal with early exit
-static DomElement* traverse_and_find_first_match(SelectorMatcher* matcher,
-                                                 CssSelector* selector,
-                                                 DomElement* element) {
-    if (!element) return NULL;
-
-    // Check if current element matches
-    if (!element->is_synthetic() && selector_matcher_matches(matcher, selector, element, NULL)) {
-        return element;
-    }
-
-    // Traverse children - need to check node type since first_child is void*
-    DomNode* child_node = dom_source_child(element, true);
-    while (child_node) {
-        // check if this is an element node (not text or comment)
-        if (child_node->is_element()) {
-            DomElement* child = child_node->as_element();
-            DomElement* found = traverse_and_find_first_match(matcher, selector, child);
-            if (found) return found;
-            child_node = dom_source_sibling(child, true);
-        } else {
-            // skip text/comment nodes - get their next sibling
-            child_node = dom_source_sibling(child_node, true);
-        }
-    }
-
-    return NULL;
-}
-
 DomElement* selector_matcher_find_first(SelectorMatcher* matcher,
                                         CssSelector* selector,
                                         DomElement* root) {
@@ -707,8 +671,8 @@ DomElement* selector_matcher_find_first(SelectorMatcher* matcher,
         return NULL;
     }
 
-    // Recursive tree traversal with early exit
-    return traverse_and_find_first_match(matcher, selector, root);
+    CssSelectorGroup group = {&selector, 1};
+    return selector_matcher_query_group(matcher, &group, root, true);
 }
 
 // ============================================================================

@@ -78,6 +78,8 @@ void dom_node_registry_refresh_backing(DomDocument* doc, DomNode* node);
 DomNodeRef dom_node_ref(DomNode* node);
 DomNode* dom_node_ref_validate(DomDocument* doc, DomNodeRef ref);
 bool dom_node_registry_owns(DomDocument* doc, DomNode* node);
+struct DomManualSlotLink;
+DomManualSlotLink** dom_node_manual_slot_binding(DomDocument* doc, DomNode* node);
 bool dom_node_pin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason);
 bool dom_node_unpin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason);
 uint32_t dom_node_pin_count(DomDocument* doc, DomNodeRef ref,

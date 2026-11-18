@@ -25,6 +25,7 @@ typedef struct DomNodeRecord {
     DomNode* address;
     Arena* primary_arena;
     Pool* owned_string_pool;  // physical string owner survives document adoption (D5.5.1)
+    DomManualSlotLink* manual_slot_link; // weak link cleared at either endpoint's retirement
     uint32_t id;
     DomNodeType type;
     DomNodeLifeState state;
@@ -269,7 +270,15 @@ static void dom_record_set_backing_value(DomDocument* doc, DomNodeRecord* record
 void dom_lifecycle_destroy(DomDocument* doc) {
     if (!doc) return;
     dom_lifecycle_release_backing_roots(doc);
-    dom_retire_dequeue(dom_registry(doc));
+    DomNodeRegistry* registry = dom_registry(doc);
+    if (registry) {
+        // Assignments may link nodes whose storage belongs to different documents.
+        for (DomNodeRecord* record = registry->all_records; record; record = record->all_next) {
+            if (record->current_owner && record->state != DOM_NODE_RETIRED)
+                dom_slot_release_manual_links(record->address, record->manual_slot_link);
+        }
+        dom_retire_dequeue(registry);
+    }
     // Registry records are document-pool allocations and disappear in the
     // immediately following pool destruction; clearing the owner blocks any
     // teardown callback from validating already-destroyed arena storage.
@@ -389,6 +398,7 @@ bool dom_node_registry_transfer(DomDocument* source, DomDocument* destination,
     }
     destination_record = dom_record_find(dom_registry(destination), node);
     destination_record->owned_string_pool = source_record->owned_string_pool;
+    dom_slot_transfer_manual_link(&source_record->manual_slot_link, &destination_record->manual_slot_link);
     // The source registry may still own wrapper/expando pins that must unpin
     // normally, but its detached candidate must never recycle adopted storage.
     dom_record_end_candidacy(dom_registry(source), source_record);
@@ -396,6 +406,12 @@ bool dom_node_registry_transfer(DomDocument* source, DomDocument* destination,
     source_record->current_owner = false;
     dom_record_release_backing_root(source_record);
     return true;
+}
+
+DomManualSlotLink** dom_node_manual_slot_binding(DomDocument* doc, DomNode* node) {
+    DomNodeRecord* record = node ? dom_record_find(dom_registry(doc), node) : nullptr;
+    return record && record->current_owner && record->state != DOM_NODE_RETIRED && record->id == node->id
+        ? &record->manual_slot_link : nullptr;
 }
 
 void dom_node_registry_set_backing_source(DomDocument* doc, DomNode* node,
@@ -700,6 +716,7 @@ static size_t dom_retire_subtree(DomDocument* doc, DomNode* node,
         result.item = s2it(node->as_text()->native_string.get());
     }
     if (result.item != ItemNull.item) dom_retire_release_render_result(doc, result);
+    dom_slot_release_manual_links(node, record->manual_slot_link);
     size_t retired = 0;
     if (node->is_element()) {
         while (node->as_element()->ext && node->as_element()->ext->attribute_nodes) {
