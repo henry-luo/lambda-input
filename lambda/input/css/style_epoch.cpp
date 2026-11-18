@@ -8,6 +8,7 @@
 #include "lib/mem_factory.h"
 #include "lib/mempool.h"
 #include "lib/mem_grow.hpp"
+#include "lib/hashmap_typed.hpp"
 
 #include <assert.h>
 #include <string.h>
@@ -21,6 +22,13 @@ typedef struct StyleRecipeEntry {
 } StyleRecipeEntry;
 
 struct StyleEpoch;
+
+struct StyleSourcePath {
+    const char* text;
+    size_t refs;
+};
+using StyleSourcePathMap = TypedHashMap<StyleSourcePath,
+    HashMapCStrMemberKeyOps<StyleSourcePath, &StyleSourcePath::text>>;
 
 typedef struct StylePayloadEntry {
     const CssDeclaration* source;
@@ -63,6 +71,7 @@ typedef struct StyleEpoch {
     StylePayloadEntry** payload_buckets;
     size_t payload_bucket_count;
     size_t payload_count;
+    struct hashmap* source_paths;
     size_t cold_entry_count;
     size_t cold_bytes;
     StyleCanonicalEntry* cold_head;
@@ -290,6 +299,8 @@ static void style_epoch_release_pool(StyleEpochManager* manager,
     PoolStats stats = {};
     pool_get_detailed_stats(epoch->pool, &stats);
     epoch->released_reserved_bytes = stats.reserved_bytes;
+    StyleSourcePathMap::destroy(epoch->source_paths);
+    epoch->source_paths = nullptr;
     mem_pool_destroy(epoch->pool);
     epoch->pool = nullptr;
     epoch->buckets = nullptr;
@@ -476,6 +487,36 @@ static void style_epoch_payload_retain(void* owner) {
     if (entry) entry->ref_count++;
 }
 
+static const char* style_epoch_source_path_acquire(StyleEpoch* epoch, const char* text) {
+    if (!epoch->source_paths) epoch->source_paths = StyleSourcePathMap::create(0);
+    if (!epoch->source_paths) return nullptr;
+    if (StyleSourcePath* path = StyleSourcePathMap::get(epoch->source_paths, {text, 0})) {
+        path->refs++;
+        return path->text;
+    }
+    char* copy = pool_strdup(epoch->pool, text);
+    if (!copy) return nullptr;
+    StyleSourcePathMap::set(epoch->source_paths, {copy, 1});
+    if (StyleSourcePathMap::oom(epoch->source_paths)) {
+        pool_free(epoch->pool, copy);
+        return nullptr;
+    }
+    return copy;
+}
+
+static void style_epoch_destroy_snapshot(StyleEpoch* epoch, CssDeclaration* snapshot) {
+    if (const char* text = snapshot->source_file) {
+        StyleSourcePath* path = StyleSourcePathMap::get(epoch->source_paths, {text, 0});
+        assert(path && path->refs);
+        if (path && --path->refs == 0) {
+            StyleSourcePathMap::erase(epoch->source_paths, {text, 0});
+            pool_free(epoch->pool, (void*)text);
+        }
+        snapshot->source_file = nullptr;
+    }
+    css_declaration_destroy_owned(snapshot, epoch->pool);
+}
+
 static void style_epoch_payload_release(void* owner) {
     StylePayloadEntry* entry = (StylePayloadEntry*)owner;
     if (!entry || !entry->epoch || entry->ref_count == 0) return;
@@ -488,7 +529,7 @@ static void style_epoch_payload_release(void* owner) {
     StylePayloadEntry** link = &epoch->payload_buckets[bucket];
     while (*link && *link != entry) link = &(*link)->bucket_next;
     if (*link == entry) *link = entry->bucket_next;
-    css_declaration_destroy_owned(entry->snapshot, epoch->pool);
+    style_epoch_destroy_snapshot(epoch, entry->snapshot);
     pool_free(epoch->pool, entry);
     if (epoch->payload_count > 0) epoch->payload_count--;
 }
@@ -506,14 +547,25 @@ static StylePayloadEntry* style_epoch_payload_acquire(
         }
     }
 
+    // Many declarations share a stylesheet URL. Keep one epoch-owned copy
+    // so relative URLs survive stylesheet retirement without per-rule copies.
+    CssDeclaration payload = *source;
+    payload.source_file = nullptr;
     CssDeclaration* snapshot = css_declaration_clone_owned(
-        source, source->specificity, source->origin, epoch->pool);
+        &payload, payload.specificity, payload.origin, epoch->pool);
     if (!snapshot) return nullptr;
+    if (source->source_file) {
+        snapshot->source_file = style_epoch_source_path_acquire(epoch, source->source_file);
+        if (!snapshot->source_file) {
+            style_epoch_destroy_snapshot(epoch, snapshot);
+            return nullptr;
+        }
+    }
     snapshot->tree_owned_record = false;
     StylePayloadEntry* entry = (StylePayloadEntry*)pool_calloc(
         epoch->pool, sizeof(StylePayloadEntry));
     if (!entry) {
-        css_declaration_destroy_owned(snapshot, epoch->pool);
+        style_epoch_destroy_snapshot(epoch, snapshot);
         return nullptr;
     }
     entry->source = source;

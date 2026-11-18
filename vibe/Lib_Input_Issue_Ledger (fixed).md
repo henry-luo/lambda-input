@@ -6,6 +6,24 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-080"></a>
+
+### LI-080 — Canonical declarations repeat stylesheet source paths
+
+**Fixed 2026-11-18.** The CSS epoch owns the shared path allocation
+and includes its bytes in the document's CSS memory accounting
+(**D5.2.3 / D5.2.4**).
+
+The jQuery UI cascade retains 78 recipes and 412 immutable declarations in
+both load and clean recascade. Resolving the corpus symlink adds seven bytes
+to their stylesheet URLs and 2,884 bytes to canonical memory. CSS-role live
+bytes reach 374,626 against a 373,940-byte ceiling.
+
+The epoch now retains one exact copy of each source path while any snapshot
+uses it. Each declaration keeps its original source URL and line number.
+The six-page load and recascade memory gate passes on the optimized build.
+The jQuery UI sample retains 329,435 CSS-role bytes after load and recascade.
+
 <a id="li-079"></a>
 
 ### LI-079 — Select insertion modes discard customizable select content

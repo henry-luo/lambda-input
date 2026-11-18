@@ -15,6 +15,14 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-080"></a>
+
+### LI-080 — FIXED
+
+Canonical declarations share stylesheet source paths within their CSS epoch
+(**D5.2.3 / D5.2.4**). See the
+[CSS memory reproduction](<Lib_Input_Issue_Ledger (fixed).md#li-080>).
+
 <a id="li-078"></a>
 
 ### LI-078 — FIXED
