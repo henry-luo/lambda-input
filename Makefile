@@ -223,7 +223,7 @@ build/test/test_runtime_scalar_storage_gtest: test/test_runtime_scalar_storage_g
 	@mkdir -p $(@D)
 	$(call LINK_NATIVE_TEST,$<,$@,$(CXXFLAGS),$(RUNTIME_SCALAR_TEST_ARCHIVE) build/lib/$(PROFILE)/liblambda-lib.a)
 
-# YAML and Markdown corpora have independent upstream owners and pinned data.
+# YAML and Markdown are read from the shared lambda-test checkout.
 .PHONY: setup-test-data test-network-online
 setup-test-data: | temp
 	$(PYTHON) scripts/setup_test_data.py
