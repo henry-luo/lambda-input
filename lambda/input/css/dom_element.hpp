@@ -309,6 +309,8 @@ struct ReconcileLog {
         records(0), record_overflow(0) {}
 };
 
+enum DomPopoverMode : uint8_t { DOM_POPOVER_NONE, DOM_POPOVER_AUTO, DOM_POPOVER_HINT, DOM_POPOVER_MANUAL };
+
 // tier-1: opaque services kept out of the public document spine
 struct DomDocumentServices {
     void* mem_ctx;
@@ -335,12 +337,13 @@ struct DomDocumentServices {
     lam::Own<char> protocol_language;  // document-owned single Content-Language response value
     bool svg_source_document = false; // standalone SVG source uses DOM serialization on SVG save
     bool svg_image_document; // SVG image processing forbids external subordinate resources
+    void* popover_state; // document-owned Lambda visibility stacks
 
     DomDocumentServices() : mem_ctx(nullptr), cached_css_engine(nullptr), ua_stylesheet(nullptr),
         keyframe_registry(nullptr), registered_property_set(nullptr), element_count(0), ext_allocations(0),
         layout_cache_allocations(0), node_registry(nullptr),
         style_epoch_manager(nullptr), scene3d_registry(nullptr), canvas_registry(nullptr),
-        svg_geometry_cache(nullptr), svg_layer_registry(nullptr), paint_layer_registry(nullptr), shadow_image_cache(nullptr), svg_filter_registry(nullptr), svg_animation_registry(nullptr), svg_use_resource_cache(nullptr), preferred_languages(nullptr), pragma_language(nullptr), protocol_language(nullptr), svg_image_document(false) {}
+        svg_geometry_cache(nullptr), svg_layer_registry(nullptr), paint_layer_registry(nullptr), shadow_image_cache(nullptr), svg_filter_registry(nullptr), svg_animation_registry(nullptr), svg_use_resource_cache(nullptr), preferred_languages(nullptr), pragma_language(nullptr), protocol_language(nullptr), svg_image_document(false), popover_state(nullptr) {}
 };
 
 static inline const char* dom_reconcile_mode_name(DomReconcileMode mode) {
@@ -954,6 +957,12 @@ enum class DomViewSlot {
     count
 };
 
+struct DomToggleTaskTracker {
+    uint32_t generation;
+    bool pending;
+    bool old_open;
+};
+
 // tier-1: doc-pool, survives relayout
 struct DomElementExt {
     // adoption changes ownerDocument, not the pool owning reclaimable metadata (D5.5.1).
@@ -1007,11 +1016,20 @@ struct DomElementExt {
     bool has_empty_ruby_base;
     bool has_ruby_parallel_fragments; // selected text rectangles own each line's allocation
     bool popover_open;
+    bool popover_hiding;
+    DomPopoverMode popover_attribute_mode;
+    DomPopoverMode popover_opened_mode;
+    DomToggleTaskTracker popover_toggle;
+    uint64_t popover_order;
     bool dialog_modal;
     bool dialog_cancel_dispatching;
+    DomNodeRef dialog_previous_focus;
+    DomToggleTaskTracker dialog_toggle;
     lam::Own<const char> dialog_return_value; // document-pooled WebIDL state, independent of JS expandos
     int64_t form_image_selected_x;
     int64_t form_image_selected_y;
+    bool form_constructing_entries;
+    bool form_firing_submission_events;
     bool selected_content_pending;
     bool selected_content_reset_pending;
     bool script_already_started;
