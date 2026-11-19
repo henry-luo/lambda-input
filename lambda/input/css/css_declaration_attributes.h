@@ -432,6 +432,7 @@
     X(anchor_scope) \
     X(position_anchor) \
     X(position_area) \
+    X(color_scheme) \
     X(css_float)
 
 #define CSS_STYLE_PROPERTIES_ATTRIBUTES(X) \
@@ -1232,6 +1233,8 @@
     X(position_anchor, "position-anchor", "position-anchor") \
     X(position_area, "positionArea", "position-area") \
     X(position_area, "position-area", "position-area") \
+    X(color_scheme, "colorScheme", "color-scheme") \
+    X(color_scheme, "color-scheme", "color-scheme") \
     X(css_float, "cssFloat", "float")
 
 #define CSS_FONT_FACE_DESCRIPTORS_FIELDS(X) \

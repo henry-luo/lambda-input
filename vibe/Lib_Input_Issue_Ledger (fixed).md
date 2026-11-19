@@ -6,6 +6,45 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-084"></a>
+### LI-084 — Contextual color expressions are rejected by shared color computation
+
+**Fixed 2026-11-19.** Input ownership follows **D9.1.1v4 / D9.1.3v2**;
+retained expressions follow **D5.5.1**, appended standard-name IDs **D5.6.1**.
+
+Shared color computation now supports light-dark() and relative RGB/HSL,
+including origin conversion, numeric channel references, scoped calc math,
+alpha inheritance and currentColor. The existing typed math evaluator resolves
+channel names only inside relative colors. Scheme and currentColor-dependent
+expressions retain an owned syntax snapshot until their consuming context is
+known; both light-dark branches validate. Extended relative RGB channels stay
+unclamped until used-color conversion. Relative color() and other relative
+color spaces remain unsupported.
+
+color-scheme is registered with inherited offer-list validation and generated
+CSSOM aliases. Its name ID is appended through the catalog generator, preserving
+existing IDs. Seven focused color/parser tests pass, including snapshot lifetime,
+invalid syntax and existing absolute/mix controls. Twenty native pixel controls
+agree with Chromium, with nineteen computed-style mirrors; five existing Lab
+controls also pass. Evidence: Lambda temp/online-visual-round91/.
+
+<a id="li-083"></a>
+### LI-083 — Comment backing mutation requires a DOM parent
+
+**Status:** FIXED, 2026-11-19. **D5.5.1** allocation ownership;
+owner boundaries **D9.1.1v4 / D9.1.3v2**.
+
+The existing comment setter rejects a disconnected comment despite its
+registered owner and backed element remaining alive. An explicit-owner
+overload now shares the same Mark mutation, validates registry ownership,
+and allocates through that document. The existing entry point retains its
+ancestor-based call contract. Lambda's shared CharacterData property setter
+uses the overload for data/nodeValue/textContent and publishes the normal
+mutation notification. No parent is manufactured and no vendor code changes.
+Focused captured-accessor and existing comment-cloning checks qualify the
+call path; final results are qualified under temp/online-visual-round90/.
+
+
 <a id="li-082"></a>
 
 ### LI-082 — Idle curl multi workers wait on their poll interval

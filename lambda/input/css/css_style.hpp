@@ -179,6 +179,7 @@ struct CssMathEvaluationContext {
     void* context;
     double line_width_step;
     bool preserve_percentages;
+    bool allow_identifier_numbers = false; // color-channel names are numeric only inside relative colors
 };
 struct CssMathResult {
     CssMathType type;
@@ -284,10 +285,12 @@ struct CssComputedColor {
     bool alpha_is_byte;
     CssEnum keyword;
     const char* color_space;
-    const CssValue* unresolved; // borrowed currentColor expression; owned snapshots clone this tree
+    const CssValue* unresolved; // borrowed contextual color expression; owned snapshots clone this tree
 };
 bool css_color_compute(const CssValue* value, CssComputedColor* result,
-                       const CssComputedColor* current_color = nullptr);
+                       const CssComputedColor* current_color = nullptr,
+                       const bool* dark_scheme = nullptr);
+bool css_color_scheme_select(const CssValue* value, bool prefer_dark, bool* dark);
 const CssValue* css_background_color_component(const CssValue* value);
 bool css_color_to_rgba(const CssComputedColor* color, uint8_t* r, uint8_t* g,
                        uint8_t* b, uint8_t* a);
@@ -914,6 +917,8 @@ typedef enum CssPropertyCode {
     CSS_PROPERTY_ANCHOR_SCOPE,
     CSS_PROPERTY_POSITION_ANCHOR,
     CSS_PROPERTY_POSITION_AREA,
+
+    CSS_PROPERTY_COLOR_SCHEME,
 
     // Custom Properties (CSS Variables)
     CSS_PROPERTY_CUSTOM,

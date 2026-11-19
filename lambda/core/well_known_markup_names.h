@@ -629,6 +629,7 @@ enum MarkupNameId {
     MARKUP_NAME_CSS_ANCHOR_SCOPE = 0x00000270u,
     MARKUP_NAME_CSS_POSITION_ANCHOR = 0x00000271u,
     MARKUP_NAME_CSS_POSITION_AREA = 0x00000272u,
+    MARKUP_NAME_CSS_COLOR_SCHEME = 0x00000273u,
 };
 
 extern const WellKnownNameRecord g_well_known_markup_names[];

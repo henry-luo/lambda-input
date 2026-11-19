@@ -15,6 +15,20 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-084"></a>
+### LI-084 — FIXED
+
+Relative RGB/HSL and light-dark color expressions share typed computation and
+owned context snapshots; color-scheme offers use generated standard metadata.
+See the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-084>).
+
+
+<a id="li-083"></a>
+
+### LI-083 — FIXED
+
+Disconnected comment backing mutation uses its registered owner; see the [fixed record](<Lib_Input_Issue_Ledger (fixed).md#li-083>).
+
 <a id="li-082"></a>
 
 ### LI-082 — FIXED

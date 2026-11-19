@@ -5398,26 +5398,32 @@ int64_t dom_comment_get_child_index(DomComment* comment_node) {
 }
 
 bool dom_comment_set_content(DomComment* comment_node, const char* new_content) {
+    return dom_comment_set_content(comment_node, new_content,
+        dom_node_ancestor_document(comment_node));
+}
+
+bool dom_comment_set_content(DomComment* comment_node, const char* new_content,
+                             DomDocument* document) {
     if (!comment_node || !new_content) {
         log_error("dom_comment_set_content: invalid arguments");
         return false;
     }
 
-    if (!comment_node->native_element || !comment_node->parent) {
+    if (!comment_node->native_element) {
         log_error("dom_comment_set_content: comment not backed by Lambda");
         return false;
     }
 
-    DomElement* parent = (DomElement*)comment_node->parent;
-    if (!parent->doc) {
-        log_error("dom_comment_set_content: parent element has no document");
+    // disconnected comments still mutate their backing in their registry owner's arena.
+    if (!document || !dom_node_registry_owns(document, comment_node)) {
+        log_error("dom_comment_set_content: missing registered document owner");
         return false;
     }
 
     // Create new String via MarkBuilder
-    MarkEditor editor(parent->doc, EDIT_MODE_INLINE);
+    MarkEditor editor(document, EDIT_MODE_INLINE);
     String* new_s = dom_create_mutation_string(
-        editor.builder(), new_content, parent->doc->input->ui_mode);
+        editor.builder(), new_content, document->input->ui_mode);
     if (!new_s) {
         log_error("dom_comment_set_content: failed to create string");
         return false;
@@ -5448,7 +5454,7 @@ bool dom_comment_set_content(DomComment* comment_node, const char* new_content) 
 
     // Update DomComment to point to new String
     comment_node->native_element = lam::up(result.element);
-    dom_node_registry_set_backing_source(parent->doc, comment_node, result.element);
+    dom_node_registry_set_backing_source(document, comment_node, result.element);
     String* new_string = new_string_item.get_string();
     if (!new_string) {
         log_error("dom_comment_set_content: replacement string disappeared");

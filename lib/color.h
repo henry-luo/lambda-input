@@ -71,6 +71,23 @@ static inline bool color_parse_hex(const char* str, uint8_t* r, uint8_t* g,
     return true;
 }
 
+// relative HSL channels retain extended sRGB values until conversion.
+static inline void color_rgb_to_hsl(double r, double g, double b,
+                                   double* h, double* s, double* l) {
+    double high = fmax(r, fmax(g, b)), low = fmin(r, fmin(g, b));
+    double delta = high - low;
+    *l = (high + low) * 0.5;
+    *h = 0.0;
+    *s = 0.0;
+    if (delta == 0.0) return;
+    if (*l != 0.0 && *l != 1.0) *s = (high - *l) / fmin(*l, 1.0 - *l);
+    *h = high == r ? (g - b) / delta : high == g ? (b - r) / delta + 2.0
+        : (r - g) / delta + 4.0;
+    *h *= 60.0;
+    if (*s < 0.0) {*s = -*s; *h += 180.0;}
+    *h = fmod(*h + 360.0, 360.0);
+}
+
 // CSS Color: conversion keeps floating components until a consumer needs bytes.
 static inline void color_hsl_to_rgb(double h, double s, double l,
                                    double* r, double* g, double* b) {

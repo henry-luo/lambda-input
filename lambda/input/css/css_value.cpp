@@ -10,6 +10,7 @@ extern "C" {
 }
 #include "css_value.hpp"
 #include "css_style.hpp"
+#include "css_parser.hpp"
 #include "css_style_node.hpp"
 #include "css_formatter.hpp"
 
@@ -46,15 +47,15 @@ bool css_value_visit_list_items(const CssValue* value, CssListItemVisitor visito
 
 static bool css_color_component(const CssValue* value, bool hue, bool percentage_only,
     bool allow_missing, bool clamp_component, double percentage_scale, double number_scale, double* result,
-    bool* missing, CssMathType* type) {
+    bool* missing, CssMathType* type, const CssMathEvaluationContext* relative_context = nullptr) {
     if (!value) return false;
     *missing = value->type == CSS_VALUE_TYPE_KEYWORD && value->data.keyword == CSS_VALUE_NONE;
     if (*missing) {*result = 0.0; *type = CSS_MATH_NUMBER; return allow_missing;}
-    if (value->type != CSS_VALUE_TYPE_NUMBER && value->type != CSS_VALUE_TYPE_PERCENTAGE &&
+    if (!relative_context && value->type != CSS_VALUE_TYPE_NUMBER && value->type != CSS_VALUE_TYPE_PERCENTAGE &&
         value->type != CSS_VALUE_TYPE_LENGTH && value->type != CSS_VALUE_TYPE_ANGLE &&
         value->type != CSS_VALUE_TYPE_FUNCTION) return false;
     CssMathEvaluationContext context = {nullptr, nullptr, 1.0, true};
-    CssMathResult computed = css_math_evaluate(value, &context);
+    CssMathResult computed = css_math_evaluate(value, relative_context ? relative_context : &context);
     *type = computed.type;
     if (!computed.resolved) return false;
     if (hue) {
@@ -79,6 +80,36 @@ bool css_color_type_is_perceptual(CssColorType type) {
     return type == CSS_COLOR_LAB || type == CSS_COLOR_OKLAB || type == CSS_COLOR_OKLCH;
 }
 
+bool css_color_scheme_select(const CssValue* value, bool prefer_dark, bool* dark) {
+    if (!value || !dark) return false;
+    if (css_value_keyword_equals(value, CSS_VALUE_NORMAL)) {*dark = false; return true;}
+    int count = value->type == CSS_VALUE_TYPE_LIST ? value->data.list.count : 1;
+    if (count <= 0 || value->type == CSS_VALUE_TYPE_LIST &&
+            (value->data.list.comma_separated || !value->data.list.values)) return false;
+    bool light = false, dark_offered = false, only = false;
+    int schemes = 0;
+    for (int i = 0; i < count; i++) {
+        const CssValue* item = value->type == CSS_VALUE_TYPE_LIST ? value->data.list.values[i] : value;
+        const char* name = item && item->type != CSS_VALUE_TYPE_STRING && item->type != CSS_VALUE_TYPE_URL
+            ? css_value_identifier_name(item) : nullptr;
+        if (!name || css_value_is_global_keyword(item) || str_ieq_cstr(name, "normal") ||
+                str_ieq_cstr(name, "default")) return false;
+        if (str_ieq_cstr(name, "only")) {
+            if (only) return false;
+            only = true;
+        } else {
+            // CUSTOM also retains unknown dimensions, which cannot be scheme identifiers.
+            const char* start = *name == '-' ? name + 1 : name;
+            if (!css_is_name_start_char((unsigned char)*start) && *start != '-') return false;
+            schemes++;
+            light |= str_ieq_cstr(name, "light");
+            dark_offered |= str_ieq_cstr(name, "dark");
+        }
+    }
+    *dark = dark_offered && (!light || prefer_dark);
+    return schemes > 0;
+}
+
 static bool css_color_mix_operand(const CssValue* argument, const CssValue** operand, double* weight) {
     *operand = argument;
     *weight = -1.0;
@@ -97,7 +128,7 @@ static bool css_color_mix_operand(const CssValue* argument, const CssValue** ope
 }
 
 static bool css_color_mix_compute(const CssValue* expression, CssComputedColor* result,
-    const CssComputedColor* current_color) {
+    const CssComputedColor* current_color, const bool* dark_scheme) {
     const CssFunction* function = expression->data.function;
     if (function->arg_count != 3 || !function->args) return false;
     const CssValue* method = function->args[0];
@@ -115,7 +146,7 @@ static bool css_color_mix_compute(const CssValue* expression, CssComputedColor* 
     for (int i = 0; i < 2; i++) {
         const CssValue* operand = nullptr;
         if (!css_color_mix_operand(function->args[i + 1], &operand, &weights[i]) ||
-            !css_color_compute(operand, &colors[i], current_color) || colors[i].missing) return false;
+            !css_color_compute(operand, &colors[i], current_color, dark_scheme) || colors[i].missing) return false;
         unresolved |= colors[i].unresolved != nullptr;
         if (colors[i].type == CSS_COLOR_CURRENTCOLOR) {
             if (current_color) colors[i] = *current_color;
@@ -153,12 +184,36 @@ static bool css_color_mix_compute(const CssValue* expression, CssComputedColor* 
     return true;
 }
 
+struct CssRelativeColorChannels {
+    const char* names[4];
+    double values[4];
+};
+
+static bool css_relative_color_channel(void* context, const CssValue* value, double* result) {
+    auto* channels = (CssRelativeColorChannels*)context;
+    const char* name = css_value_identifier_name(value);
+    for (int i = 0; name && i < 4; i++) {
+        if (str_ieq_cstr(name, channels->names[i])) {*result = channels->values[i]; return true;}
+    }
+    return false;
+}
+
 static bool css_color_function_compute(const CssValue* expression, CssComputedColor* result,
-    const CssComputedColor* current_color) {
+    const CssComputedColor* current_color, const bool* dark_scheme) {
     const CssFunction* function = expression->data.function;
     if (!function || !function->name || !function->args) return false;
     if (str_ieq_cstr(function->name, "color-mix"))
-        return css_color_mix_compute(expression, result, current_color);
+        return css_color_mix_compute(expression, result, current_color, dark_scheme);
+    if (str_ieq_cstr(function->name, "light-dark")) {
+        if (function->arg_count != 2) return false;
+        CssComputedColor alternatives[2];
+        // both branches must be colors even when only one is selected for painting.
+        for (int i = 0; i < 2; i++)
+            if (!css_color_compute(function->args[i], &alternatives[i], current_color, dark_scheme)) return false;
+        *result = alternatives[dark_scheme && *dark_scheme ? 1 : 0];
+        if (!dark_scheme || result->unresolved) result->unresolved = expression;
+        return true;
+    }
     bool rgb = str_ieq_cstr(function->name, "rgb") || str_ieq_cstr(function->name, "rgba");
     bool hsl = str_ieq_cstr(function->name, "hsl") || str_ieq_cstr(function->name, "hsla");
     bool hwb = str_ieq_cstr(function->name, "hwb");
@@ -170,6 +225,10 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
     if (!rgb && !hsl && !hwb && !perceptual && !predefined) return false;
     const CssValue* channels[4] = {};
     bool modern = function->arg_count == 1;
+    bool relative = false;
+    CssComputedColor origin = {};
+    CssRelativeColorChannels references = {};
+    CssMathEvaluationContext relative_context = {css_relative_color_channel, &references, 1.0, true, true};
     int count = function->arg_count;
     if (modern) {
         const CssValue* list = function->args[0];
@@ -177,6 +236,25 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
             !list->data.list.values) return false;
         count = list->data.list.count;
         int offset = predefined ? 1 : 0;
+        relative = count > 0 && css_value_identifier_is(list->data.list.values[0], "from");
+        if (relative) {
+            if ((!rgb && !hsl) || count < 2 ||
+                !css_color_compute(list->data.list.values[1], &origin, current_color, dark_scheme)) return false;
+            bool deferred = origin.unresolved || origin.type == CSS_COLOR_CURRENTCOLOR && !current_color;
+            if (origin.type == CSS_COLOR_CURRENTCOLOR)
+                origin = current_color ? *current_color : CssComputedColor{CSS_COLOR_RGB, {0, 0, 0, 1}};
+            double r, g, b;
+            if (!css_color_rgb_components(&origin, &r, &g, &b)) return false;
+            references = {{rgb ? "r" : "h", rgb ? "g" : "s", rgb ? "b" : "l", "alpha"},
+                {r * 255.0, g * 255.0, b * 255.0, origin.components[3]}};
+            if (hsl) {
+                color_rgb_to_hsl(r, g, b, &references.values[0], &references.values[1], &references.values[2]);
+                references.values[1] *= 100.0; references.values[2] *= 100.0;
+            }
+            if (deferred) result->unresolved = expression;
+            offset = 2;
+            count -= offset;
+        }
         if (predefined) {
             if (count < 1) return false;
             const char* space = css_value_identifier_name(list->data.list.values[0]);
@@ -197,7 +275,7 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
     }
     result->type = predefined ? CSS_COLOR_COLOR : rgb ? CSS_COLOR_RGB : hsl ? CSS_COLOR_HSL
         : hwb ? CSS_COLOR_HWB : lab ? CSS_COLOR_LAB : oklab ? CSS_COLOR_OKLAB : CSS_COLOR_OKLCH;
-    result->components[3] = 1.0;
+    result->components[3] = relative ? origin.components[3] : 1.0;
     CssMathType first_type = CSS_MATH_INVALID;
     for (int i = 0; i < 4; i++) {
         if (i == 3 && !channels[i]) continue;
@@ -206,10 +284,10 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
         bool hue = ((hsl || hwb) && i == 0) || (oklch && i == 2);
         if (!css_color_component(channels[i], hue, !modern && !rgb && i > 0 && i < 3,
             // modern color syntax preserves missing channels; used-color conversion treats them as zero.
-            modern, perceptual ? (!lab && i == 0) || i == 3 : !predefined || i == 3,
+            modern, relative && rgb ? i == 3 : perceptual ? (!lab && i == 0) || i == 3 : !predefined || i == 3,
             lab && i < 3 ? i == 0 ? 1.0 : 1.25 : perceptual && i > 0 && i < 3 ? 0.004 : 0.01,
             rgb && i < 3 ? 1.0 / 255.0 : (hsl || hwb) && i > 0 && i < 3 ? 0.01 : 1.0,
-            &result->components[i], &missing, &type)) return false;
+            &result->components[i], &missing, &type, relative ? &relative_context : nullptr)) return false;
         if (lab && i == 0) result->components[i] = fmax(0.0, fmin(100.0, result->components[i]));
         if (oklch && i == 1) result->components[i] = fmax(0.0, result->components[i]);
         if (missing) result->missing |= (uint8_t)(1u << i);
@@ -228,18 +306,19 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
         result->type = CSS_COLOR_RGB;
         result->components[0] = red; result->components[1] = green; result->components[2] = blue;
     }
+    if (relative) {result->type = CSS_COLOR_COLOR; result->color_space = "srgb";}
     return true;
 }
 
 bool css_color_compute(const CssValue* value, CssComputedColor* result,
-    const CssComputedColor* current_color) {
+    const CssComputedColor* current_color, const bool* dark_scheme) {
     if (!value || !result) return false;
     static thread_local int color_depth = 0;
     lam::RecursionGuard depth_guard(&color_depth, 64);
     if (!depth_guard) return false;
     *result = {};
     if (value->type == CSS_VALUE_TYPE_FUNCTION)
-        return css_color_function_compute(value, result, current_color);
+        return css_color_function_compute(value, result, current_color, dark_scheme);
     CssEnum keyword = CSS_VALUE__UNDEF;
     if (value->type == CSS_VALUE_TYPE_KEYWORD) keyword = value->data.keyword;
     else if (value->type == CSS_VALUE_TYPE_COLOR) {

@@ -216,6 +216,7 @@ static CssProperty property_definitions[] = {
 
     // Typography Properties
     {CSS_PROPERTY_COLOR, "color", PROP_TYPE_COLOR, PROP_INHERIT_YES, "black", true, false, NULL, 0, validate_color, NULL},
+    {CSS_PROPERTY_COLOR_SCHEME, "color-scheme", PROP_TYPE_LIST, PROP_INHERIT_YES, "normal", false, false, NULL, 0, validate_string, NULL},
     {CSS_PROPERTY_FILL, "fill", PROP_TYPE_COLOR, PROP_INHERIT_YES, "black", true, false, NULL, 0, validate_color, NULL},
     {CSS_PROPERTY_STROKE, "stroke", PROP_TYPE_COLOR, PROP_INHERIT_YES, "none", true, false, NULL, 0, validate_color, NULL},
     {CSS_PROPERTY_X, "x", PROP_TYPE_LENGTH, PROP_INHERIT_NO, "0px", true, false, NULL, 0, validate_length, NULL},
@@ -1082,6 +1083,12 @@ static CssMathCalculation css_math_function_result(const CssFunction* function,
 static CssMathCalculation css_math_calculate(const CssValue* value,
     const CssMathEvaluationContext* context, int depth) {
     if (!value || depth > 32) return css_math_invalid();
+    if (context && context->allow_identifier_numbers && context->resolve_leaf &&
+            css_value_identifier_name(value)) {
+        double number;
+        if (context->resolve_leaf(context->context, value, &number))
+            return {CSS_MATH_NUMBER, number, 0.0, true};
+    }
     const char* constant = css_math_token_name(value);
     if (constant && (str_ieq_cstr(constant, "pi") || str_ieq_cstr(constant, "e") ||
         str_ieq_cstr(constant, "infinity") || str_ieq_cstr(constant, "-infinity") || str_ieq_cstr(constant, "nan"))) {
@@ -3475,6 +3482,11 @@ bool css_property_validate_value_mode(CssPropertyCode id,
                                       const CssValue* value,
                                       bool quirks_mode) {
     if (!value) return false;
+    if (id == CSS_PROPERTY_COLOR_SCHEME) {
+        bool dark;
+        return css_value_is_global_keyword(value) || css_value_contains_pending_substitution(value) ||
+            css_color_scheme_select(value, false, &dark);
+    }
     if (id >= CSS_PROPERTY_ANCHOR_NAME && id <= CSS_PROPERTY_POSITION_AREA) {
         if (css_value_is_global_keyword(value) || css_value_contains_pending_substitution(value)) return true;
         if (css_value_keyword_equals(value, CSS_VALUE_NONE)) return true;
