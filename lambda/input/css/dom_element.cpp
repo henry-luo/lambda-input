@@ -12,6 +12,7 @@
 #include "lib/hashmap.h"
 #include "lib/mem_factory.h"
 #include "lib/hashmap_typed.hpp"
+#include "lib/arraylist.hpp"
 #include "lib/strbuf.h"
 #include "lib/stringbuf.h"
 #include "lib/string.h"
@@ -32,6 +33,7 @@
 #include "../../io/mark_builder.hpp" // For MarkBuilder
 #include "../input.hpp"
 #include "../input-parsers.h"
+#include "../html5/html5_parser.h"
 #include <limits.h>
 
 extern "C" uint64_t dom_mutation_epoch(DomDocument* doc) {
@@ -816,6 +818,48 @@ bool dom_element_is_html_tag(DomElement* element, NameId tag) {
         !strcmp(dom_element_namespace_uri(element), "http://www.w3.org/1999/xhtml");
 }
 
+bool dom_custom_element_name_is_valid(StrView name) {
+    if (name.length < 2 || name.str[0] < 'a' || name.str[0] > 'z' ||
+        !memchr(name.str, '-', name.length)) return false;
+    for (size_t index = 1; index < name.length;) {
+        uint32_t ch;
+        int width = utf8_decode(name.str + index, name.length - index, &ch);
+        if (width <= 0) return false;
+        // PotentialCustomElementName excludes uppercase ASCII and gaps in the XML ranges.
+        if (!(ch == '-' || ch == '.' || ch == '_' || ch == 0xb7 ||
+              (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') ||
+              (ch >= 0xc0 && ch <= 0xd6) || (ch >= 0xd8 && ch <= 0xf6) ||
+              (ch >= 0xf8 && ch <= 0x37d) || (ch >= 0x37f && ch <= 0x1fff) ||
+              (ch >= 0x200c && ch <= 0x200d) || (ch >= 0x203f && ch <= 0x2040) ||
+              (ch >= 0x2070 && ch <= 0x218f) || (ch >= 0x2c00 && ch <= 0x2fef) ||
+              (ch >= 0x3001 && ch <= 0xd7ff) || (ch >= 0xf900 && ch <= 0xfdcf) ||
+              (ch >= 0xfdf0 && ch <= 0xfffd) || (ch >= 0x10000 && ch <= 0xeffff)))
+            return false;
+        index += width;
+    }
+    static const char* const reserved[] = {
+        "annotation-xml", "color-profile", "font-face", "font-face-src",
+        "font-face-uri", "font-face-format", "font-face-name", "missing-glyph",
+    };
+    for (const char* word : reserved)
+        if (strlen(word) == name.length && memcmp(word, name.str, name.length) == 0) return false;
+    return true;
+}
+
+bool dom_html_shadow_host_name(const char* name) {
+    StrView local = {name, strlen(name)};
+    switch (well_known_name_id(local)) {
+        case MARKUP_NAME_ARTICLE: case MARKUP_NAME_ASIDE: case MARKUP_NAME_BLOCKQUOTE:
+        case MARKUP_NAME_BODY: case MARKUP_NAME_DIV: case MARKUP_NAME_FOOTER:
+        case MARKUP_NAME_H1: case MARKUP_NAME_H2: case MARKUP_NAME_H3: case MARKUP_NAME_H4:
+        case MARKUP_NAME_H5: case MARKUP_NAME_H6: case MARKUP_NAME_HEADER: case MARKUP_NAME_MAIN:
+        case MARKUP_NAME_NAV: case MARKUP_NAME_P: case MARKUP_NAME_SECTION: case MARKUP_NAME_SPAN:
+            return true;
+        default:
+            return dom_custom_element_name_is_valid(local);
+    }
+}
+
 DomNamespacedAttribute* dom_element_namespaced_attributes(DomElement* element) {
     return element && element->ext ? element->ext->namespaced_attributes : nullptr;
 }
@@ -1143,28 +1187,133 @@ bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* 
     return true;
 }
 
-DomElement* dom_flat_tree_parent(DomElement* element) {
-    DomNode* source_parent = dom_source_parent(element);
-    if (source_parent && source_parent->is_element() && source_parent->as_element()->shadow_host_element())
-        return source_parent->as_element()->shadow_host_element();
-    DomElement* parent = dom_parent_element(element);
+static DomElement* dom_flat_node_parent(DomNode* node) {
+    DomNode* source_parent = dom_source_parent(node);
+    DomElement* parent = source_parent ? source_parent->as_element() : nullptr;
     if (!parent) return nullptr;
-    if (parent->shadow_root_element()) return dom_find_assigned_slot(element);
+    if (parent->shadow_host_element()) return parent->shadow_host_element();
+    if (parent->shadow_root_element()) return dom_find_assigned_slot(node);
     if (dom_is_html_slot(parent) && dom_slot_assigned_adjacent(dom_slot_assignment(parent))) return nullptr;
     return parent;
 }
 
+DomElement* dom_flat_tree_parent(DomElement* element) {
+    return dom_flat_node_parent(element);
+}
+
+struct DomTopLayer : DomDocumentResourceData {
+    lam::ArrayList<DomNodeRef> entries{MEM_CAT_DOM, 0};
+};
+
+static void dom_top_layer_destroy(DomDocumentResourceData* data) {
+    DomTopLayer* layer = static_cast<DomTopLayer*>(data);
+    layer->~DomTopLayer();
+    mem_free(layer);
+}
+
+static DomNodeRef* dom_top_layer_entry(DomElement* element, size_t* index);
+
+bool dom_top_layer_add(DomElement* element, DomElement* anchor) {
+    if (!element || !element->doc || element->doc->destroying) return false;
+    DomDocument* document = element->doc;
+    DomTopLayer* layer = document->services.top_layer;
+    DomElementExt* state = element->ensure_ext();
+    if (!state) return false;
+    if (!layer) {
+        void* memory = mem_alloc(sizeof(DomTopLayer), MEM_CAT_DOM);
+        if (!memory) return false;
+        layer = new (memory) DomTopLayer();
+        if (!dom_document_add_resource(document, layer, dom_top_layer_destroy)) {
+            dom_top_layer_destroy(layer);
+            return false;
+        }
+        document->services.top_layer = layer;
+    }
+    size_t previous_index;
+    if (dom_top_layer_entry(element, &previous_index)) {
+        // a new modal show raises an entry kept alive by an open-attribute removal.
+        layer->entries.remove(previous_index);
+    }
+    if (!layer->entries.push_back(dom_node_ref(element))) return false;
+    state->in_top_layer = true;
+    state->implicit_anchor = anchor && anchor->doc == document ? dom_node_ref(anchor) : DomNodeRef{};
+    return true;
+}
+
+static DomNodeRef* dom_top_layer_entry(DomElement* element, size_t* index) {
+    if (!element || !element->is_in_top_layer() || !element->doc) return nullptr;
+    DomTopLayer* layer = element->doc->services.top_layer;
+    if (!layer || element->doc->destroying) return nullptr;
+    DomNodeRef ref = dom_node_ref(element);
+    for (size_t i = 0; i < layer->entries.size(); i++) {
+        DomNodeRef& entry = layer->entries[i];
+        if (dom_node_ref_identity_compare(entry, ref) != 0) continue;
+        if (index) *index = i;
+        return &entry;
+    }
+    return nullptr;
+}
+
+void dom_top_layer_remove(DomElement* element) {
+    size_t index;
+    if (!dom_top_layer_entry(element, &index)) return;
+    element->doc->services.top_layer->entries.remove(index);
+    element->ext->in_top_layer = false;
+    element->ext->implicit_anchor = {};
+}
+
+void dom_top_layer_rebind(DomElement* previous, DomElement* replacement) {
+    DomNodeRef* entry = dom_top_layer_entry(previous, nullptr);
+    if (!entry || !replacement || replacement->doc != previous->doc || replacement->is_in_top_layer())
+        return;
+    DomElementExt* state = replacement->ensure_ext();
+    if (!state) return;
+    *entry = dom_node_ref(replacement);
+    state->in_top_layer = true;
+    state->implicit_anchor = previous->ext->implicit_anchor;
+    previous->ext->in_top_layer = false;
+    previous->ext->implicit_anchor = {};
+}
+
+size_t dom_top_layer_count(const DomDocument* document) {
+    DomTopLayer* layer = document && !document->destroying ? document->services.top_layer : nullptr;
+    return layer ? layer->entries.size() : 0;
+}
+
+DomElement* dom_top_layer_at(DomDocument* document, size_t index) {
+    if (index >= dom_top_layer_count(document)) return nullptr;
+    DomNode* node = dom_node_ref_validate(document, document->services.top_layer->entries[index]);
+    DomElement* element = node ? node->as_element() : nullptr;
+    return element && element->is_in_top_layer() &&
+        dom_shadow_including_contains(document->root, element) ? element : nullptr;
+}
+
+DomElement* dom_top_modal_dialog(DomDocument* document) {
+    for (size_t i = dom_top_layer_count(document); i > 0; --i) {
+        DomElement* element = dom_top_layer_at(document, i - 1);
+        if (element && element->is_dialog_modal()) return element;
+    }
+    return nullptr;
+}
+
 bool dom_node_is_inert(DomNode* node) {
     if (!node) return false;
+    DomDocument* document = dom_node_ancestor_document(node);
+    DomElement* modal = dom_top_modal_dialog(document);
     DomElement* element = node->as_element();
-    if (!element && node->parent) element = node->parent->as_element();
+    if (!element) element = dom_flat_node_parent(node);
     // inert follows flat-tree ancestry, including assigned slots and shadow hosts.
     for (; element; element = dom_flat_tree_parent(element)) {
         // the attribute is the cheap filter; the namespace walk runs only when it is present.
         if (element->get_attribute("inert") &&
             !strcmp(dom_element_namespace_uri(element), "http://www.w3.org/1999/xhtml")) return true;
+        // the topmost modal escapes inherited inertness at its own boundary.
+        if (element == modal) { modal = nullptr; break; }
     }
-    return false;
+    if (modal && dom_shadow_including_contains(document->root, node)) return true;
+    DomNode* frame = document && document->embedding_document
+        ? dom_node_ref_validate(document->embedding_document, document->embedding_element_ref) : nullptr;
+    return frame && dom_node_is_inert(frame);
 }
 
 CssEnum dom_html_direction_state(DomElement* element) {
@@ -2011,6 +2160,27 @@ DomElement* dom_element_create(DomDocument* doc, const char* tag_name, Element* 
 extern "C" DomElement* dom_document_fragment_create(DomDocument* doc) {
     if (!doc) return nullptr;
     return DomElement::create(doc, "#document-fragment", nullptr);
+}
+
+DomElement* dom_attach_shadow_root(DomElement* host, DomShadowInit options) {
+    if (!host || !host->doc || !host->doc->input || host->shadow_root_element()) return nullptr;
+    DomElementExt* host_state = host->ensure_ext();
+    if (!host_state) return nullptr;
+    MarkBuilder builder(host->doc->input);
+    Element* backing = builder.element("#document-fragment").final().element;
+    DomElement* root = backing ? dom_element_create(host->doc, "#document-fragment", backing) : nullptr;
+    DomElementExt* state = root ? root->ensure_ext() : nullptr;
+    if (!state) return nullptr;
+    state->shadow_closed = options.closed;
+    state->shadow_delegates_focus = options.delegates_focus;
+    state->shadow_manual_slot_assignment = options.manual_slot_assignment;
+    state->shadow_clonable = options.clonable;
+    state->shadow_serializable = options.serializable;
+    state->shadow_declarative = options.declarative;
+    root->set_shadow_host_element(host);
+    host->set_shadow_root_element(root);
+    host->doc->js.has_shadow_roots = true;
+    return root;
 }
 
 void dom_element_clear(DomElement* element) {
@@ -5503,6 +5673,19 @@ static bool dom_element_has_embedded_storage(DomDocument* doc, Element* elem) {
         storage->node_type == DOM_NODE_ELEMENT;
 }
 
+DomParsedChildren dom_parsed_children(DomDocument* doc, Element* parent) {
+    if (doc && doc->js.has_shadow_roots && dom_element_has_embedded_storage(doc, parent)) {
+        DomElement* host = element_to_dom_element(parent);
+        DomElement* root = host->shadow_root_element();
+        if (root && root->ext->shadow_source_position > 0) {
+            int64_t position = root->ext->shadow_source_position - 1;
+            return {parent, dom_element_to_element(root),
+                position < parent->length ? position : parent->length};
+        }
+    }
+    return {parent, nullptr, 0};
+}
+
 static void dom_move_source_occurrence(DomNode* node, DomElement* parent) {
     if (node && parent && node->parent && node->parent != parent)
         node->parent->remove_child(node);
@@ -5562,6 +5745,43 @@ static bool dom_build_content_occurrence(Item* slot, Item source, DomDocument* d
             if (!dom_build_content_occurrence(&items->items[index], source.array->items[index],
                     doc, parent, depth + 1, copied_for_view)) return false;
         }
+    }
+    return true;
+}
+
+static Element* dom_declarative_shadow_template(Element* marker) {
+    if (!marker || marker->length != 1 || !marker->items ||
+        get_type_id(marker->items[0]) != LMD_TYPE_ELEMENT) return nullptr;
+    Element* value = marker->items[0].element;
+    return value && value->type && html5_element_tag_id(value) == MARKUP_NAME_TEMPLATE ? value : nullptr;
+}
+
+static bool dom_build_declarative_shadow(DomElement* host, Element* marker,
+        Element* source_marker, int64_t source_position, bool copied_for_view) {
+    Element* declaration = dom_declarative_shadow_template(marker);
+    Element* source = dom_declarative_shadow_template(source_marker);
+    if (!declaration || !source || declaration->length != source->length ||
+        (declaration->length && (!declaration->items || !source->items))) return false;
+    const char* mode = extract_element_attribute(declaration, "shadowrootmode", nullptr);
+    const char* assignment = extract_element_attribute(declaration, "shadowrootslotassignment", nullptr);
+    DomShadowInit options = {
+        mode && str_ieq_cstr(mode, "closed"),
+        declaration->has_attr("shadowrootdelegatesfocus"),
+        assignment && str_ieq_cstr(assignment, "manual"),
+        declaration->has_attr("shadowrootclonable"),
+        declaration->has_attr("shadowrootserializable"),
+        true,
+    };
+    DomElement* root = dom_attach_shadow_root(host, options);
+    if (!root) return false;
+    root->ext->shadow_source_position = source_position + 1;
+    Element* backing = dom_element_to_element(root);
+    for (int64_t i = 0; i < declaration->length; i++)
+        array_append(backing, declaration->items[i], host->doc->input->pool, host->doc->input->arena);
+    if (backing->length != declaration->length) return false;
+    for (int64_t i = 0; i < backing->length; i++) {
+        if (!dom_build_content_occurrence(&backing->items[i], source->items[i],
+                host->doc, root, 0, copied_for_view)) return false;
     }
     return true;
 }
@@ -5777,9 +5997,25 @@ static DomElement* build_dom_tree_from_element_impl(Element* elem, Element* sour
 
     Element* backing = dom_element_to_element(dom_elem);
     if (backing->length > 0 && !backing->items) return nullptr;
+    int64_t shadow_index = -1;
     for (int64_t index = 0; index < backing->length; index++) {
+        Item child = backing->items[index];
+        if (doc->page_kind == DOM_PAGE_KIND_HTML && get_type_id(child) == LMD_TYPE_ELEMENT &&
+            child.element && child.element->type &&
+            strcmp(html5_element_tag(child.element), HTML5_DECLARATIVE_SHADOW_TAG) == 0) {
+            if (!dom_build_declarative_shadow(dom_elem, child.element, source->items[index].element,
+                    index, copied_for_view)) return nullptr;
+            shadow_index = index;
+            continue;
+        }
         if (!dom_build_content_occurrence(&backing->items[index], source->items[index],
                 doc, dom_elem, 0, copied_for_view)) return nullptr;
+    }
+    if (shadow_index >= 0) {
+        // remove the parser marker before publishing the light-tree backing.
+        Item* slot = backing->items + shadow_index;
+        memmove(slot, slot + 1, (backing->length - shadow_index - 1) * sizeof(Item));
+        backing->items[--backing->length] = ItemNull;
     }
 
     return dom_elem;

@@ -236,6 +236,7 @@ typedef struct Html5Parser {
 
     // Source line tracking (optional, enabled via Html5ParseOptions)
     bool track_source_lines;    // whether to record source line numbers on elements
+    bool allow_declarative_shadow_roots;
     LineCounter source_line_counter; // running source-line counter for __source_line
     size_t line_scan_pos;       // byte position up to which lines have been counted
 
@@ -249,7 +250,11 @@ typedef struct Html5Parser {
 typedef struct Html5ParseOptions {
     bool track_source_lines;    // store __source_line attribute on elements
     bool scripting_disabled;    // HTML §13.2.1 scripting flag off: <noscript> content is markup
+    bool allow_declarative_shadow_roots;
 } Html5ParseOptions;
+
+// intermediate node used only by the opt-in parser and the DOM builder.
+inline constexpr char HTML5_DECLARATIVE_SHADOW_TAG[] = "#declarative-shadow-root";
 
 // Parser lifecycle
 Html5Parser* html5_parser_create(Pool* pool, Arena* arena, Input* input);

@@ -15,6 +15,14 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-081"></a>
+
+### LI-081 — FIXED
+
+The opt-in HTML parser retains eligible shadow templates until DOM attachment
+(**D9.1.1v4 / D9.1.3v2**). See the
+[declarative root repair](<Lib_Input_Issue_Ledger (fixed).md#li-081>).
+
 <a id="li-080"></a>
 
 ### LI-080 — FIXED

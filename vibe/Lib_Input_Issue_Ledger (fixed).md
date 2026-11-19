@@ -6,6 +6,19 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-081"></a>
+
+### LI-081 — HTML navigation retains eligible shadow declarations as ordinary templates
+
+**Fixed 2026-11-19.** The tree builder records an opt-in declaration at the
+template insertion point. DOM construction attaches it to the eligible
+HTML host and removes the internal marker from the light tree. The host's
+child list retains the source position for dependency and script discovery.
+The attachment, basic and two repeat WPT files pass all 674 assertions
+through Lambda's navigation entry point. Streaming parser integration and
+other DOM entry points are tracked under JS13-L2
+(**D9.1.1v4 / D9.1.3v2 / D5.5.1**).
+
 <a id="li-080"></a>
 
 ### LI-080 — Canonical declarations repeat stylesheet source paths

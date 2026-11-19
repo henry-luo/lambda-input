@@ -428,6 +428,10 @@
     X(shape_outside) \
     X(shape_margin) \
     X(shape_image_threshold) \
+    X(anchor_name) \
+    X(anchor_scope) \
+    X(position_anchor) \
+    X(position_area) \
     X(css_float)
 
 #define CSS_STYLE_PROPERTIES_ATTRIBUTES(X) \
@@ -1220,6 +1224,14 @@
     X(shape_margin, "shape-margin", "shape-margin") \
     X(shape_image_threshold, "shapeImageThreshold", "shape-image-threshold") \
     X(shape_image_threshold, "shape-image-threshold", "shape-image-threshold") \
+    X(anchor_name, "anchorName", "anchor-name") \
+    X(anchor_name, "anchor-name", "anchor-name") \
+    X(anchor_scope, "anchorScope", "anchor-scope") \
+    X(anchor_scope, "anchor-scope", "anchor-scope") \
+    X(position_anchor, "positionAnchor", "position-anchor") \
+    X(position_anchor, "position-anchor", "position-anchor") \
+    X(position_area, "positionArea", "position-area") \
+    X(position_area, "position-area", "position-area") \
     X(css_float, "cssFloat", "float")
 
 #define CSS_FONT_FACE_DESCRIPTORS_FIELDS(X) \

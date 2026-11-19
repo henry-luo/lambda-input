@@ -96,6 +96,10 @@ static CssProperty property_definitions[] = {
     // Layout Properties
     {CSS_PROPERTY_DISPLAY, "display", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "block", false, false, NULL, 0, validate_keyword, NULL},
     {CSS_PROPERTY_POSITION, "position", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "static", false, false, NULL, 0, validate_keyword, NULL},
+    {CSS_PROPERTY_ANCHOR_NAME, "anchor-name", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "none", false, false, NULL, 0, nullptr, NULL},
+    {CSS_PROPERTY_ANCHOR_SCOPE, "anchor-scope", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "none", false, false, NULL, 0, nullptr, NULL},
+    {CSS_PROPERTY_POSITION_ANCHOR, "position-anchor", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "normal", false, false, NULL, 0, nullptr, NULL},
+    {CSS_PROPERTY_POSITION_AREA, "position-area", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "none", false, false, NULL, 0, nullptr, NULL},
     {CSS_PROPERTY_TOP, "top", PROP_TYPE_LENGTH, PROP_INHERIT_NO, "auto", true, false, NULL, 0, validate_length, NULL},
     {CSS_PROPERTY_RIGHT, "right", PROP_TYPE_LENGTH, PROP_INHERIT_NO, "auto", true, false, NULL, 0, validate_length, NULL},
     {CSS_PROPERTY_BOTTOM, "bottom", PROP_TYPE_LENGTH, PROP_INHERIT_NO, "auto", true, false, NULL, 0, validate_length, NULL},
@@ -624,6 +628,188 @@ struct CssMathCalculation {
 static const CssMathType css_math_dimensions[] = {
     CSS_MATH_LENGTH, CSS_MATH_ANGLE, CSS_MATH_TIME, CSS_MATH_RESOLUTION
 };
+static const CssValue* css_space_list_item(const CssValue* value, size_t index);
+static size_t css_space_list_count(const CssValue* value);
+
+const char* css_anchor_name(const CssValue* value) {
+    if (!value || (value->type != CSS_VALUE_TYPE_CUSTOM && value->type != CSS_VALUE_TYPE_KEYWORD))
+        return nullptr;
+    const char* name = css_value_identifier_name(value);
+    return name && name[0] == '-' && name[1] == '-' && name[2] ? name : nullptr;
+}
+
+bool css_anchor_name_contains(const CssValue* value, const char* name) {
+    for (int i = 0, count = css_value_comma_count(value); i < count; i++) {
+        const char* candidate = css_anchor_name(css_value_comma_at(value, i));
+        if (candidate && strcmp(candidate, name) == 0) return true;
+    }
+    return false;
+}
+
+static bool css_anchor_function_kind(const CssFunction* function, bool* size) {
+    if (!function || !function->name) return false;
+    *size = str_ieq_cstr(function->name, "anchor-size");
+    return *size || str_ieq_cstr(function->name, "anchor");
+}
+
+bool css_anchor_query(const CssValue* value, CssAnchorQuery* query, int depth) {
+    if (!value || !query || depth > 32 || value->type != CSS_VALUE_TYPE_FUNCTION) return false;
+    const CssFunction* function = value->data.function;
+    CssAnchorQuery result = {};
+    if (!css_anchor_function_kind(function, &result.size) || function->arg_count > 2) return false;
+    const CssValue* parts = function->arg_count ? function->args[0] : nullptr;
+    size_t count = css_space_list_count(parts);
+    if (count > 2 || (!count && (!result.size || function->arg_count == 2))) return false;
+    static const struct { const char* name; CssAnchorSide side; bool size; } sides[] = {
+        {"top", CSS_ANCHOR_TOP, false}, {"right", CSS_ANCHOR_RIGHT, false},
+        {"bottom", CSS_ANCHOR_BOTTOM, false}, {"left", CSS_ANCHOR_LEFT, false},
+        {"start", CSS_ANCHOR_START, false}, {"end", CSS_ANCHOR_END, false},
+        {"self-start", CSS_ANCHOR_SELF_START, false}, {"self-end", CSS_ANCHOR_SELF_END, false},
+        {"inside", CSS_ANCHOR_INSIDE, false}, {"outside", CSS_ANCHOR_OUTSIDE, false},
+        {"center", CSS_ANCHOR_PERCENT, false},
+        {"width", CSS_ANCHOR_WIDTH, true}, {"height", CSS_ANCHOR_HEIGHT, true},
+        {"block", CSS_ANCHOR_BLOCK, true}, {"inline", CSS_ANCHOR_INLINE, true},
+        {"self-block", CSS_ANCHOR_SELF_BLOCK, true}, {"self-inline", CSS_ANCHOR_SELF_INLINE, true},
+    };
+    for (size_t i = 0; i < count; i++) {
+        const CssValue* item = css_space_list_item(parts, i);
+        if (const char* name = css_anchor_name(item)) {
+            if (result.name) return false;
+            result.name = name;
+            continue;
+        }
+        if (!item || result.side != CSS_ANCHOR_IMPLIED) return false;
+        if (!result.size && item->type == CSS_VALUE_TYPE_PERCENTAGE) {
+            result.side = CSS_ANCHOR_PERCENT;
+            result.percentage = item->data.percentage.value;
+            continue;
+        }
+        if (item->type != CSS_VALUE_TYPE_KEYWORD && item->type != CSS_VALUE_TYPE_CUSTOM) return false;
+        for (const auto& side : sides) {
+            if (result.size == side.size && css_value_identifier_is(item, side.name)) {
+                result.side = side.side;
+                result.percentage = 50.0f;
+                break;
+            }
+        }
+        if (result.side == CSS_ANCHOR_IMPLIED) return false;
+    }
+    if (!result.size && result.side == CSS_ANCHOR_IMPLIED) return false;
+    if (function->arg_count == 2) {
+        result.fallback = function->args[1];
+        if (!result.fallback) return false;
+        CssMathType fallback = css_math_value_type(result.fallback, depth + 1);
+        if (fallback != CSS_MATH_LENGTH && fallback != CSS_MATH_PERCENT &&
+            fallback != CSS_MATH_LENGTH_PERCENT && fallback != CSS_MATH_DEFERRED &&
+            !(fallback == CSS_MATH_NUMBER && result.fallback->type == CSS_VALUE_TYPE_NUMBER &&
+              result.fallback->data.number.value == 0.0)) return false;
+    }
+    *query = result;
+    return true;
+}
+
+static bool css_anchor_area_part(const CssValue* value, CssAnchorAreaPart* part) {
+    if (!value || (value->type != CSS_VALUE_TYPE_KEYWORD && value->type != CSS_VALUE_TYPE_CUSTOM))
+        return false;
+    const char* name = css_value_identifier_name(value);
+    if (!name) return false;
+    *part = {};
+    if (str_ieq_cstr(name, "center")) { part->track = CSS_ANCHOR_TRACK_CENTER; return true; }
+    if (str_ieq_cstr(name, "span-all")) return true;
+    auto has_prefix = [](const char* text, const char* prefix) {
+        size_t length = strlen(prefix);
+        return strlen(text) >= length && str_ieq(text, length, prefix, length);
+    };
+    bool span = has_prefix(name, "span-");
+    if (span) name += 5;
+    part->self = has_prefix(name, "self-");
+    if (part->self) name += 5;
+    static const struct { const char* text; CssAnchorAreaAxis axis; bool end; } physical[] = {
+        {"left", CSS_ANCHOR_AXIS_X, false}, {"right", CSS_ANCHOR_AXIS_X, true},
+        {"top", CSS_ANCHOR_AXIS_Y, false}, {"bottom", CSS_ANCHOR_AXIS_Y, true},
+    };
+    bool end = false;
+    bool valid = false;
+    for (const auto& edge : physical) {
+        if (!part->self && str_ieq_cstr(name, edge.text)) {
+            part->axis = edge.axis;
+            part->physical = valid = true;
+            end = edge.end;
+            break;
+        }
+    }
+    if (!valid) {
+        static const struct { const char* text; CssAnchorAreaAxis axis; } prefixes[] = {
+            {"x-", CSS_ANCHOR_AXIS_X}, {"y-", CSS_ANCHOR_AXIS_Y},
+            {"block-", CSS_ANCHOR_AXIS_BLOCK}, {"inline-", CSS_ANCHOR_AXIS_INLINE},
+        };
+        for (const auto& entry : prefixes) {
+            if (has_prefix(name, entry.text)) {
+                part->axis = entry.axis;
+                name += strlen(entry.text);
+                break;
+            }
+        }
+        end = str_ieq_cstr(name, "end");
+        if (!end && !str_ieq_cstr(name, "start")) return false;
+    }
+    part->track = span ? (end ? CSS_ANCHOR_SPAN_END : CSS_ANCHOR_SPAN_START) :
+        (end ? CSS_ANCHOR_TRACK_END : CSS_ANCHOR_TRACK_START);
+    return true;
+}
+
+bool css_anchor_position_area(const CssValue* value, CssAnchorArea* area) {
+    size_t count = css_space_list_count(value);
+    if (!area || count == 0 || count > 2) return false;
+    CssAnchorAreaPart& first = area->part[0];
+    CssAnchorAreaPart& second = area->part[1];
+    if (!css_anchor_area_part(css_space_list_item(value, 0), &first)) return false;
+    if (count == 1) {
+        second = first.axis == CSS_ANCHOR_AXIS_UNSPECIFIED ? first : CssAnchorAreaPart{};
+        return true;
+    }
+    if (!css_anchor_area_part(css_space_list_item(value, 1), &second)) return false;
+    bool first_ambiguous = first.axis == CSS_ANCHOR_AXIS_UNSPECIFIED;
+    bool second_ambiguous = second.axis == CSS_ANCHOR_AXIS_UNSPECIFIED;
+    if (!first_ambiguous && !second_ambiguous) {
+        bool physical_axes = first.axis == CSS_ANCHOR_AXIS_X || first.axis == CSS_ANCHOR_AXIS_Y;
+        bool second_physical = second.axis == CSS_ANCHOR_AXIS_X || second.axis == CSS_ANCHOR_AXIS_Y;
+        return first.axis != second.axis && physical_axes == second_physical &&
+            (physical_axes || first.self == second.self);
+    }
+    auto neutral = [](CssAnchorAreaPart part) {
+        return part.track == CSS_ANCHOR_SPAN_ALL || part.track == CSS_ANCHOR_TRACK_CENTER;
+    };
+    return neutral(first) || neutral(second) ||
+        (first_ambiguous && second_ambiguous && first.self == second.self);
+}
+
+enum CssAnchorUse : unsigned { CSS_ANCHOR_EDGE_USE = 1, CSS_ANCHOR_SIZE_USE = 2 };
+
+static unsigned css_anchor_function_usage(const CssValue* value, unsigned depth = 0) {
+    if (!value || depth > 32) return 0;
+    const CssValue* const* children = nullptr;
+    int count = 0;
+    unsigned usage = 0;
+    if (value->type == CSS_VALUE_TYPE_FUNCTION && value->data.function) {
+        const CssFunction* function = value->data.function;
+        bool size;
+        if (css_anchor_function_kind(function, &size))
+            usage = size ? CSS_ANCHOR_SIZE_USE : CSS_ANCHOR_EDGE_USE;
+        children = function->args;
+        count = function->arg_count;
+    } else if (value->type == CSS_VALUE_TYPE_LIST) {
+        children = value->data.list.values;
+        count = value->data.list.count;
+    }
+    for (int i = 0; children && i < count; i++) usage |= css_anchor_function_usage(children[i], depth + 1);
+    return usage;
+}
+
+bool css_value_contains_anchor_query(const CssValue* value) {
+    return css_anchor_function_usage(value) != 0;
+}
+
 static CssMathCalculation css_math_calculate(const CssValue* value,
     const CssMathEvaluationContext* context, int depth = 0);
 
@@ -925,7 +1111,11 @@ static CssMathCalculation css_math_calculate(const CssValue* value,
             if (value->data.function && value->data.function->name &&
                 (strcmp(value->data.function->name, "var") == 0 || strcmp(value->data.function->name, "env") == 0 ||
                  strcmp(value->data.function->name, "attr") == 0)) type = CSS_MATH_DEFERRED;
-            else return css_math_function_result(value->data.function, context, depth + 1);
+            else {
+                CssAnchorQuery anchor;
+                if (css_anchor_query(value, &anchor, depth)) type = CSS_MATH_LENGTH;
+                else return css_math_function_result(value->data.function, context, depth + 1);
+            }
             break;
         case CSS_VALUE_TYPE_LIST: {
             int pos = 0;
@@ -3285,6 +3475,36 @@ bool css_property_validate_value_mode(CssPropertyCode id,
                                       const CssValue* value,
                                       bool quirks_mode) {
     if (!value) return false;
+    if (id >= CSS_PROPERTY_ANCHOR_NAME && id <= CSS_PROPERTY_POSITION_AREA) {
+        if (css_value_is_global_keyword(value) || css_value_contains_pending_substitution(value)) return true;
+        if (css_value_keyword_equals(value, CSS_VALUE_NONE)) return true;
+        if (id == CSS_PROPERTY_POSITION_ANCHOR) {
+            return css_anchor_name(value) ||
+                (value->type != CSS_VALUE_TYPE_STRING &&
+                 (css_value_identifier_is(value, "auto") || css_value_identifier_is(value, "normal") ||
+                  css_value_identifier_is(value, "match-parent")));
+        }
+        if (id == CSS_PROPERTY_POSITION_AREA) {
+            CssAnchorArea area;
+            return css_anchor_position_area(value, &area);
+        }
+        if (id == CSS_PROPERTY_ANCHOR_SCOPE && css_value_keyword_equals(value, CSS_VALUE_ALL)) return true;
+        int count = css_value_comma_count(value);
+        for (int i = 0; i < count; i++)
+            if (!css_anchor_name(css_value_comma_at(value, i))) return false;
+        return count > 0;
+    }
+    if (id != CSS_PROPERTY_CUSTOM) {
+        unsigned usage = css_anchor_function_usage(value);
+        if (usage) {
+            bool inset = (id >= CSS_PROPERTY_TOP && id <= CSS_PROPERTY_LEFT) ||
+                (id >= CSS_PROPERTY_INSET && id <= CSS_PROPERTY_INSET_INLINE_END);
+            bool size_or_margin = (id >= CSS_PROPERTY_WIDTH && id <= CSS_PROPERTY_MAX_HEIGHT) ||
+                (id >= CSS_PROPERTY_BLOCK_SIZE && id <= CSS_PROPERTY_MAX_INLINE_SIZE) ||
+                (id >= CSS_PROPERTY_MARGIN && id <= CSS_PROPERTY_MARGIN_INLINE_END);
+            if (!inset && ((usage & CSS_ANCHOR_EDGE_USE) || !size_or_margin)) return false;
+        }
+    }
     if (id == CSS_PROPERTY_SHAPE_OUTSIDE || id == CSS_PROPERTY_SHAPE_MARGIN ||
         id == CSS_PROPERTY_SHAPE_IMAGE_THRESHOLD) {
         if (css_value_is_global_keyword(value) || css_value_contains_pending_substitution(value)) return true;

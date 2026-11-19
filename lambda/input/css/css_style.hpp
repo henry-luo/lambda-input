@@ -910,12 +910,54 @@ typedef enum CssPropertyCode {
     CSS_PROPERTY_SHAPE_MARGIN,
     CSS_PROPERTY_SHAPE_IMAGE_THRESHOLD,
 
+    CSS_PROPERTY_ANCHOR_NAME,
+    CSS_PROPERTY_ANCHOR_SCOPE,
+    CSS_PROPERTY_POSITION_ANCHOR,
+    CSS_PROPERTY_POSITION_AREA,
+
     // Custom Properties (CSS Variables)
     CSS_PROPERTY_CUSTOM,
 
     CSS_PROPERTY_COUNT,
     CSS_PROPERTY_UNKNOWN = -1
 } CssPropertyCode;
+
+enum CssAnchorSide : uint8_t {
+    CSS_ANCHOR_IMPLIED, CSS_ANCHOR_TOP, CSS_ANCHOR_RIGHT, CSS_ANCHOR_BOTTOM, CSS_ANCHOR_LEFT,
+    CSS_ANCHOR_START, CSS_ANCHOR_END, CSS_ANCHOR_SELF_START, CSS_ANCHOR_SELF_END,
+    CSS_ANCHOR_INSIDE, CSS_ANCHOR_OUTSIDE, CSS_ANCHOR_PERCENT,
+    CSS_ANCHOR_WIDTH, CSS_ANCHOR_HEIGHT, CSS_ANCHOR_BLOCK, CSS_ANCHOR_INLINE,
+    CSS_ANCHOR_SELF_BLOCK, CSS_ANCHOR_SELF_INLINE,
+};
+
+struct CssAnchorQuery {
+    const char* name;
+    const CssValue* fallback;
+    CssAnchorSide side;
+    float percentage;
+    bool size;
+};
+
+enum CssAnchorAreaAxis : uint8_t {
+    CSS_ANCHOR_AXIS_UNSPECIFIED, CSS_ANCHOR_AXIS_X, CSS_ANCHOR_AXIS_Y,
+    CSS_ANCHOR_AXIS_BLOCK, CSS_ANCHOR_AXIS_INLINE,
+};
+enum CssAnchorAreaTrack : uint8_t {
+    CSS_ANCHOR_SPAN_ALL, CSS_ANCHOR_TRACK_START, CSS_ANCHOR_TRACK_CENTER, CSS_ANCHOR_TRACK_END,
+    CSS_ANCHOR_SPAN_START, CSS_ANCHOR_SPAN_END,
+};
+struct CssAnchorAreaPart {
+    CssAnchorAreaAxis axis;
+    CssAnchorAreaTrack track;
+    bool physical;
+    bool self;
+};
+struct CssAnchorArea { CssAnchorAreaPart part[2]; };
+const char* css_anchor_name(const CssValue* value);
+bool css_anchor_name_contains(const CssValue* value, const char* name);
+bool css_anchor_query(const CssValue* value, CssAnchorQuery* query, int depth = 0);
+bool css_anchor_position_area(const CssValue* value, CssAnchorArea* area);
+bool css_value_contains_anchor_query(const CssValue* value);
 
 bool css_shape_outside_components(const CssValue* value, const CssValue** shape, CssEnum* box);
 
