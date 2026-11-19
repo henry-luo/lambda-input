@@ -389,12 +389,6 @@ static void* curl_multi_thread_main(void* arg) {
     CurlMultiBackend* backend = (CurlMultiBackend*)arg;
     if (!backend) return NULL;
 
-    backend->multi = curl_multi_init();
-    if (!backend->multi) {
-        log_error("curl-multi: failed to create multi handle");
-        return NULL;
-    }
-
     int running_handles = 0;
     while (true) {
         drain_pending_requests(backend);
@@ -406,18 +400,18 @@ static void* curl_multi_thread_main(void* arg) {
         reap_completed_transfers(backend);
 
         pthread_mutex_lock(&backend->mutex);
-        bool should_stop = backend->stop_thread &&
-            backend->active_count == 0 &&
-            (!backend->pending || backend->pending->length == 0);
+        // Empty queues wake on submit or shutdown. Poll only when curl owns
+        // in-flight work so an idle worker never waits through a poll interval.
+        while (!backend->stop_thread && !backend->active_count && !backend->pending->length)
+            pthread_cond_wait(&backend->cond, &backend->mutex);
+        bool active = backend->active_count != 0;
+        bool should_stop = backend->stop_thread && !active && !backend->pending->length;
         pthread_mutex_unlock(&backend->mutex);
         if (should_stop) break;
 
-        int numfds = 0;
-        curl_multi_poll(backend->multi, NULL, 0, CURL_MULTI_POLL_TIMEOUT_MS, &numfds);
+        if (active) curl_multi_poll(backend->multi, NULL, 0, CURL_MULTI_POLL_TIMEOUT_MS, NULL);
     }
 
-    curl_multi_cleanup(backend->multi);
-    backend->multi = NULL;
     return NULL;
 }
 
@@ -442,7 +436,12 @@ CurlMultiBackend* curl_multi_backend_create(CurlMultiCompletionCallback callback
         return NULL;
     }
 
-    if (pthread_create(&backend->thread, NULL, curl_multi_thread_main, backend) != 0) {
+    // Publish the handle before any submitter may wake the worker, and keep
+    // it valid until after join so a concurrent wake cannot race cleanup.
+    backend->multi = curl_multi_init();
+    if (!backend->multi || pthread_create(&backend->thread, NULL, curl_multi_thread_main, backend) != 0) {
+        if (backend->multi) curl_multi_cleanup(backend->multi);
+        log_error("curl-multi: failed to start backend worker");
         pthread_cond_destroy(&backend->cond);
         pthread_mutex_destroy(&backend->mutex);
         arraylist_free(backend->pending);
@@ -462,6 +461,7 @@ void curl_multi_backend_destroy(CurlMultiBackend* backend) {
     if (backend->thread_started) {
         pthread_join(backend->thread, NULL);
     }
+    curl_multi_cleanup(backend->multi);
 
     if (backend->pending) {
         for (int i = 0; i < backend->pending->length; i++) {

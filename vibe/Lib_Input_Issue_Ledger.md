@@ -15,6 +15,14 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-082"></a>
+
+### LI-082 — FIXED
+
+The curl multi backend wakes on queue notifications while idle and keeps
+its handle live through the worker join (D9.1.1v4, D9.1.3v2). See the
+[worker teardown record](<Lib_Input_Issue_Ledger (fixed).md#li-082>).
+
 <a id="li-081"></a>
 
 ### LI-081 — FIXED

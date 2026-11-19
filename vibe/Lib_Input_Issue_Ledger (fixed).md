@@ -6,6 +6,17 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-082"></a>
+
+### LI-082 — Idle curl multi workers wait on their poll interval
+
+**Fixed 2026-11-19.** Starting or stopping the worker could race the shared
+handle publication. The worker now waits on the pending queue when idle,
+and the handle remains valid until the worker exits. In Lambda's release
+resource timing replay, the measured MIR document cleanup phase went from
+27–86 ms to about 6 ms. Request completion and shutdown retain the same
+join boundary (D9.1.1v4, D9.1.3v2). No Lambda blocker.
+
 <a id="li-081"></a>
 
 ### LI-081 — HTML navigation retains eligible shadow declarations as ordinary templates
