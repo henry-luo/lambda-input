@@ -76,6 +76,12 @@ DomElement* dom_find_assigned_slot(DomNode* node);
 bool dom_node_is_slottable(DomNode* node);
 DomElement* dom_flat_tree_parent(DomElement* element);
 bool dom_node_is_inert(DomNode* node);
+bool dom_top_layer_add(DomElement* element, DomElement* anchor = nullptr);
+void dom_top_layer_remove(DomElement* element);
+void dom_top_layer_rebind(DomElement* previous, DomElement* replacement);
+size_t dom_top_layer_count(const DomDocument* document);
+DomElement* dom_top_layer_at(DomDocument* document, size_t index);
+DomElement* dom_top_modal_dialog(DomDocument* document);
 
 typedef const char* (*DomDirectionValueResolver)(DomElement*, void*);
 // Shared HTML first-strong scan used by dir=auto layout and :dir() matching.
@@ -110,6 +116,18 @@ bool dom_element_is_svg(struct DomElement* element);
 NameId dom_element_html_tag(struct DomElement* element);
 // same as dom_element_html_tag(element) == tag, without the namespace walk for other tags
 bool dom_element_is_html_tag(struct DomElement* element, NameId tag);
+bool dom_custom_element_name_is_valid(StrView name);
+bool dom_html_shadow_host_name(const char* name);
+
+struct DomShadowInit {
+    bool closed;
+    bool delegates_focus;
+    bool manual_slot_assignment;
+    bool clonable;
+    bool serializable;
+    bool declarative;
+};
+DomElement* dom_attach_shadow_root(DomElement* host, DomShadowInit options);
 const char* dom_element_lookup_namespace_uri(struct DomElement* element, const char* prefix);
 const char* dom_element_attribute_namespace_uri(struct DomElement* element,
     const char* qualified_name, const char** local_name);
@@ -311,6 +329,7 @@ struct ReconcileLog {
 
 struct DomSharedPseudoResets;
 struct CssSelector;
+enum DomPopoverMode : uint8_t { DOM_POPOVER_NONE, DOM_POPOVER_AUTO, DOM_POPOVER_HINT, DOM_POPOVER_MANUAL };
 
 // tier-1: opaque services kept out of the public document spine
 struct DomDocumentServices {
@@ -340,13 +359,15 @@ struct DomDocumentServices {
     lam::Own<DomSharedPseudoResets> shared_pseudo_resets = nullptr; // physical document pool
     bool svg_source_document = false; // standalone SVG source uses DOM serialization on SVG save
     bool svg_image_document; // SVG image processing forbids external subordinate resources
+    void* popover_state; // document-owned Lambda visibility stacks
+    struct DomTopLayer* top_layer = nullptr; // document-owned order shared by HTML and paint
 
     DomDocumentServices() : mem_ctx(nullptr), cached_css_engine(nullptr), ua_stylesheet(nullptr),
         keyframe_registry(nullptr), registered_property_set(nullptr), element_count(0), ext_allocations(0),
         layout_cache_allocations(0), node_registry(nullptr),
         style_epoch_manager(nullptr), scene3d_registry(nullptr), canvas_registry(nullptr),
         svg_geometry_cache(nullptr), svg_layer_registry(nullptr), paint_layer_registry(nullptr), shadow_image_cache(nullptr), svg_filter_registry(nullptr), svg_animation_registry(nullptr), svg_use_resource_cache(nullptr), preferred_languages(nullptr), pragma_language(nullptr), protocol_language(nullptr),
-        html_namespace_uri(nullptr), empty_namespace_uri(nullptr), svg_image_document(false) {}
+        html_namespace_uri(nullptr), empty_namespace_uri(nullptr), svg_image_document(false), popover_state(nullptr) {}
 };
 
 static inline const char* dom_reconcile_mode_name(DomReconcileMode mode) {
@@ -1000,6 +1021,12 @@ struct DomFragmentGeometry {
     bool has_ruby_column_geometry;
     bool has_empty_ruby_base;
     bool has_ruby_parallel_fragments; // selected text rectangles own each line's allocation
+
+// task generations suppress stale toggle events after state changes.
+struct DomToggleTaskTracker {
+    uint32_t generation;
+    bool pending;
+    bool old_open;
 };
 
 // tier-1: doc-pool, survives relayout
@@ -1039,6 +1066,10 @@ struct DomElementExt {
     lam::Up<DomElement> shadow_host;
     lam::Own<DomElement> shadow_root;
     lam::Up<CssStylesheet> shadow_inline_stylesheet;
+    bool shadow_clonable;
+    bool shadow_serializable;
+    bool shadow_declarative;
+    int64_t shadow_source_position; // one plus the declaration's parsed child index
     lam::Own<DomManualSlotLink> manual_slot_first;
     lam::Up<DomManualSlotLink> manual_slot_last;
     lam::OwnArr<DomNodeRef> signaled_slot_assignment;
@@ -1051,6 +1082,17 @@ struct DomElementExt {
     float form_image_selected_x; // image-relative CSS pixels, rounded at submission
     float form_image_selected_y;
     // deferred text-control events keep their queue links across layout teardown.
+    bool in_top_layer;
+    DomNodeRef implicit_anchor;
+    bool popover_hiding;
+    DomPopoverMode popover_attribute_mode;
+    DomPopoverMode popover_opened_mode;
+    DomToggleTaskTracker popover_toggle;
+    uint64_t popover_order;
+    DomNodeRef dialog_previous_focus;
+    DomToggleTaskTracker dialog_toggle;
+    bool form_constructing_entries;
+    bool form_firing_submission_events;
     lam::Up<DomElement> selectionchange_event_next;
     // ::marker layout state; markers have no BlockProp
     lam::ViewProp<MarkerProp, DomViewSlot::marker> marker;
@@ -1565,6 +1607,7 @@ struct DomElement : DomNode {
     }
     void set_tag_name_id(NameId value) { ensure_ext()->name_id = value; }
     bool is_popover_open() const { return ext && ext->popover_open; }
+    bool is_in_top_layer() const { return ext && ext->in_top_layer; }
     void set_popover_open(bool value) {
         DomElementExt* data = ensure_ext();
         if (data) data->popover_open = value;
@@ -1721,8 +1764,22 @@ inline DomElement* dom_find_element_for_source(DomElement* root,
         DomElement* found = dom_find_element_for_source(child->as_element(), source);
         if (found) return found;
     }
-    return nullptr;
+    return dom_find_element_for_source(root->shadow_root_element(), source);
 }
+
+// the parser-only iterator merges the detached root into its original source
+// position for resource discovery. Ordinary Mark and DOM readers see light children.
+struct DomParsedChildren {
+    Element* parent;
+    Element* shadow;
+    int64_t position;
+    int64_t length() const { return parent->length + (shadow ? 1 : 0); }
+    Item at(int64_t index) const {
+        if (!shadow || index < position) return parent->items[index];
+        return index == position ? Item{.element = shadow} : parent->items[index - 1];
+    }
+};
+DomParsedChildren dom_parsed_children(DomDocument* document, Element* parent);
 
 // DomElement* ↔ DomNode*: same address (DomNode is at offset 0 via inheritance)
 inline DomNode* dom_element_to_node(DomElement* de) { return static_cast<DomNode*>(de); }

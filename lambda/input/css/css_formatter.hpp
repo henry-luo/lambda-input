@@ -90,6 +90,7 @@ const char* css_format_selector_group(CssFormatter* formatter, CssSelectorGroup*
  */
 void css_format_value(CssFormatter* formatter, CssValue* value);
 void css_format_value_with_property(CssFormatter* formatter, CssValue* value, CssPropertyCode property_code);
+bool css_anchor_serialize_position_area(StringBuf* output, const CssValue* value, bool computed);
 String* css_serialize_integer_math(Pool* pool, const CssValue* value);
 
 typedef bool (*CssGridTrackLeafFormatter)(CssFormatter* formatter, CssValue* value,

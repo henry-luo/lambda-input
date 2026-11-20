@@ -2417,6 +2417,80 @@ TEST_F(CssEngineParserTest, SharedColorComputationValidatesChannelsAndKeepsPreci
     }
 }
 
+TEST_F(CssEngineParserTest, RelativeRgbAndHslUseOriginChannelsAndMath) {
+    const struct {const char* source; double r, g, b, a;} cases[] = {
+        {"rgb(from #336699 r g b)", .2, .4, .6, 1},
+        {"rgb(from rgb(10 20 30 / .6) b g r)", 30.0/255, 20.0/255, 10.0/255, .6},
+        {"rgb(from #336699 calc(r + 10) calc(g * .5) b / calc(alpha * .5))", 61.0/255, .2, .6, .5},
+        {"rgb(from red 300 -10 0)", 300.0/255, -10.0/255, 0, 1},
+        {"hsl(from red h s calc(l + 20))", 1, .4, .4, 1},
+        {"hsl(from rgb(255 0 0 / .25) calc(h + 120) s l / alpha)", 0, 1, 0, .25},
+        {"rgb(from hsl(from red h s l) r g b / 80%)", 1, 0, 0, .8},
+    };
+    for (const auto& entry : cases) {
+        CssDeclaration* declaration = css_parse_property_declaration("color", 5,
+            entry.source, strlen(entry.source), pool);
+        ASSERT_NE(declaration, nullptr) << entry.source;
+        CssComputedColor color;
+        ASSERT_TRUE(css_color_compute(declaration->value, &color)) << entry.source;
+        EXPECT_NEAR(color.components[0], entry.r, 1e-9) << entry.source;
+        EXPECT_NEAR(color.components[1], entry.g, 1e-9) << entry.source;
+        EXPECT_NEAR(color.components[2], entry.b, 1e-9) << entry.source;
+        EXPECT_NEAR(color.components[3], entry.a, 1e-9) << entry.source;
+    }
+    const char* invalid[] = {"rgb(from red r g)", "rgb(from red r g b, .5)",
+        "rgb(from red x g b)", "rgb(from red calc(r + 1px) g b)", "hsl(from red r s l)"};
+    for (const char* source : invalid)
+        EXPECT_EQ(css_parse_property_declaration("color", 5, source, strlen(source), pool), nullptr) << source;
+}
+
+TEST_F(CssEngineParserTest, LightDarkRetainsBothBranchesUntilTheUsedSchemeIsKnown) {
+    Pool* source_pool = pool_create();
+    ASSERT_NE(source_pool, nullptr);
+    const char* text = "light-dark(rgb(from currentColor r g b / .5), color-mix(in srgb, blue, white))";
+    CssDeclaration* declaration = css_parse_property_declaration("color", 5, text, strlen(text), source_pool);
+    ASSERT_NE(declaration, nullptr);
+    CssComputedColor deferred;
+    ASSERT_TRUE(css_color_compute(declaration->value, &deferred));
+    ASSERT_EQ(deferred.unresolved, declaration->value);
+    CssValue* retained = css_value_create_computed_color(pool, &deferred);
+    ASSERT_NE(retained, nullptr);
+    pool_destroy(source_pool);
+    CssComputedColor current = {CSS_COLOR_RGB, {1, 0, 0, 1}}, result;
+    bool dark = false;
+    ASSERT_TRUE(css_color_compute(retained, &result, &current, &dark));
+    EXPECT_EQ(result.unresolved, nullptr);
+    EXPECT_DOUBLE_EQ(result.components[0], 1); EXPECT_DOUBLE_EQ(result.components[3], .5);
+    dark = true;
+    ASSERT_TRUE(css_color_compute(retained, &result, &current, &dark));
+    EXPECT_EQ(result.unresolved, nullptr);
+    EXPECT_DOUBLE_EQ(result.components[0], .5); EXPECT_DOUBLE_EQ(result.components[1], .5);
+    EXPECT_DOUBLE_EQ(result.components[2], 1); EXPECT_DOUBLE_EQ(result.components[3], 1);
+    for (const char* invalid : {"light-dark(red)", "light-dark(red,blue,green)", "light-dark(red,1px)"})
+        EXPECT_EQ(css_parse_property_declaration("color", 5, invalid, strlen(invalid), pool), nullptr);
+}
+
+TEST_F(CssEngineParserTest, ColorSchemeValidatesOffersAndSelectsTheSupportedPreference) {
+    const struct {const char* source; bool light_preference, dark_preference;} cases[] = {
+        {"normal", false, false}, {"light", false, false}, {"dark", true, true},
+        {"light dark", false, true}, {"dark light", false, true},
+        {"only dark", true, true}, {"dark only", true, true},
+        {"custom-scheme dark", true, true}, {"custom-scheme", false, false},
+    };
+    for (const auto& entry : cases) {
+        CssDeclaration* declaration = css_parse_property_declaration("color-scheme", 12,
+            entry.source, strlen(entry.source), pool);
+        ASSERT_NE(declaration, nullptr) << entry.source;
+        bool dark;
+        ASSERT_TRUE(css_color_scheme_select(declaration->value, false, &dark));
+        EXPECT_EQ(dark, entry.light_preference);
+        ASSERT_TRUE(css_color_scheme_select(declaration->value, true, &dark));
+        EXPECT_EQ(dark, entry.dark_preference);
+    }
+    for (const char* invalid : {"only", "normal dark", "light,dark", "only only dark", "1foo", "\"dark\"", "default"})
+        EXPECT_EQ(css_parse_property_declaration("color-scheme", 12, invalid, strlen(invalid), pool), nullptr) << invalid;
+}
+
 TEST_F(CssEngineParserTest, AbsoluteOklabAndOklchKeepComponentsAndReachSrgbConsumers) {
     struct Case {const char* source; const char* computed; uint8_t r, g, b, a, missing = 0;};
     // opaque samples were independently captured with Chromium's sRGB canvas.

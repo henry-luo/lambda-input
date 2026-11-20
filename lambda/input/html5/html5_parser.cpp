@@ -4,6 +4,7 @@
 #include "../../core/mark_reader.hpp"
 #include "../../io/mark_editor.hpp"
 #include "../../core/markup_name_classes.hpp"
+#include "../css/dom_element.hpp"
 #include <string.h>
 #include <assert.h>
 
@@ -733,6 +734,34 @@ void html5_clear_active_formatting_to_marker(Html5Parser* parser) {
     }
 }
 
+static bool html5_insert_declarative_shadow(Html5Parser* parser, Element* declaration) {
+    Element* host = html5_current_node(parser);
+    if (!host || host == parser->fragment_root || parser->open_elements->length <= 1 ||
+        html5_current_node_is_foreign(parser) || !dom_html_shadow_host_name(html5_element_tag(host)))
+        return false;
+    const char* mode = extract_element_attribute(declaration, "shadowrootmode", nullptr);
+    if (!mode || (!str_ieq_cstr(mode, "open") && !str_ieq_cstr(mode, "closed"))) return false;
+
+    for (int64_t i = host->length; i > 0; --i) {
+        Item child = host->items[i - 1];
+        if (get_type_id(child) == LMD_TYPE_ELEMENT &&
+            strcmp(html5_element_tag(child.element), HTML5_DECLARATIVE_SHADOW_TAG) == 0)
+            return false;
+    }
+    // keep the template on the open stack so its contents keep the usual
+    // template insertion rules. The DOM builder consumes the private marker.
+    MarkBuilder builder(parser->input);
+    Element* marker = builder.element(HTML5_DECLARATIVE_SHADOW_TAG).final().element;
+    if (!marker) return false;
+    array_append(marker, Item{.element = declaration}, parser->pool, parser->arena);
+    if (marker->length != 1) return false;
+    int64_t before = host->length;
+    array_append(host, Item{.element = marker}, parser->pool, parser->arena);
+    if (host->length == before) return false;
+    html5_push_element(parser, declaration);
+    return true;
+}
+
 // element insertion helpers
 Element* html5_insert_html_element(Html5Parser* parser, Html5Token* token) {
     // Flush any pending text before inserting element
@@ -743,6 +772,8 @@ Element* html5_insert_html_element(Html5Parser* parser, Html5Token* token) {
 
     // Create element with attributes from token
     Element* elem = html5_create_element_for_token(parser, token);
+    if (parser->allow_declarative_shadow_roots && html5_token_is(token, MARKUP_NAME_TEMPLATE) &&
+        html5_insert_declarative_shadow(parser, elem)) return elem;
 
     // descendants of a fostered element stay in that element's subtree.
     if (parser->foster_parenting && html5_at_table_insertion_target(parser)) {

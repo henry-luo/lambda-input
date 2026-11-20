@@ -1449,9 +1449,7 @@ bool selector_matcher_matches_pseudo_class(SelectorMatcher* matcher,
         case CSS_SELECTOR_PSEUDO_OPEN:
             return selector_matcher_get_pseudo_state(matcher, element, PSEUDO_STATE_OPEN);
         case CSS_SELECTOR_PSEUDO_MODAL:
-            return element->tag_name &&
-                str_icmp_cstr(element->tag_name, "dialog") == 0 &&
-                element->has_attribute("open") && element->is_dialog_modal();
+            return element->is_dialog_modal() && dom_element_is_html_tag(element, MARKUP_NAME_DIALOG);
         case CSS_SELECTOR_PSEUDO_POPOVER_OPEN:
             return element->has_attribute("popover") &&
                 element->is_popover_open();

@@ -372,6 +372,58 @@ bool css_format_grid_track_value(CssFormatter* formatter, CssValue* value,
 }
 
 // Internal implementation with property context
+static bool css_anchor_area_append_part(StringBuf* output, CssAnchorAreaPart part) {
+    if (part.track == CSS_ANCHOR_SPAN_ALL) return stringbuf_append_format(output, "span-all");
+    if (part.track == CSS_ANCHOR_TRACK_CENTER) return stringbuf_append_format(output, "center");
+    bool span = part.track == CSS_ANCHOR_SPAN_START || part.track == CSS_ANCHOR_SPAN_END;
+    bool end = part.track == CSS_ANCHOR_TRACK_END || part.track == CSS_ANCHOR_SPAN_END;
+    const char* edge = end ? "end" : "start";
+    const char* axis = "";
+    if (part.physical) {
+        edge = part.axis == CSS_ANCHOR_AXIS_X ? (end ? "right" : "left") : (end ? "bottom" : "top");
+    } else {
+        static const char* const prefixes[] = {"", "x-", "y-", "block-", "inline-"};
+        axis = prefixes[part.axis];
+    }
+    return stringbuf_append_format(output, "%s%s%s%s", span ? "span-" : "",
+        part.self ? "self-" : "", axis, edge);
+}
+
+bool css_anchor_serialize_position_area(StringBuf* output, const CssValue* value, bool computed) {
+    CssAnchorArea area;
+    if (!output || !css_anchor_position_area(value, &area)) return false;
+    CssAnchorAreaPart& first = area.part[0];
+    CssAnchorAreaPart& second = area.part[1];
+    // canonical pairs order horizontal before vertical and block before inline.
+    if (first.axis == CSS_ANCHOR_AXIS_Y || first.axis == CSS_ANCHOR_AXIS_INLINE ||
+        second.axis == CSS_ANCHOR_AXIS_X || second.axis == CSS_ANCHOR_AXIS_BLOCK) {
+        CssAnchorAreaPart previous = first;
+        first = second;
+        second = previous;
+    }
+    if ((first.track == CSS_ANCHOR_SPAN_ALL) != (second.track == CSS_ANCHOR_SPAN_ALL)) {
+        bool first_spans = first.track == CSS_ANCHOR_SPAN_ALL;
+        CssAnchorAreaPart edge = first_spans ? second : first;
+        if (edge.axis != CSS_ANCHOR_AXIS_UNSPECIFIED)
+            return css_anchor_area_append_part(output, edge);
+        if (computed && edge.track != CSS_ANCHOR_TRACK_CENTER) {
+            edge.axis = first_spans ? CSS_ANCHOR_AXIS_INLINE : CSS_ANCHOR_AXIS_BLOCK;
+            return css_anchor_area_append_part(output, edge);
+        }
+    }
+    if (computed) {
+        for (CssAnchorAreaPart& part : area.part)
+            if (part.axis >= CSS_ANCHOR_AXIS_BLOCK) part.axis = CSS_ANCHOR_AXIS_UNSPECIFIED;
+    }
+    size_t start = output->length;
+    if (!css_anchor_area_append_part(output, first)) return false;
+    if (first.axis == second.axis && first.track == second.track &&
+        first.self == second.self && first.physical == second.physical) return true;
+    if (stringbuf_append_format(output, " ") && css_anchor_area_append_part(output, second)) return true;
+    stringbuf_truncate(output, start);
+    return false;
+}
+
 void css_format_value_with_property(CssFormatter* formatter, CssValue* value, CssPropertyCode property_code) {
     if (!formatter || !value) return;
 
@@ -417,6 +469,9 @@ void css_format_value_with_property(CssFormatter* formatter, CssValue* value, Cs
         if (text) stringbuf_append_str_n(formatter->output, text->chars, text->len);
         return;
     }
+
+    if (property_code == CSS_PROPERTY_POSITION_AREA &&
+        css_anchor_serialize_position_area(formatter->output, value, false)) return;
 
     if (formatter->options.computed_colors && format_computed_color(formatter, value)) return;
 

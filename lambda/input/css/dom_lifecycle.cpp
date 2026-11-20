@@ -269,6 +269,7 @@ static void dom_record_set_backing_value(DomDocument* doc, DomNodeRecord* record
 
 void dom_lifecycle_destroy(DomDocument* doc) {
     if (!doc) return;
+    dom_retire_begin_destroy(doc);
     dom_lifecycle_release_backing_roots(doc);
     DomNodeRegistry* registry = dom_registry(doc);
     if (registry) dom_retire_dequeue(registry);
@@ -906,7 +907,7 @@ void dom_retire_wrapper_collection_done(DomDocument* doc) {
 
 void dom_retire_begin_destroy(DomDocument* doc) {
     DomNodeRegistry* registry = dom_registry(doc);
-    if (!registry) return;
+    if (!registry || registry->destroying) return;
     dom_retire_dequeue(registry);
     registry->destroying = true;
     registry->sweep_requested = false;
@@ -914,6 +915,12 @@ void dom_retire_begin_destroy(DomDocument* doc) {
     // individual slots here adds coalescing work without saving any memory.
     registry->pending_free = nullptr;
     registry->stats.pending_primary_bytes = 0;
+    // Adopted nodes can lose their physical storage when document resources
+    // are destroyed. Unlink both ends while every registered node is alive.
+    for (DomNodeRecord* record = registry->all_records; record; record = record->all_next) {
+        if (record->current_owner && record->state != DOM_NODE_RETIRED)
+            dom_slot_release_manual_links(record->address, record->manual_slot_link);
+    }
 }
 
 static bool dom_node_is_attached_to_document(DomNodeRegistry* registry,

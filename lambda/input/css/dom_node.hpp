@@ -471,6 +471,8 @@ int64_t dom_comment_get_child_index(DomComment* comment_node);
  * @return true on success, false on failure
  */
 bool dom_comment_set_content(DomComment* comment_node, const char* new_content);
+bool dom_comment_set_content(DomComment* comment_node, const char* new_content,
+                             DomDocument* document);
 
 /**
  * Remove a comment node (updates Lambda tree)
