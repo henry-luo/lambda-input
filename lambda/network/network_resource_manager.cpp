@@ -511,6 +511,7 @@ NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
                                       ResourcePriority priority,
                                       struct DomElement* owner) {
     if (!resource_manager_admits(mgr, url)) return NULL;
+    if (priority < PRIORITY_CRITICAL || priority > PRIORITY_LOW) priority = PRIORITY_NORMAL;
     pthread_mutex_lock(&mgr->mutex);
     
     // check for existing resource (deduplication)
@@ -520,6 +521,11 @@ NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
     if (existing && existing->res) {
         // resource already exists
         NetworkResource* res = existing->res;
+        if (priority < res->priority) {
+            // a discovered consumer can promote a byte-only prefetch; later readers never downgrade it.
+            network_scheduler_promote(mgr->scheduler, res, priority);
+            res->priority = priority;
+        }
 
         // byte-only prefetches acquire element delivery when discovery finds their consumer.
         if (res->type == RESOURCE_PREFETCH && type != RESOURCE_PREFETCH && owner) {

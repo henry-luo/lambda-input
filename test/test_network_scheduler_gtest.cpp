@@ -323,7 +323,7 @@ TEST(NetworkResourceManager, DecoderFileSurvivesCacheReplacementAndEviction) {
     mem_free(cached);
 }
 
-TEST(NetworkResourceManager, PreservesParserBlockingPriorityAcrossConsumers) {
+TEST(NetworkResourceManager, ConsumersKeepHighestRequestedPriority) {
     const char* cache_dir = "./temp/test_cache_manager_priority";
     const char* url = "https://example.com/assets/parser-blocking.js";
     const char* content = "window.parserBlocking = true;";
@@ -339,9 +339,12 @@ TEST(NetworkResourceManager, PreservesParserBlockingPriorityAcrossConsumers) {
     NetworkResourceManager* manager = resource_manager_create(&document, NULL, cache);
     ASSERT_NE(manager, nullptr);
 
+    NetworkResource* initial_prefetch = resource_manager_prefetch(manager, url, PRIORITY_LOW);
+    ASSERT_NE(initial_prefetch, nullptr);
     NetworkResource* parser_blocking = resource_manager_prefetch(
         manager, url, PRIORITY_HIGH);
-    ASSERT_NE(parser_blocking, nullptr);
+    ASSERT_EQ(parser_blocking, initial_prefetch);
+    EXPECT_EQ(parser_blocking->priority, PRIORITY_HIGH);
     NetworkResource* later_defer_consumer = resource_manager_prefetch(
         manager, url, PRIORITY_NORMAL);
     EXPECT_EQ(later_defer_consumer, parser_blocking);
@@ -470,11 +473,14 @@ typedef struct BlockingTaskState {
     bool first_started;
     bool first_ran;
     bool second_ran;
+    int order[4];
+    int count;
 } BlockingTaskState;
 
 typedef struct BlockingTask {
     BlockingTaskState* state;
     bool first;
+    int order;
 } BlockingTask;
 
 static void blocking_task_fn(void* data) {
@@ -492,6 +498,7 @@ static void blocking_task_fn(void* data) {
     } else {
         state->second_ran = true;
     }
+    if (state->count < 4) state->order[state->count++] = task->order;
     pthread_mutex_unlock(&state->mutex);
 }
 
@@ -545,6 +552,48 @@ TEST(NetworkScheduler, CancelsQueuedTaskBehindActiveTransfer) {
     EXPECT_TRUE(state.first_ran);
     EXPECT_FALSE(state.second_ran);
 
+    pthread_cond_destroy(&state.cond);
+    pthread_mutex_destroy(&state.mutex);
+    network_scheduler_destroy(scheduler);
+}
+
+TEST(NetworkScheduler, PromotedQueuedTaskPrecedesNormalWorkWithoutRestartingActiveWork) {
+    NetworkSchedulerConfig config = {};
+    config.max_global_transfers = 1;
+    config.max_transfers_per_origin = 1;
+    NetworkScheduler* scheduler = network_scheduler_create(NULL, &config);
+    ASSERT_NE(scheduler, nullptr);
+    BlockingTaskState state = {};
+    pthread_mutex_init(&state.mutex, NULL);
+    pthread_cond_init(&state.cond, NULL);
+    BlockingTask tasks[] = {{&state, true, 0}, {&state, false, 1},
+        {&state, false, 2}, {&state, false, 3}};
+    ASSERT_TRUE(network_scheduler_submit(scheduler, blocking_task_fn, &tasks[0],
+        "https://example.test/active", PRIORITY_NORMAL));
+    pthread_mutex_lock(&state.mutex);
+    while (!state.first_started) pthread_cond_wait(&state.cond, &state.mutex);
+    pthread_mutex_unlock(&state.mutex);
+    EXPECT_TRUE(network_scheduler_submit(scheduler, blocking_task_fn, &tasks[1],
+        "https://example.test/normal-first", PRIORITY_NORMAL));
+    EXPECT_TRUE(network_scheduler_submit(scheduler, blocking_task_fn, &tasks[2],
+        "https://example.test/prefetched", PRIORITY_LOW));
+    EXPECT_TRUE(network_scheduler_submit(scheduler, blocking_task_fn, &tasks[3],
+        "https://example.test/normal-last", PRIORITY_NORMAL));
+    EXPECT_EQ(network_scheduler_get_queued_count(scheduler), 3);
+    EXPECT_FALSE(network_scheduler_promote(scheduler, &tasks[0], PRIORITY_HIGH));
+    EXPECT_TRUE(network_scheduler_promote(scheduler, &tasks[2], PRIORITY_HIGH));
+    EXPECT_FALSE(network_scheduler_promote(scheduler, &tasks[2], PRIORITY_NORMAL));
+    EXPECT_FALSE(network_scheduler_promote(scheduler, &tasks[2], PRIORITY_HIGH));
+    EXPECT_EQ(network_scheduler_get_queued_count(scheduler), 3);
+    pthread_mutex_lock(&state.mutex);
+    state.release_first = true;
+    pthread_cond_broadcast(&state.cond);
+    pthread_mutex_unlock(&state.mutex);
+    network_scheduler_wait_all(scheduler);
+    EXPECT_EQ(state.count, 4);
+    const int expected[] = {0, 2, 1, 3};
+    for (int i = 0; i < 4; i++) EXPECT_EQ(state.order[i], expected[i]);
+    EXPECT_EQ(network_scheduler_get_queued_count(scheduler), 0);
     pthread_cond_destroy(&state.cond);
     pthread_mutex_destroy(&state.mutex);
     network_scheduler_destroy(scheduler);

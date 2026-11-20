@@ -15,6 +15,14 @@ Resolved records are in the [fixed issue ledger](<Lib_Input_Issue_Ledger (fixed)
 
 ## Open issues
 
+<a id="li-085"></a>
+### LI-085 — FIXED for shared resource priority promotion
+
+Deduplicated URL requests retain the highest requested priority and promote
+queued work through the existing scheduler. See the
+[priority repair](<Lib_Input_Issue_Ledger (fixed).md#li-085>).
+
+
 <a id="li-084"></a>
 ### LI-084 — FIXED
 

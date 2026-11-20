@@ -39,6 +39,10 @@ bool network_scheduler_submit_download(NetworkScheduler* scheduler,
                                        const char* url,
                                        ResourcePriority priority);
 
+// raise a queued request without restarting active work or admitting another transfer.
+bool network_scheduler_promote(NetworkScheduler* scheduler, void* task_data,
+                               ResourcePriority priority);
+
 bool network_scheduler_cancel(NetworkScheduler* scheduler, void* task_data);
 void network_scheduler_wait_all(NetworkScheduler* scheduler);
 void network_scheduler_shutdown(NetworkScheduler* scheduler);

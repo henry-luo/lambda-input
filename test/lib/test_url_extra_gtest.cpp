@@ -81,6 +81,31 @@ TEST_F(UrlExtraTest, BracketedHostsKeepAddressColonsSeparateFromThePort) {
     url_destroy(url);
 }
 
+TEST_F(UrlExtraTest, PortGetterOmitsOnlyTheSchemesDefaultPort) {
+    struct Case { const char* input; const char* port; } cases[] = {
+        {"https://example.test:443/", nullptr}, {"https://example.test:0443/", nullptr},
+        {"http://example.test:80/", nullptr},
+        {"wss://example.test:443/", nullptr}, {"ftp://example.test:21/", nullptr},
+        {"https://example.test:8443/", "8443"}, {"https://example.test:0/", "0"},
+        {"custom://example.test:0/", "0"}
+    };
+    for (const auto& sample : cases) {
+        Url* url = url_parse(sample.input);
+        ASSERT_NE(url, nullptr) << sample.input;
+        if (sample.port) EXPECT_STREQ(url_get_port(url), sample.port) << sample.input;
+        else {
+            EXPECT_EQ(url_get_port(url), nullptr) << sample.input;
+            EXPECT_EQ(url->port, nullptr) << sample.input;
+        }
+        url_destroy(url);
+    }
+    Url* url = url_parse("https://example.test:443/");
+    ASSERT_NE(url, nullptr);
+    ASSERT_EQ(url_set_port(url, "8443"), URL_OK);
+    EXPECT_STREQ(url_get_port(url), "8443");
+    url_destroy(url);
+}
+
 TEST_F(UrlExtraTest, SpecialSchemes) {
     Url* url;
     

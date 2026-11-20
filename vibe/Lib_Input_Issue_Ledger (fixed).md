@@ -6,6 +6,54 @@ remain in the [active issue ledger](Lib_Input_Issue_Ledger.md).
 
 ## Fixed issues
 
+<a id="li-086"></a>
+### LI-086 — Parsed URLs retain a default port omitted by serialization
+
+**Fixed 2026-11-20.** Shared Input ownership follows **D9.1.1v4 / D9.1.3v2**.
+
+The URL parser omitted a scheme's default port from serialized href/host while
+retaining its raw port string. Consumers of the parsed record consequently
+observed a port that was absent from the serialized URL. The parser now clears
+the raw default-port string using the existing scheme table, while preserving
+the numeric convenience port used by transport. No getter facade is added.
+
+The regression fails before repair. All **37 URL extra/safety tests pass**,
+including https/http/wss/ftp defaults, leading zeros, nondefault and zero ports,
+custom schemes, raw record state and a subsequent nondefault setter. Lambda's
+five live URL groups pass in AST, MIR and Chromium with the rebuilt release.
+Evidence: `temp/online-visual-round114/port-final.log` and parent Lambda
+`../temp/online-visual-round114/`. No baseline or performance claim.
+
+<a id="li-085"></a>
+### LI-085 — Deduplicated requests ignore later higher-priority consumers
+
+**Fixed for shared request scheduling, 2026-11-20.** Native ownership follows
+**D9.1.1v4 / D9.1.3v2**; scheduler task lifetime follows **D5.5.1**.
+
+`resource_manager_load` reused an existing URL without considering the new
+consumer's priority. A low-priority prefetch therefore remained low when an
+ordinary image or blocking consumer requested the same bytes. The existing
+priority test covered only preservation of an initially high priority. Extending
+it to start with a low-priority prefetch reproduces the wrong retained priority.
+
+Shared requests now keep the highest requested priority. The scheduler promotes
+queued work through its existing priority queues, sharing queue lookup with
+cancellation. It appends before detaching, so allocation failure leaves the
+original task and queue order intact. Active work is not restarted, equal/lower
+requests cannot downgrade work, unrelated FIFO order and queue counts remain
+unchanged. Resource identities, cache ownership, transfer limits, deadlines and
+admission policy are unchanged. Invalid priority inputs use the scheduler's
+existing normal-priority convention.
+
+Thirteen focused native tests pass, including deterministic condition-variable
+ordering (active, promoted, two normal requests), cancellation, cache/dedup,
+admission and an actual curl-multi file transfer. All 21 HTTP resource-discovery
+checks pass with the rebuilt release host. No online page is cleared or cold
+media improvement attributed without a page-level counterfactual; RI-061's
+finite readiness limitation remains open. Broad baselines are not repeated.
+Evidence: Lambda `../../temp/online-visual-round107/`.
+
+
 <a id="li-084"></a>
 ### LI-084 — Contextual color expressions are rejected by shared color computation
 
