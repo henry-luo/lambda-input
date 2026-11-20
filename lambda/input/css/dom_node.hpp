@@ -53,6 +53,7 @@ enum DomNodeFlag : uint8_t {
     DOM_NODE_FLAG_TEXT_OWNS_STRING = 1u << 1,
     DOM_NODE_FLAG_TEXT_REINSERTABLE = 1u << 2,
     DOM_NODE_FLAG_GC_BACKING = 1u << 3,
+    DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES = 1u << 4, // elements only: skip cold props on pseudo reads
 };
 
 typedef enum {
@@ -106,6 +107,7 @@ struct DomNode {
     bool layout_dirty;                // marked for relayout in incremental mode
     uint8_t node_flags;               // compact subtype state; use node accessors
     bool ruby_annotation_hidden;     // selected-view output; independent of authored visibility
+    uint8_t shared_pseudo_reset_slots; // elements only: four bits each for ::before and ::after
     float layout_height_contribution; // advance_y delta from this node during parent's layout
 
     // node_name() is for all nodes, including text and comment nodes
@@ -201,7 +203,8 @@ struct DomAttr : DomNode {
     lam::Up<DomDocument> storage_document;
     Pool* storage_pool;
     lam::Up<DomElement> owner_element;
-    lam::Own<const char> namespace_uri, qualified_name, local_name, prefix, value;
+    lam::Up<const char> namespace_uri; // physical source Input name pool
+    lam::Own<const char> qualified_name, local_name, prefix, value;
     lam::Up<DomAttr> attribute_next;
     void (*owner_changed)(void*);
 };

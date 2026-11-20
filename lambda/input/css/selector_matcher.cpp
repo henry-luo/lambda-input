@@ -767,7 +767,7 @@ static bool selector_matcher_matches_namespaced_attribute(
                 selector->attribute.case_sensitive)) return true;
     }
     // recorded expanded names are authoritative; a QName mirror cannot represent every namespace value.
-    if (element->ext && element->ext->attributes_are_recorded) return false;
+    if (element->has_recorded_attributes()) return false;
     if (wanted_uri && !*wanted_uri &&
         !dom_element_namespaced_attributes(element)) {
         const char* name = selector->attribute.name;

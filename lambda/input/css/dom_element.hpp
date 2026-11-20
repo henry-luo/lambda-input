@@ -309,6 +309,9 @@ struct ReconcileLog {
         records(0), record_overflow(0) {}
 };
 
+struct DomSharedPseudoResets;
+struct CssSelector;
+
 // tier-1: opaque services kept out of the public document spine
 struct DomDocumentServices {
     void* mem_ctx;
@@ -333,6 +336,8 @@ struct DomDocumentServices {
     char* preferred_languages; // document-owned UI preference snapshot, refreshed by the host setter
     lam::Own<char> pragma_language;    // document-owned default retained after a meta insertion
     lam::Own<char> protocol_language;  // document-owned single Content-Language response value
+    lam::Up<const char> html_namespace_uri, empty_namespace_uri; // Input name-pool bytes
+    lam::Own<DomSharedPseudoResets> shared_pseudo_resets = nullptr; // physical document pool
     bool svg_source_document = false; // standalone SVG source uses DOM serialization on SVG save
     bool svg_image_document; // SVG image processing forbids external subordinate resources
 
@@ -340,7 +345,8 @@ struct DomDocumentServices {
         keyframe_registry(nullptr), registered_property_set(nullptr), element_count(0), ext_allocations(0),
         layout_cache_allocations(0), node_registry(nullptr),
         style_epoch_manager(nullptr), scene3d_registry(nullptr), canvas_registry(nullptr),
-        svg_geometry_cache(nullptr), svg_layer_registry(nullptr), paint_layer_registry(nullptr), shadow_image_cache(nullptr), svg_filter_registry(nullptr), svg_animation_registry(nullptr), svg_use_resource_cache(nullptr), preferred_languages(nullptr), pragma_language(nullptr), protocol_language(nullptr), svg_image_document(false) {}
+        svg_geometry_cache(nullptr), svg_layer_registry(nullptr), paint_layer_registry(nullptr), shadow_image_cache(nullptr), svg_filter_registry(nullptr), svg_animation_registry(nullptr), svg_use_resource_cache(nullptr), preferred_languages(nullptr), pragma_language(nullptr), protocol_language(nullptr),
+        html_namespace_uri(nullptr), empty_namespace_uri(nullptr), svg_image_document(false) {}
 };
 
 static inline const char* dom_reconcile_mode_name(DomReconcileMode mode) {
@@ -688,6 +694,8 @@ typedef struct FlexItemProp FlexFlowProp;
 typedef struct GridItemProp GridItemProp;
 typedef struct BoundaryProp BoundaryProp;
 typedef struct BlockProp BlockProp;
+struct BlockPropExt;
+struct BlockContainmentProp;
 typedef struct ScrollProp ScrollProp;
 typedef struct PositionProp PositionProp;
 typedef struct TransformProp TransformProp;
@@ -773,10 +781,9 @@ enum DomElementFlag : uint32_t {
     ELMT_FLAG_MEASURING_INTRINSIC_WIDTH = 1u << 4,
     ELMT_FLAG_HAS_PENDING_SCROLL_X = 1u << 5,
     ELMT_FLAG_HAS_PENDING_SCROLL_Y = 1u << 6,
-    ELMT_FLAG_HAS_INLINE_FRAGMENT_UNION = 1u << 7,
-    ELMT_FLAG_HAS_ANCESTOR_FRAGMENT_UNION = 1u << 8,
-    ELMT_FLAG_HAS_COLLAPSED_LINE_FRAGMENT_UNION = 1u << 9,
-    ELMT_FLAG_HAS_SPLIT_INLINE_FRAGMENT_UNION = 1u << 10,
+    ELMT_FLAG_HTML_NAMESPACE = 1u << 7,
+    ELMT_FLAG_LOCAL_NAME_IS_TAG = 1u << 8,
+    ELMT_FLAG_LOCAL_NAME_IS_TAG_SUFFIX = 1u << 9,
     ELMT_FLAG_PARENT_ITEM_KIND_SHIFT = 11,
     ELMT_FLAG_PARENT_ITEM_KIND_MASK = 3u << ELMT_FLAG_PARENT_ITEM_KIND_SHIFT,
     ELMT_FLAG_ROLE_KIND_SHIFT = 13,
@@ -881,7 +888,7 @@ struct CssSelectionStyle {
 };
 
 struct DomNamespacedAttribute {
-    lam::Own<const char> namespace_uri;   // document-pool copies
+    lam::Up<const char> namespace_uri;   // physical source Input name pool
     lam::Own<const char> local_name;
     lam::Own<const char> qualified_name;
     lam::Own<const char> value; // null preserves a native Mark null attribute (S2.2.3)
@@ -954,14 +961,69 @@ enum class DomViewSlot {
     count
 };
 
+// tier-1: authored pseudo styles survive the view that borrows them.
+struct DomPseudoStyleGroup {
+    lam::Own<StyleTree> styles[PSEUDO_STYLE_COUNT];
+};
+
+// the node's storage pool owns this directory, which borrows Input namespace bytes.
+struct DomPropExt {
+    lam::ViewProp<TableProp, DomViewSlot::tb> tb;
+    lam::ViewProp<FormControlProp, DomViewSlot::form> form;
+    lam::ViewProp<TransformProp, DomViewSlot::transform> transform;
+    lam::ViewProp<PseudoContentProp, DomViewSlot::pseudo> pseudo;
+    lam::Up<const char> namespace_uri;
+    lam::Own<DomPseudoStyleGroup> pseudo_styles;
+
+    bool empty() const { return !tb && !form && !transform && !pseudo && !namespace_uri && !pseudo_styles; }
+};
+
+// tier-1: attribute storage follows the element through adoption.
+struct DomAttributeCache {
+    lam::OwnArr<const char*> attribute_names_cache;
+    int attribute_names_capacity;
+    lam::OwnArr<DomSyntheticAttribute> synthetic_attributes;
+    int synthetic_attribute_count;
+    int synthetic_attribute_capacity;
+    lam::Own<DomNamespacedAttribute> namespaced_attributes;
+    bool attributes_are_recorded; // ordered expanded names become authoritative after namespace mutation
+};
+
+// tier-1 storage for view geometry; reset when view geometry is retired.
+struct DomFragmentGeometry {
+    FragmentUnion frags[FRAGMENT_UNION_COUNT];
+    uint8_t fragment_presence_mask;
+    bool has_inline_cb_edge_snapshot;
+    float ruby_column_start_offset;
+    float ruby_column_end_offset;
+    float ruby_empty_base_block_size;
+    bool has_ruby_column_geometry;
+    bool has_empty_ruby_base;
+    bool has_ruby_parallel_fragments; // selected text rectangles own each line's allocation
+};
+
 // tier-1: doc-pool, survives relayout
 struct DomElementExt {
     // adoption changes ownerDocument, not the pool owning reclaimable metadata (D5.5.1).
     lam::Up<DomDocument> storage_document;
     NameId name_id;
-    FragmentUnion frags[FRAGMENT_UNION_COUNT];
-    uint8_t fragment_presence_mask;
-    lam::Own<StyleTree> pseudo_styles[PSEUDO_STYLE_COUNT];
+    // pack node state in the alignment gap before the pointer slots.
+    bool has_last_remembered_width : 1;
+    bool has_last_remembered_height : 1;
+    bool has_animated_display : 1;
+    bool shadow_closed : 1;
+    bool shadow_delegates_focus : 1;
+    bool shadow_manual_slot_assignment : 1;
+    bool popover_open : 1;
+    bool dialog_modal : 1;
+    bool dialog_cancel_dispatching : 1;
+    bool selected_content_pending : 1;
+    bool selected_content_reset_pending : 1;
+    bool script_already_started : 1;
+    bool script_parser_pending : 1;
+    bool selectionchange_event_pending : 1;
+    lam::Own<DomFragmentGeometry> fragment_geometry;
+    lam::Own<DomAttributeCache> attributes;
     lam::ViewProp<MultiColumnProp, DomViewSlot::multicol> multicol;
     lam::ViewProp<VectorPathProp, DomViewSlot::vpath> vpath;
     lam::ViewProp<FilterProp, DomViewSlot::filter> filter;
@@ -972,61 +1034,27 @@ struct DomElementExt {
     int layout_fragment_count;
     float last_remembered_width;
     float last_remembered_height;
-    bool has_last_remembered_width;
-    bool has_last_remembered_height;
     lam::Own<CssWebAnimationState> web_animation_state;  // head of the element's effect list
     DisplayValue animated_display;
-    bool has_animated_display;
     lam::Up<DomElement> shadow_host;
     lam::Own<DomElement> shadow_root;
     lam::Up<CssStylesheet> shadow_inline_stylesheet;
-    bool shadow_closed;
-    bool shadow_delegates_focus;
-    bool shadow_manual_slot_assignment;
     lam::Own<DomManualSlotLink> manual_slot_first;
     lam::Up<DomManualSlotLink> manual_slot_last;
     lam::OwnArr<DomNodeRef> signaled_slot_assignment;
     size_t signaled_slot_assignment_count;
     float pending_element_scroll_x;
     float pending_element_scroll_y;
-    bool has_inline_cb_edge_snapshot;
-    lam::OwnArr<const char*> attribute_names_cache;
-    int attribute_names_capacity;
-    lam::OwnArr<DomSyntheticAttribute> synthetic_attributes;
-    int synthetic_attribute_count;
-    int synthetic_attribute_capacity;
-    lam::Own<DomNamespacedAttribute> namespaced_attributes;
     lam::Up<DomAttr> attribute_nodes;
     lam::Up<struct DomInlineDeclarations> inline_declarations; // document resource; authored CSSOM block
-    // Layout-only ruby column geometry. This lives outside InlineProp because
-    // computed inline styles may be absent or canonicalized across elements.
-    float ruby_column_start_offset;
-    float ruby_column_end_offset;
-    float ruby_empty_base_block_size;
-    bool has_ruby_column_geometry;
-    bool has_empty_ruby_base;
-    bool has_ruby_parallel_fragments; // selected text rectangles own each line's allocation
-    bool popover_open;
-    bool dialog_modal;
-    bool dialog_cancel_dispatching;
     lam::Own<const char> dialog_return_value; // document-pooled WebIDL state, independent of JS expandos
-    int64_t form_image_selected_x;
-    int64_t form_image_selected_y;
-    bool selected_content_pending;
-    bool selected_content_reset_pending;
-    bool script_already_started;
-    bool script_parser_pending;
-    // Deferred text-control events are DOM task state, so their queue links
-    // outlive layout-property teardown while a control is detached.
-    uint8_t selectionchange_event_pending;
-    bool attributes_are_recorded; // ordered expanded names become authoritative after namespace mutation
+    float form_image_selected_x; // image-relative CSS pixels, rounded at submission
+    float form_image_selected_y;
+    // deferred text-control events keep their queue links across layout teardown.
     lam::Up<DomElement> selectionchange_event_next;
     // ::marker layout state; markers have no BlockProp
     lam::ViewProp<MarkerProp, DomViewSlot::marker> marker;
     lam::Own<struct CssCustomPropertyIndex> custom_property_index;
-    // positive private-attribute reads borrow their document-owned strings.
-    lam::Up<const char> cached_namespace_uri;
-    lam::Up<const char> cached_namespace_local_name;
 };
 
 /**
@@ -1040,12 +1068,18 @@ struct DomElementExt {
  */
 // tier-1: doc-pool, survives relayout
 struct DomElement : DomNode {
-    // Factories rely on zeroed arena/pool storage and write only semantic non-zero fields.
-    static DomElement* create(DomDocument* doc, const char* tag_name, Element* backing);
-    static DomElement* create_in(Arena* arena);
-    static DomElement* create_in(Pool* pool);
-    static DomElement* create_in(DomElement* storage, DomDocument* doc,
-                                 const char* tag_name, Element* backing);
+    enum ParentItemKind : uint8_t {
+        PARENT_ITEM_NONE = 0,
+        PARENT_ITEM_FLEX = 1,
+        PARENT_ITEM_GRID = 2,
+    };
+
+    enum RoleKind : uint8_t {
+        ROLE_NONE = 0,
+        ROLE_TABLE = 1,
+        ROLE_CELL = 2,
+        ROLE_FORM = 3,
+    };
 
     // Resolved props point into the shorter-lived view pool by unified-tree design;
     // every relayout resets and rebuilds them before consumers may read the tree.
@@ -1055,6 +1089,7 @@ struct DomElement : DomNode {
     // the inline_prop_shared flag and the style epoch). A scratch-lived
     // anonymous flex item borrows another element's FontProp in font; it never
     // reaches view-tree teardown.
+
     // === Embedded Lambda Element (at known offset from DomNode base) ===
     // In UI mode, this IS the Lambda Element. Otherwise, data is copied from the
     // original Element during create(). MarkEditor operates on
@@ -1067,26 +1102,87 @@ struct DomElement : DomNode {
     // Tree structure (only elements can have children)
     lam::Own<DomNode> first_child;  // First child node (Element, Text, or Comment); owns the sibling chain
     lam::Up<DomNode> last_child;    // Last child node
+    // document reference (provides Arena and Input*)
+    lam::Up<DomDocument> doc;    // Parent document (provides arena and input)
 
     // HTML/CSS style related
+    lam::Up<const char> id;      // Element ID attribute (cached)
+    lam::OwnArr<const char*> class_names;  // Array of class names (cached)
+    int class_count;             // Number of classes
     NameId tag_id;               // Generated markup identity; custom tags use NAME_ID_NONE.
+    uint32_t elmt_flags;         // compact element state; use the accessors below
+
     // Bumped by dom_mutation_notify on every element at or above a mutation, so the painter
     // can tell an unchanged inline SVG or paint layer (a reusable raster) from a changed one.
     // A non-inherited presentation write skips its own target: it moves or fades that
     // element's raster without changing it (Radiant_Design_Animation_Repaint §4 B2).
     uint32_t layer_generation;
-    lam::Up<const char> id;      // Element ID attribute (cached)
-    lam::OwnArr<const char*> class_names;  // Array of class names (cached)
-    int class_count;             // Number of classes
     uint32_t intrinsic_input_revision; // subtree dirty notifications; fills existing pointer padding
-    lam::Shared<StyleTree> specified_style;  // Specified values from CSS rules (AVL tree)
-    lam::Own<DomElementExt> ext; // rare DOM/view state, allocated lazily from doc pool
-    // we do not store computed_style;
+
     // Version tracking for cache invalidation
     uint32_t style_version;      // Incremented when specified styles change
-    uint32_t elmt_flags;         // compact element state; use the accessors below
-    // document reference (provides Arena and Input*)
-    lam::Up<DomDocument> doc;    // Parent document (provides arena and input)
+    lam::Shared<StyleTree> specified_style;  // Specified values from CSS rules (AVL tree)
+    // we do not store computed_style;
+
+    // CSS custom properties (CSS variables)
+    lam::Own<struct CssCustomProp> css_variables;  // list of --var-name: value
+
+    // CSS Text soft hyphen fragments can contribute to an inline element's
+    // border-box union without producing an additional DOM text rect.
+
+    // collapsed text can create an anonymous line fragment that affects ancestor
+    // inline decorations without contributing to this element's own DOMRect.
+
+    // line-edge collapsible whitespace may leave a zero-width inline fragment
+    // on a real line even though its text node has no visible rect.
+
+    // block-in-inline splitting creates anonymous line fragments for every inline
+    // ancestor in the split chain. These store the content-area union; each span's
+    // own border/padding is applied when its DOMRect is computed.
+
+    // view related fields
+    DisplayValue display;
+
+    // span properties
+    lam::ViewProp<FontProp, DomViewSlot::font> font;  // font style
+    lam::ViewProp<BoundaryProp, DomViewSlot::bound> bound;  // block boundary properties
+    lam::ViewRef<InlineProp, DomViewSlot::in_line> in_line;  // private copy or canonical entry (inline_prop_shared)  // inline specific style properties
+
+    // block properties
+    float content_width, content_height;  // width and height of the child content including padding
+    lam::ViewProp<BlockProp, DomViewSlot::blk> blk;  // block specific style properties
+    lam::ViewProp<ScrollProp, DomViewSlot::scroller> scroller;  // handles overflow
+    // block content related properties for flexbox, image, iframe
+    lam::ViewProp<EmbedProp, DomViewSlot::embed> embed;
+    // positioning properties for CSS positioning
+    lam::ViewProp<PositionProp, DomViewSlot::position> position;
+    // Parent-item and own-role storage are independent because CSS permits a
+    // table or form control to participate in a flex/grid parent. Table
+    // structure and form-control state are also independent: a replaced form
+    // control can occupy a table-internal grid slot without losing its form
+    // behavior.
+    // Reads must enter through the tagged accessors below; direct members are
+    // reserved for mutation after the corresponding tag has been established.
+    union {
+        lam::ViewProp<FlexItemProp, DomViewSlot::fi> fi;
+        lam::ViewProp<GridItemProp, DomViewSlot::gi> gi;
+    };
+    lam::ViewProp<TableCellProp, DomViewSlot::td> td;  // table cell specific properties
+    lam::Own<DomElementExt> ext; // rare DOM/view state, allocated lazily from doc pool
+    lam::Own<DomPropExt> prop_ext;
+
+    // vector path for PDF/SVG curve rendering
+    // Layout cache for avoiding redundant layout computations (Taffy-inspired)
+    // Stores up to 9 measurement results + 1 final layout result
+    lam::ViewProp<radiant::LayoutCache, DomViewSlot::layout_cache> layout_cache;
+
+    // Factories rely on zeroed arena/pool storage and write only semantic non-zero fields.
+    static DomElement* create(DomDocument* doc, const char* tag_name, Element* backing);
+    static DomElement* create_in(Arena* arena);
+    static DomElement* create_in(Pool* pool);
+    static DomElement* create_in(DomElement* storage, DomDocument* doc,
+                                 const char* tag_name, Element* backing);
+
     void advance_style_version() {
         style_version++;
         if (doc) doc->style_query_epoch++;
@@ -1104,77 +1200,6 @@ struct DomElement : DomNode {
         if (!data->storage_document) data->storage_document = doc;
         return true;
     }
-
-    // CSS custom properties (CSS variables)
-    lam::Own<struct CssCustomProp> css_variables;  // list of --var-name: value
-
-    // view related fields
-    DisplayValue display;
-
-    // span properties
-    lam::ViewProp<FontProp, DomViewSlot::font> font;  // font style
-    lam::ViewProp<BoundaryProp, DomViewSlot::bound> bound;  // block boundary properties
-    lam::ViewRef<InlineProp, DomViewSlot::in_line> in_line;  // private copy or canonical entry (inline_prop_shared)  // inline specific style properties
-
-    // CSS Text soft hyphen fragments can contribute to an inline element's
-    // border-box union without producing an additional DOM text rect.
-
-    // collapsed text can create an anonymous line fragment that affects ancestor
-    // inline decorations without contributing to this element's own DOMRect.
-
-    // line-edge collapsible whitespace may leave a zero-width inline fragment
-    // on a real line even though its text node has no visible rect.
-
-    // block-in-inline splitting creates anonymous line fragments for every inline
-    // ancestor in the split chain. These store the content-area union; each span's
-    // own border/padding is applied when its DOMRect is computed.
-
-    enum ParentItemKind : uint8_t {
-        PARENT_ITEM_NONE = 0,
-        PARENT_ITEM_FLEX = 1,
-        PARENT_ITEM_GRID = 2,
-    };
-
-    enum RoleKind : uint8_t {
-        ROLE_NONE = 0,
-        ROLE_TABLE = 1,
-        ROLE_CELL = 2,
-        ROLE_FORM = 3,
-    };
-
-    // Parent-item and own-role storage are independent because CSS permits a
-    // table or form control to participate in a flex/grid parent. Table
-    // structure and form-control state are also independent: a replaced form
-    // control can occupy a table-internal grid slot without losing its form
-    // behavior.
-    // Reads must enter through the tagged accessors below; direct members are
-    // reserved for mutation after the corresponding tag has been established.
-    union {
-        lam::ViewProp<FlexItemProp, DomViewSlot::fi> fi;
-        lam::ViewProp<GridItemProp, DomViewSlot::gi> gi;
-    };
-    lam::ViewProp<TableProp, DomViewSlot::tb> tb;  // table specific properties
-    lam::ViewProp<TableCellProp, DomViewSlot::td> td;  // table cell specific properties
-    lam::ViewProp<FormControlProp, DomViewSlot::form> form;  // form control properties
-
-    // block properties
-    float content_width, content_height;  // width and height of the child content including padding
-    lam::ViewProp<BlockProp, DomViewSlot::blk> blk;  // block specific style properties
-    lam::ViewProp<ScrollProp, DomViewSlot::scroller> scroller;  // handles overflow
-    // block content related properties for flexbox, image, iframe
-    lam::ViewProp<EmbedProp, DomViewSlot::embed> embed;
-    // positioning properties for CSS positioning
-    lam::ViewProp<PositionProp, DomViewSlot::position> position;
-    // CSS transform properties
-    lam::ViewProp<TransformProp, DomViewSlot::transform> transform;
-    // CSS filter and transition state live in the doc-pool extension so the
-    // table/form metadata can remain independent without growing this object.
-    // pseudo-element content and layout state (::before/::after)
-    lam::ViewProp<PseudoContentProp, DomViewSlot::pseudo> pseudo;
-    // vector path for PDF/SVG curve rendering
-    // Layout cache for avoiding redundant layout computations (Taffy-inspired)
-    // Stores up to 9 measurement results + 1 final layout result
-    lam::ViewProp<radiant::LayoutCache, DomViewSlot::layout_cache> layout_cache;
 
     bool flag(DomElementFlag value) const { return (elmt_flags & value) != 0; }
     void set_flag(DomElementFlag value, bool enabled) {
@@ -1284,9 +1309,9 @@ struct DomElement : DomNode {
     void set_has_collapsed_line_fragment_union(bool value) { set_has_fragment_union(FRAGMENT_UNION_COLLAPSED_LINE, value); }
     bool has_split_inline_fragment_union() const { return has_fragment_union(FRAGMENT_UNION_SPLIT_INLINE); }
     void set_has_split_inline_fragment_union(bool value) { set_has_fragment_union(FRAGMENT_UNION_SPLIT_INLINE, value); }
-    bool has_inline_cb_edge_snapshot() const { return ext && ext->has_inline_cb_edge_snapshot; }
+    bool has_inline_cb_edge_snapshot() const { return fragment_geometry() && fragment_geometry()->has_inline_cb_edge_snapshot; }
     void set_has_inline_cb_edge_snapshot(bool value) {
-        DomElementExt* data = ensure_ext();
+        DomFragmentGeometry* data = value ? ensure_fragment_geometry() : fragment_geometry();
         if (data) data->has_inline_cb_edge_snapshot = value;
     }
 
@@ -1310,11 +1335,23 @@ struct DomElement : DomNode {
     }
     FlexItemProp* flex_item() const { return parent_item_kind() == PARENT_ITEM_FLEX ? fi : nullptr; }
     GridItemProp* grid_item() const { return parent_item_kind() == PARENT_ITEM_GRID ? gi : nullptr; }
-    TableProp* table_prop() const { return role_kind() == ROLE_TABLE ? tb : nullptr; }
+    TableProp* table_storage() const { return prop_ext ? prop_ext->tb.get() : nullptr; }
+    TableProp* table_prop() const { return role_kind() == ROLE_TABLE ? table_storage() : nullptr; }
     TableCellProp* cell_prop() const { return role_kind() == ROLE_CELL ? td : nullptr; }
+    FormControlProp* form_storage() const { return prop_ext ? prop_ext->form.get() : nullptr; }
     FormControlProp* form_control() const {
         RoleKind role = role_kind();
-        return (role == ROLE_FORM || role == ROLE_TABLE || role == ROLE_CELL) ? form : nullptr;
+        return (role == ROLE_FORM || role == ROLE_TABLE || role == ROLE_CELL) ? form_storage() : nullptr;
+    }
+    TransformProp* transform_prop() const { return prop_ext ? prop_ext->transform.get() : nullptr; }
+    PseudoContentProp* pseudo_prop() const { return prop_ext ? prop_ext->pseudo.get() : nullptr; }
+
+    DomPropExt* ensure_prop_ext();
+    void release_prop_ext();
+    bool set_form_storage(FormControlProp* value) {
+        DomPropExt* slots = value ? ensure_prop_ext() : prop_ext.get();
+        if (slots) slots->form = lam::view_prop(value);
+        return slots || !value;
     }
 
     const BlockProp* block() const;
@@ -1351,9 +1388,12 @@ struct DomElement : DomNode {
     TableProp* ensure_table(ViewTree* tree);
     TableCellProp* ensure_cell(ViewTree* tree);
     FormControlProp* ensure_form(ViewTree* tree);
+    PseudoContentProp* ensure_pseudo(LayoutContext* lycon);
 
     BoundaryProp* ensure_boundary(LayoutContext* lycon);
     BlockProp* ensure_block(LayoutContext* lycon);
+    BlockPropExt* ensure_block_extras(LayoutContext* lycon);
+    BlockContainmentProp* ensure_block_containment(LayoutContext* lycon);
     FontProp* ensure_font(LayoutContext* lycon);
     InlineProp* ensure_inline(LayoutContext* lycon);
     ScrollProp* ensure_scroll(LayoutContext* lycon);
@@ -1406,28 +1446,53 @@ struct DomElement : DomNode {
         }
         return ext;
     }
-    StyleTree* pseudo_style(PseudoStyleKind kind) const { return ext ? ext->pseudo_styles[kind] : nullptr; }
-    lam::Own<StyleTree>* pseudo_style_slot(PseudoStyleKind kind) {
-        DomElementExt* value = ensure_ext();
-        return value ? &value->pseudo_styles[kind] : nullptr;
+    template<class T>
+    T* ensure_ext_group(lam::Own<T> DomElementExt::*slot) {
+        DomElementExt* data = ensure_ext();
+        if (!data) return nullptr;
+        lam::Own<T>& group = data->*slot;
+        if (!group) group = lam::own((T*)pool_calloc(storage_pool(), sizeof(T)));
+        return group;
     }
-    void set_pseudo_style(PseudoStyleKind kind, StyleTree* style) {
-        if (style || ext) *pseudo_style_slot(kind) = lam::own(style);
+    DomAttributeCache* attribute_cache() const { return ext ? ext->attributes.get() : nullptr; }
+    DomAttributeCache* ensure_attribute_cache() { return ensure_ext_group(&DomElementExt::attributes); }
+    bool has_recorded_attributes() const {
+        const DomAttributeCache* cache = attribute_cache();
+        return cache && cache->attributes_are_recorded;
     }
+    DomFragmentGeometry* fragment_geometry() const { return ext ? ext->fragment_geometry.get() : nullptr; }
+    DomFragmentGeometry* ensure_fragment_geometry() { return ensure_ext_group(&DomElementExt::fragment_geometry); }
+    DomPseudoStyleGroup* pseudo_style_group() const { return prop_ext ? prop_ext->pseudo_styles.get() : nullptr; }
+    StyleTree* pseudo_style(PseudoStyleKind kind) const {
+        if (node_flags & DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES) {
+            if (StyleTree* style = prop_ext->pseudo_styles->styles[kind]) return style;
+        }
+        return shared_pseudo_reset_slots && kind <= PSEUDO_STYLE_AFTER
+            ? shared_pseudo_style(kind) : nullptr;
+    }
+    unsigned shared_pseudo_reset_slot(PseudoStyleKind kind) const;
+    void set_shared_pseudo_reset_slot(PseudoStyleKind kind, unsigned slot);
+    StyleTree* shared_pseudo_style(PseudoStyleKind kind) const;
+    DomPseudoStyleGroup* ensure_pseudo_style_group();
+    void release_pseudo_style_group();
+    lam::Own<StyleTree>* pseudo_style_slot(PseudoStyleKind kind);
+    void set_pseudo_style(PseudoStyleKind kind, StyleTree* style);
     bool has_fragment_union(FragmentUnionKind kind) const {
-        return ext && (ext->fragment_presence_mask & (1u << kind));
+        const DomFragmentGeometry* geometry = fragment_geometry();
+        return geometry && (geometry->fragment_presence_mask & (1u << kind));
     }
     void set_has_fragment_union(FragmentUnionKind kind, bool value) {
-        if (!value && !ext) return;
-        DomElementExt* data = ensure_ext();
+        DomFragmentGeometry* data = value ? ensure_fragment_geometry() : fragment_geometry();
+        if (!data) return;
         if (value) data->fragment_presence_mask |= (1u << kind);
         else data->fragment_presence_mask &= ~(1u << kind);
     }
     const FragmentUnion* fragment_union(FragmentUnionKind kind) const {
-        return ext ? &ext->frags[kind] : nullptr;
+        const DomFragmentGeometry* geometry = fragment_geometry();
+        return geometry ? &geometry->frags[kind] : nullptr;
     }
     FragmentUnion* ensure_fragment_union(FragmentUnionKind kind) {
-        DomElementExt* data = ensure_ext();
+        DomFragmentGeometry* data = ensure_fragment_geometry();
         return data ? &data->frags[kind] : nullptr;
     }
     MultiColumnProp* multicol_prop() const { return ext ? ext->multicol : nullptr; }
@@ -1513,18 +1578,10 @@ struct DomElement : DomNode {
         if (!ext) return;
         // Doc-pooled storage outlives view results, so every relayout must drop
         // geometry and paint produced by the previous view-pool epoch.
-        ext->fragment_presence_mask = 0;
-        memset(ext->frags, 0, sizeof(ext->frags));
+        if (ext->fragment_geometry) *ext->fragment_geometry.get() = {};
         ext->layout_fragments = nullptr;
         ext->layout_fragment_count = 0;
-        ext->has_inline_cb_edge_snapshot = false;
         ext->custom_layout_paint = nullptr;
-        ext->ruby_column_start_offset = 0.0f;
-        ext->ruby_column_end_offset = 0.0f;
-        ext->ruby_empty_base_block_size = 0.0f;
-        ext->has_ruby_column_geometry = false;
-        ext->has_empty_ruby_base = false;
-        ext->has_ruby_parallel_fragments = false;
     }
 
 };
@@ -1887,7 +1944,7 @@ int dom_element_apply_rule(DomElement* element, CssRule* rule, CssSpecificity sp
  */
 int dom_element_apply_pseudo_element_rule(DomElement* element, CssRule* rule,
                                           CssSpecificity specificity, int pseudo_element,
-                                          uint32_t scope_proximity = 0);
+                                          uint32_t scope_proximity = 0, const CssSelector* selector = nullptr);
 
 /**
  * Get the specified value for a CSS property

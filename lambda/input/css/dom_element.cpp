@@ -714,10 +714,78 @@ DomElement* dom_parent_element(DomElement* element) {
 static const char* dom_element_stored_attribute(DomElement* element, const char* key);
 static Item extract_element_attribute_item(Element* element, const char* name);
 
+static constexpr char HTML_NAMESPACE_URI[] = "http://www.w3.org/1999/xhtml";
+
+static NamePool* dom_name_pool(const DomDocument* doc) {
+    return doc && doc->input ? doc->input->name_pool : nullptr;
+}
+
+static const char* dom_html_namespace_uri(const DomDocument* doc) {
+    return doc && doc->services.html_namespace_uri ? doc->services.html_namespace_uri.get() : HTML_NAMESPACE_URI;
+}
+
+static const char* dom_empty_namespace_uri(const DomDocument* doc) {
+    return doc && doc->services.empty_namespace_uri ? doc->services.empty_namespace_uri.get() : "";
+}
+
+static const char* dom_intern_namespace_uri(const DomDocument* doc, const char* uri) {
+    if (!uri || !*uri) return dom_empty_namespace_uri(doc);
+    if (!strcmp(uri, HTML_NAMESPACE_URI)) return dom_html_namespace_uri(doc);
+    String* name = namespace_uri_intern(dom_name_pool(doc), uri);
+    return name ? name->chars : nullptr;
+}
+
+static const char* dom_resolved_namespace_uri(const DomElement* element, const char* uri) {
+    if (!uri) return nullptr;
+    const char* canonical = dom_intern_namespace_uri(element->storage_owner(), uri);
+    return canonical ? canonical : uri;
+}
+
+static bool is_namespace_uri_attribute(const char* key) {
+    return key[0] == '_' && !strcmp(key, "__lambda_ns_uri");
+}
+
+static const char* tag_local_suffix(const DomElement* element) {
+    const char* colon = element->tag_name ? strchr(element->tag_name, ':') : nullptr;
+    return colon ? colon + 1 : nullptr;
+}
+
+static const char* direct_namespace_uri(const DomElement* element) {
+    if (element->flag(ELMT_FLAG_HTML_NAMESPACE)) return dom_html_namespace_uri(element->doc);
+    return element->prop_ext ? element->prop_ext->namespace_uri.get() : nullptr;
+}
+
+static bool clear_direct_namespace_uri(DomElement* element) {
+    if (!element->flag(ELMT_FLAG_HTML_NAMESPACE) && (!element->prop_ext || !element->prop_ext->namespace_uri))
+        return false;
+    element->set_flag(ELMT_FLAG_HTML_NAMESPACE, false);
+    if (element->prop_ext) element->prop_ext->namespace_uri = nullptr;
+    if (element->prop_ext && element->prop_ext->empty()) element->release_prop_ext();
+    return true;
+}
+
+static bool set_direct_namespace_uri(DomElement* element, const char* uri) {
+    bool html = !strcmp(uri, HTML_NAMESPACE_URI);
+    if (!html) {
+        const char* canonical = dom_intern_namespace_uri(element->storage_owner(), uri);
+        if (!canonical) return false;
+        DomPropExt* slots = element->ensure_prop_ext();
+        if (!slots) return false;
+        slots->namespace_uri = lam::up(canonical);
+    } else if (element->prop_ext && element->prop_ext->namespace_uri) {
+        clear_direct_namespace_uri(element);
+    }
+    // the flags and sidecar retain the expanded namespace after reparenting.
+    element->set_flag(ELMT_FLAG_HTML_NAMESPACE, html);
+    return true;
+}
+
 static const char* dom_element_namespace_binding(DomElement* element, const char* prefix, size_t length) {
     if (!element) return nullptr;
-    if (length == 3 && !memcmp(prefix, "xml", 3)) return "http://www.w3.org/XML/1998/namespace";
-    if (length == 5 && !memcmp(prefix, "xmlns", 5)) return "http://www.w3.org/2000/xmlns/";
+    if (length == 3 && !memcmp(prefix, "xml", 3))
+        return dom_resolved_namespace_uri(element, "http://www.w3.org/XML/1998/namespace");
+    if (length == 5 && !memcmp(prefix, "xmlns", 5))
+        return dom_resolved_namespace_uri(element, "http://www.w3.org/2000/xmlns/");
     char declaration[128] = "xmlns";
     StrBuf* extended = nullptr;
     const char* key = declaration;
@@ -738,7 +806,7 @@ static const char* dom_element_namespace_binding(DomElement* element, const char
         if (result) break;
     }
     if (extended) strbuf_free(extended);
-    return result;
+    return dom_resolved_namespace_uri(element, result);
 }
 
 const char* dom_element_lookup_namespace_uri(DomElement* element, const char* prefix) {
@@ -750,7 +818,7 @@ const char* dom_element_lookup_namespace_uri(DomElement* element, const char* pr
             if (!node->is_element()) continue;
             const char* uri = dom_element_attribute_value_ns(node->as_element(),
                 "http://www.w3.org/2000/xmlns/", prefix && *prefix ? prefix : "xmlns");
-            if (uri) return *uri ? uri : nullptr;
+            if (uri) return *uri ? dom_resolved_namespace_uri(element, uri) : nullptr;
         }
         return nullptr;
     }
@@ -759,7 +827,7 @@ const char* dom_element_lookup_namespace_uri(DomElement* element, const char* pr
 }
 
 const char* dom_element_namespace_uri(DomElement* element) {
-    if (!element || !element->tag_name) return "";
+    if (!element || !element->tag_name) return dom_empty_namespace_uri(element ? element->storage_owner() : nullptr);
     if (!element->is_synthetic()) {
         const TypeElmt* type = (const TypeElmt*)dom_element_to_element(element)->type;
         if (type && type->ns && type->ns->original) return type->ns->original;
@@ -770,10 +838,11 @@ const char* dom_element_namespace_uri(DomElement* element) {
     bool parsed_html = element->doc && !element->doc->xml_document &&
         element->doc->page_kind == DOM_PAGE_KIND_HTML;
     if (!parsed_html) {
-        if (colon && colon == element->tag_name.get()) return "";
+        if (colon && colon == element->tag_name.get()) return dom_empty_namespace_uri(element->storage_owner());
         uri = dom_element_namespace_binding(element, element->tag_name, colon ? (size_t)(colon - element->tag_name) : 0);
         if (uri) return uri;
-        if (colon || (element->doc && element->doc->xml_document)) return "";
+        if (colon || (element->doc && element->doc->xml_document))
+            return dom_empty_namespace_uri(element->storage_owner());
     }
     for (DomNode* node = element; node; node = node->parent) {
         if (!node->is_element()) continue;
@@ -785,11 +854,11 @@ const char* dom_element_namespace_uri(DomElement* element) {
              str_icmp_cstr(ancestor->tag_name, "desc") == 0 ||
              str_icmp_cstr(ancestor->tag_name, "title") == 0)) break;
         if (str_icmp_cstr(ancestor->tag_name, "svg") == 0)
-            return "http://www.w3.org/2000/svg";
+            return dom_resolved_namespace_uri(element, "http://www.w3.org/2000/svg");
         if (str_icmp_cstr(ancestor->tag_name, "math") == 0)
-            return "http://www.w3.org/1998/Math/MathML";
+            return dom_resolved_namespace_uri(element, "http://www.w3.org/1998/Math/MathML");
     }
-    return "http://www.w3.org/1999/xhtml";
+    return dom_html_namespace_uri(element->doc);
 }
 
 bool dom_element_is_svg(DomElement* element) {
@@ -817,7 +886,7 @@ bool dom_element_is_html_tag(DomElement* element, NameId tag) {
 }
 
 DomNamespacedAttribute* dom_element_namespaced_attributes(DomElement* element) {
-    return element && element->ext ? element->ext->namespaced_attributes : nullptr;
+    return element && element->attribute_cache() ? element->attribute_cache()->namespaced_attributes.get() : nullptr;
 }
 
 bool dom_element_record_namespaced_attribute(DomElement* element,
@@ -827,7 +896,7 @@ bool dom_element_record_namespaced_attribute(DomElement* element,
     const char* colon = strrchr(qualified_name, ':');
     const char* local = *namespace_uri && colon
         ? colon + 1 : qualified_name;
-    DomElementExt* ext = element->ensure_ext();
+    DomAttributeCache* ext = element->ensure_attribute_cache();
     if (!ext) return false;
     Pool* pool = element->storage_pool();
     for (DomNamespacedAttribute* attr = ext->namespaced_attributes;
@@ -845,15 +914,16 @@ bool dom_element_record_namespaced_attribute(DomElement* element,
             return attr->active;
         }
     }
+    const char* canonical_uri = dom_intern_namespace_uri(element->storage_owner(), namespace_uri);
+    if (!canonical_uri) return false;
     DomNamespacedAttribute* attr = (DomNamespacedAttribute*)pool_calloc(
         pool, sizeof(DomNamespacedAttribute));
     if (!attr) return false;
-    attr->namespace_uri = lam::own(pool_strdup(pool, namespace_uri));
+    attr->namespace_uri = lam::up(canonical_uri);
     attr->local_name = lam::own(pool_strdup(pool, local));
     attr->qualified_name = lam::own(pool_strdup(pool, qualified_name));
     attr->value = lam::own(value ? pool_strdup(pool, value) : nullptr);
-    if (!attr->namespace_uri || !attr->local_name ||
-        !attr->qualified_name || (value && !attr->value)) return false;
+    if (!attr->local_name || !attr->qualified_name || (value && !attr->value)) return false;
     attr->active = true;
     lam::Own<DomNamespacedAttribute>* tail = &ext->namespaced_attributes;
     while (*tail) tail = &(*tail)->next;
@@ -906,7 +976,8 @@ const char* dom_element_attribute_namespace_uri(DomElement* element,
     *local_name = qualified_name;
     if (!element->doc || element->doc->xml_document || element->doc->page_kind != DOM_PAGE_KIND_HTML) {
         if (!colon) return strcmp(qualified_name, "xmlns") == 0
-            ? "http://www.w3.org/2000/xmlns/" : "";
+            ? dom_resolved_namespace_uri(element, "http://www.w3.org/2000/xmlns/")
+            : dom_empty_namespace_uri(element->storage_owner());
         *local_name = colon + 1;
         return dom_element_namespace_binding(element, qualified_name, (size_t)(colon - qualified_name));
     }
@@ -923,9 +994,12 @@ const char* dom_element_attribute_namespace_uri(DomElement* element,
             strcmp(qualified_name, "xlink:type") == 0) uri = "http://www.w3.org/1999/xlink";
         else if (strcmp(qualified_name, "xmlns") == 0 || strcmp(qualified_name, "xmlns:xlink") == 0)
             uri = "http://www.w3.org/2000/xmlns/";
-        if (uri) { if (colon) *local_name = colon + 1; return uri; }
+        if (uri) {
+            if (colon) *local_name = colon + 1;
+            return dom_resolved_namespace_uri(element, uri);
+        }
     }
-    return "";
+    return dom_empty_namespace_uri(element->storage_owner());
 }
 
 // DOM bridge diagnostics are emitted per node during document construction.
@@ -1388,6 +1462,14 @@ bool DomDocument::init(Input* source_input) {
         return false;
     }
 
+    if (source_input->name_pool) {
+        String* html_uri = namespace_uri_intern(source_input->name_pool, HTML_NAMESPACE_URI);
+        String* empty_uri = namespace_uri_intern(source_input->name_pool, "");
+        if (!html_uri || !empty_uri) return false;
+        services.html_namespace_uri = lam::up((const char*)html_uri->chars);
+        services.empty_namespace_uri = lam::up((const char*)empty_uri->chars);
+    }
+
     // Reuse the input's per-document memory sub-context so the DOM pool/arena are
     // attributed to the same document (URL) as the parsed source. The whole
     // document subtree is reclaimed together at free_document() time.
@@ -1628,7 +1710,8 @@ void DomDocument::destroy() {
         behavior_init_controls = nullptr;
     }
 
-    // adopted-document resources can destroy the physical backing heap.
+    // adopted-document resources can destroy the arenas still named by slot links.
+    dom_lifecycle_release_slot_links(this);
     dom_lifecycle_release_backing_roots(this);
     // Runtime-backed extension values must release their GC roots while the
     // document's retained Lambda runtime is still alive.
@@ -1876,6 +1959,10 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
         dom_element_release_cached_id(element);
         dom_element_release_cached_classes(element);
         dom_element_clear_synthetic_attributes(element);
+        clear_direct_namespace_uri(element);
+        element->shared_pseudo_reset_slots = 0;
+        element->set_flag(ELMT_FLAG_LOCAL_NAME_IS_TAG, false);
+        element->set_flag(ELMT_FLAG_LOCAL_NAME_IS_TAG_SUFFIX, false);
         if (element->tag_name) pool_free(element->storage_pool(), (void*)element->tag_name);
         element->tag_name = nullptr;
         if (element->specified_style_shared()) {
@@ -1920,14 +2007,18 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
     // keeping it in the node arena would defeat detached-node retirement.
     const TypeElmt* native_type = native_element ? (const TypeElmt*)native_element->type : nullptr;
     const char* qualified_tag = tag_name;
-    bool html_local_name = native_type && native_type->ns &&
-        xml_namespace_uses_html_names(native_type->ns->original) &&
-        extract_element_attribute(native_element, "__lambda_ns_local_name", nullptr);
-    if (!html_local_name && native_type && native_type->ns && native_type->ns->name_prefix && *native_type->ns->name_prefix) {
-        // XHTML intake already normalized these tags; other XML/formatting hosts retain QNames.
-        qualified_tag = namespace_name_spelling(element->storage_pool(), native_type->ns, native_type->name, ':');
-        if (!qualified_tag) return nullptr;
-        element->set_tag_name_id(well_known_name_id(native_type->name));
+    if (native_type && native_type->ns && native_type->ns->name_prefix && *native_type->ns->name_prefix) {
+        const char* uri = native_type->ns->original;
+        const char* parsed_uri = xml_namespace_uses_html_names(uri)
+            ? extract_element_attribute(native_element, "__lambda_ns_uri", nullptr) : nullptr;
+        if (parsed_uri && !strcmp(parsed_uri, uri)) {
+            // XHTML records the resolved URI and puts the local name in the typed tag.
+            tag_name = qualified_tag = native_type->name.str;
+        } else {
+            qualified_tag = namespace_name_spelling(element->storage_pool(), native_type->ns, native_type->name, ':');
+            if (!qualified_tag) return nullptr;
+            element->set_tag_name_id(well_known_name_id(native_type->name));
+        }
     }
     lam::PoolPtr<char> tag_copy = lam::promote_to_pool(element->storage_pool(), qualified_tag);
     if (qualified_tag != tag_name) pool_free(element->storage_pool(), (void*)qualified_tag);
@@ -2297,6 +2388,98 @@ bool dom_element_commit_inline_declarations(DomElement* element, CssRule* rule, 
 #endif
 }
 
+DomPropExt* DomElement::ensure_prop_ext() {
+    if (!prop_ext) {
+        Pool* pool = storage_pool();
+        if (pool) prop_ext = lam::own((DomPropExt*)pool_calloc(pool, sizeof(DomPropExt)));
+    }
+    return prop_ext;
+}
+
+void DomElement::release_prop_ext() {
+    if (!prop_ext) return;
+    release_pseudo_style_group();
+    lam::free_owned(storage_pool(), prop_ext);
+}
+
+// slot zero is absence; a published reset is immutable until its physical document retires.
+struct DomSharedPseudoResets {
+    static constexpr unsigned capacity = 15;
+    lam::Own<StyleTree> styles[capacity];
+    unsigned count;
+};
+
+unsigned DomElement::shared_pseudo_reset_slot(PseudoStyleKind kind) const {
+    if (kind > PSEUDO_STYLE_AFTER) return 0;
+    return (shared_pseudo_reset_slots >> (kind * 4u)) & 15u;
+}
+
+void DomElement::set_shared_pseudo_reset_slot(PseudoStyleKind kind, unsigned slot) {
+    if (kind > PSEUDO_STYLE_AFTER) return;
+    unsigned shift = kind * 4u;
+    shared_pseudo_reset_slots = (shared_pseudo_reset_slots & ~(15u << shift)) | (slot << shift);
+}
+
+StyleTree* DomElement::shared_pseudo_style(PseudoStyleKind kind) const {
+    unsigned slot = shared_pseudo_reset_slot(kind);
+    if (!slot) return nullptr;
+    // adopted nodes retain the document that owns their published style slots (D5.5.1).
+    return storage_owner()->services.shared_pseudo_resets->styles[slot - 1];
+}
+
+DomPseudoStyleGroup* DomElement::ensure_pseudo_style_group() {
+    DomPropExt* slots = ensure_prop_ext();
+    if (!slots) return nullptr;
+    if (!slots->pseudo_styles) {
+        slots->pseudo_styles = lam::own((DomPseudoStyleGroup*)pool_calloc(storage_pool(), sizeof(DomPseudoStyleGroup)));
+        if (!slots->pseudo_styles) {
+            if (slots->empty()) release_prop_ext();
+            return nullptr;
+        }
+        node_flags |= DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES;
+    }
+    return slots->pseudo_styles;
+}
+
+void DomElement::release_pseudo_style_group() {
+    DomPseudoStyleGroup* group = pseudo_style_group();
+    if (!group) return;
+    for (auto& slot : group->styles) {
+        if (slot) style_tree_retire_borrow_source(slot);
+    }
+    lam::free_owned(storage_pool(), prop_ext->pseudo_styles);
+    node_flags &= ~DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES;
+}
+
+lam::Own<StyleTree>* DomElement::pseudo_style_slot(PseudoStyleKind kind) {
+    StyleTree* shared = shared_pseudo_reset_slots ? shared_pseudo_style(kind) : nullptr;
+    StyleTree* copy = shared ? style_tree_clone_owned(shared, storage_pool()) : nullptr;
+    if (shared && !copy) return nullptr;
+    DomPseudoStyleGroup* group = ensure_pseudo_style_group();
+    if (!group) {
+        if (copy) style_tree_destroy_owned(copy);
+        return nullptr;
+    }
+    if (copy) {
+        // promote before applying an override so the reset keeps its original cascade rank.
+        group->styles[kind] = lam::own(copy);
+        set_shared_pseudo_reset_slot(kind, 0);
+    }
+    return &group->styles[kind];
+}
+
+void DomElement::set_pseudo_style(PseudoStyleKind kind, StyleTree* style) {
+    if (style && style == shared_pseudo_style(kind)) return;
+    DomPseudoStyleGroup* group = style ? ensure_pseudo_style_group() : pseudo_style_group();
+    if (style && !group) return;
+    if (group) {
+        lam::Own<StyleTree>& slot = group->styles[kind];
+        if (slot && slot != style) style_tree_retire_borrow_source(slot);
+        slot = lam::own(style);
+    }
+    set_shared_pseudo_reset_slot(kind, 0);
+}
+
 void dom_element_release_retired_storage(DomElement* element) {
     if (!element || !element->doc) return;
     // no live Attr wrapper can reach an owner selected for retirement; keep detached values intact.
@@ -2334,6 +2517,7 @@ void dom_element_release_retired_storage(DomElement* element) {
     // retirement releases both the authored pool and its document resource registration (D5.5.1).
     if (element->ext && element->ext->inline_declarations)
         dom_document_release_resource(element->storage_owner(), element->ext->inline_declarations);
+    element->release_prop_ext();
     if (element->ext) {
         // the snapshot and its dynamic tracks survive relayout, then retire together.
         CssTransitionElemState* transition = element->transition_state_prop();
@@ -2342,14 +2526,11 @@ void dom_element_release_retired_storage(DomElement* element) {
             pool_free(transition->pool, transition);
         }
         element->set_transition_state_prop(nullptr);
-        for (int kind = 0; kind < PSEUDO_STYLE_COUNT; kind++) {
-            if (element->ext->pseudo_styles[kind]) {
-                style_tree_retire_borrow_source(element->ext->pseudo_styles[kind]);
-                element->ext->pseudo_styles[kind] = nullptr;
-            }
+        if (DomAttributeCache* attrs = element->attribute_cache()) {
+            pool_free(element->storage_pool(), attrs->attribute_names_cache);
+            lam::free_owned(element->storage_pool(), element->ext->attributes);
         }
-        pool_free(element->storage_pool(),
-                  (void*)element->ext->attribute_names_cache);
+        lam::free_owned(element->storage_pool(), element->ext->fragment_geometry);
         pool_free(element->storage_pool(), element->ext->signaled_slot_assignment.get());
         pool_free(element->storage_pool(), element->ext);
         element->ext = nullptr;
@@ -2370,19 +2551,12 @@ static const char* lowercase_attr_name(const char* name, char* buf, size_t buf_s
     return buf;
 }
 
-static void dom_element_invalidate_namespace_attributes(DomElement* element) {
-    if (!element || !element->ext) return;
-    element->ext->cached_namespace_uri = nullptr;
-    element->ext->cached_namespace_local_name = nullptr;
-}
-
 static void dom_element_clear_synthetic_attributes(DomElement* element) {
-    if (!element || !element->ext || !element->doc ||
+    if (!element || !element->attribute_cache() || !element->doc ||
         !element->storage_pool()) {
         return;
     }
-    DomElementExt* data = element->ext;
-    dom_element_invalidate_namespace_attributes(element);
+    DomAttributeCache* data = element->attribute_cache();
     for (int i = 0; i < data->synthetic_attribute_count; i++) {
         pool_free(element->storage_pool(),
                   (void*)data->synthetic_attributes[i].name);
@@ -2397,8 +2571,8 @@ static void dom_element_clear_synthetic_attributes(DomElement* element) {
 
 static int dom_element_find_synthetic_attribute(DomElement* element,
                                                 const char* lower_name) {
-    if (!element || !element->ext || !lower_name) return -1;
-    DomElementExt* data = element->ext;
+    if (!element || !element->attribute_cache() || !lower_name) return -1;
+    DomAttributeCache* data = element->attribute_cache();
     for (int i = 0; i < data->synthetic_attribute_count; i++) {
         const char* candidate = data->synthetic_attributes[i].name;
         if (candidate && strcmp(candidate, lower_name) == 0) return i;
@@ -2413,9 +2587,8 @@ static bool dom_element_set_synthetic_attribute(DomElement* element,
         !lower_name || !value) {
         return false;
     }
-    DomElementExt* data = element->ensure_ext();
+    DomAttributeCache* data = element->ensure_attribute_cache();
     if (!data) return false;
-    if (lower_name[0] == '_') dom_element_invalidate_namespace_attributes(element);
     int index = dom_element_find_synthetic_attribute(element, lower_name);
     if (index >= 0) {
         char* next_value = pool_strdup(element->storage_pool(), value);
@@ -2447,12 +2620,11 @@ static bool dom_element_set_synthetic_attribute(DomElement* element,
 static bool dom_element_remove_synthetic_attribute(DomElement* element,
                                                    const char* lower_name) {
     int index = dom_element_find_synthetic_attribute(element, lower_name);
-    if (index < 0 || !element || !element->ext || !element->doc ||
+    if (index < 0 || !element || !element->attribute_cache() || !element->doc ||
         !element->storage_pool()) {
         return false;
     }
-    DomElementExt* data = element->ext;
-    if (lower_name[0] == '_') dom_element_invalidate_namespace_attributes(element);
+    DomAttributeCache* data = element->attribute_cache();
     pool_free(element->storage_pool(),
               (void*)data->synthetic_attributes[index].name);
     pool_free(element->storage_pool(),
@@ -2477,7 +2649,6 @@ static void dom_element_attribute_did_set(DomElement* element,
                                           const char* lower_name,
                                           const char* value, bool same_value) {
     if (!element || !element->doc || !lower_name || !value) return;
-    if (lower_name[0] == '_') dom_element_invalidate_namespace_attributes(element);
     if (strcmp(lower_name, "id") == 0) {
         dom_element_release_cached_id(element);
         const char* id_attr = dom_element_attribute_value_ns(element, "", "id");
@@ -2514,7 +2685,6 @@ static void dom_element_attribute_did_set(DomElement* element,
 static void dom_element_attribute_did_remove(DomElement* element,
                                              const char* lower_name) {
     if (!element || !lower_name) return;
-    if (lower_name[0] == '_') dom_element_invalidate_namespace_attributes(element);
     if (strcmp(lower_name, "id") == 0) {
         dom_element_release_cached_id(element);
     } else if (strcmp(lower_name, "class") == 0) {
@@ -2534,10 +2704,17 @@ static void dom_element_attribute_did_remove(DomElement* element,
 // queried name only for HTML elements, so a name stored exactly as asked wins.
 static String* dom_attribute_value(DomDocument* doc, MarkBuilder* builder, const char* value);
 
-static const char* dom_element_stored_attribute_uncached(DomElement* element, const char* key) {
+static const char* dom_element_stored_attribute(DomElement* element, const char* key) {
+    bool namespace_uri = is_namespace_uri_attribute(key);
+    if (namespace_uri) {
+        if (const char* uri = direct_namespace_uri(element)) return uri;
+    } else if (key[0] == '_' && !strcmp(key, "__lambda_ns_local_name")) {
+        // keep the private getter as a projection of the tag, even for older Mark input.
+        return element->local_name();
+    }
     // recorded public attributes do not replace the private expanded-name metadata.
-    if (!dom_attribute_is_internal(key) && element->ext && element->ext->attributes_are_recorded) {
-        for (DomNamespacedAttribute* attr = element->ext->namespaced_attributes; attr; attr = attr->next)
+    if (!dom_attribute_is_internal(key) && element->has_recorded_attributes()) {
+        for (DomNamespacedAttribute* attr = element->attribute_cache()->namespaced_attributes; attr; attr = attr->next)
             if (attr->active && !strcmp(attr->qualified_name, key)) return attr->value;
         return nullptr;
     }
@@ -2546,7 +2723,15 @@ static const char* dom_element_stored_attribute_uncached(DomElement* element, co
         // absent private namespace probes previously searched the shape twice.
         Item item = extract_element_attribute_item(dom_element_to_element(element), key);
         String* value = item.get_safe_string();
-        if (value) return value->chars;
+        if (value) {
+            if (namespace_uri) {
+                const TypeElmt* type = (const TypeElmt*)dom_element_to_element(element)->type;
+                // parser-produced metadata shares the typed namespace's already interned spelling.
+                if (!type || !type->ns || type->ns->original != value->chars)
+                    return dom_resolved_namespace_uri(element, value->chars);
+            }
+            return value->chars;
+        }
         ItemReader scalar(item.to_const());
         DomDocument* owner = element->storage_owner();
         if (scalar.isNumber() && scalar.getType() != LMD_TYPE_COMPLEX &&
@@ -2555,31 +2740,14 @@ static const char* dom_element_stored_attribute_uncached(DomElement* element, co
             StringBuf* text = stringbuf_new(element->storage_pool());
             if (!text) return nullptr;
             format_number(text, scalar.item());
-            String* stored = dom_attribute_value(owner, nullptr, text->str->chars);
+            String* stored = namespace_uri ? namespace_uri_intern(dom_name_pool(owner), text->str->chars)
+                : dom_attribute_value(owner, nullptr, text->str->chars);
             stringbuf_free(text);
             return stored ? stored->chars : nullptr;
         }
     }
     int index = dom_element_find_synthetic_attribute(element, key);
-    return index >= 0 ? element->ext->synthetic_attributes[index].value.get() : nullptr;
-}
-
-static const char* dom_element_stored_attribute(DomElement* element, const char* key) {
-    bool uri = key[0] == '_' && strcmp(key, "__lambda_ns_uri") == 0;
-    bool local = key[0] == '_' && strcmp(key, "__lambda_ns_local_name") == 0;
-    if (element->ext) {
-        const char* cached = uri ? element->ext->cached_namespace_uri.get()
-            : local ? element->ext->cached_namespace_local_name.get() : nullptr;
-        if (cached) return cached;
-    }
-    const char* value = dom_element_stored_attribute_uncached(element, key);
-    // expanded-name metadata is read per glyph/property; avoid repeating the
-    // backing shape and synthetic-attribute scans until that metadata is edited.
-    if (value && (uri || local)) {
-        DomElementExt* data = element->ensure_ext();
-        if (data) (uri ? data->cached_namespace_uri : data->cached_namespace_local_name) = lam::up(value);
-    }
-    return value;
+    return index >= 0 ? element->attribute_cache()->synthetic_attributes[index].value.get() : nullptr;
 }
 
 static const char* dom_element_attr_key(DomElement* element, const char* name,
@@ -2604,7 +2772,7 @@ static DomNamespacedAttribute* dom_first_recorded_attribute(DomElement* element,
 
 static bool dom_element_record_all_attributes(DomElement* element) {
     if (!element) return false;
-    DomElementExt* ext = element->ensure_ext();
+    DomAttributeCache* ext = element->ensure_attribute_cache();
     if (!ext) return false;
     if (ext->attributes_are_recorded) return true;
     int count = 0;
@@ -2646,7 +2814,7 @@ const char* dom_element_find_qualified_attribute(DomElement* element,
     for (DomNamespacedAttribute* attr = dom_element_namespaced_attributes(element); attr; attr = attr->next)
         if (attr->active && strcmp(attr->namespace_uri, wanted) == 0 &&
             strcmp(attr->local_name, local_name) == 0) return attr->qualified_name;
-    if (element->ext && element->ext->attributes_are_recorded) return nullptr;
+    if (element->has_recorded_attributes()) return nullptr;
     int count = 0;
     const char** names = element->attribute_names(&count);
     for (int index = 0; names && index < count; index++) {
@@ -2662,7 +2830,7 @@ const char* dom_element_attribute_value_ns(DomElement* element,
     if (!element || !local_name) return nullptr;
     const char* wanted = namespace_uri ? namespace_uri : "";
     const char* value = dom_element_get_namespaced_attribute(element, wanted, local_name);
-    if (value || (element->ext && element->ext->attributes_are_recorded)) return value;
+    if (value || (element->has_recorded_attributes())) return value;
     if (!*wanted && !dom_element_namespaced_attributes(element) && !strchr(local_name, ':'))
         return dom_element_stored_attribute(element, local_name);
     const char* qualified = dom_element_find_qualified_attribute(element, wanted, local_name);
@@ -2687,6 +2855,8 @@ bool dom_attribute_node_set_value(DomAttr* attribute, const char* value) {
 DomAttr* dom_attribute_node_create(DomDocument* document, const char* namespace_uri,
     const char* qualified_name, const char* value) {
     if (!document || !document->node_arena || !qualified_name || !value) return nullptr;
+    const char* uri = dom_intern_namespace_uri(document, namespace_uri);
+    if (!uri) return nullptr;
     DomAttr* attribute = (DomAttr*)arena_calloc(document->node_arena, sizeof(DomAttr));
     if (!attribute) return nullptr;
     attribute->node_type = DOM_NODE_ATTRIBUTE;
@@ -2695,9 +2865,8 @@ DomAttr* dom_attribute_node_create(DomDocument* document, const char* namespace_
     attribute->storage_document = lam::up(document);
     Pool* pool = document->document_pool;
     attribute->storage_pool = pool;
-    const char* uri = namespace_uri ? namespace_uri : "";
     const char* colon = *uri ? strchr(qualified_name, ':') : nullptr;
-    attribute->namespace_uri = lam::own(pool_strdup(pool, uri));
+    attribute->namespace_uri = lam::up(uri);
     attribute->qualified_name = lam::own(pool_strdup(pool, qualified_name));
     attribute->local_name = lam::own(pool_strdup(pool, colon ? colon + 1 : qualified_name));
     if (colon) {
@@ -2705,7 +2874,7 @@ DomAttr* dom_attribute_node_create(DomDocument* document, const char* namespace_
         if (prefix) prefix[colon - qualified_name] = '\0';
         attribute->prefix = lam::own(prefix);
     }
-    if (!attribute->namespace_uri || !attribute->qualified_name || !attribute->local_name ||
+    if (!attribute->qualified_name || !attribute->local_name ||
         (colon && !attribute->prefix) || !dom_attribute_node_set_value(attribute, value)) return nullptr;
     return dom_node_registry_register(document, attribute, sizeof(DomAttr), true) ? attribute : nullptr;
 }
@@ -2731,7 +2900,7 @@ void dom_attribute_node_detach(DomAttr* attribute) {
 
 void dom_attribute_node_release_retired_storage(DomAttr* attribute) {
     // values and names belong to the physical source pool even after adoption (D5.5.1).
-    const char* fields[] = {attribute->namespace_uri.get(), attribute->qualified_name.get(),
+    const char* fields[] = {attribute->qualified_name.get(),
         attribute->local_name.get(), attribute->prefix.get(), attribute->value.get()};
     for (const char* field : fields) if (field) pool_free(attribute->storage_pool, (void*)field);
     attribute->namespace_uri = nullptr;
@@ -2856,15 +3025,20 @@ static String* dom_attribute_value(DomDocument* doc, MarkBuilder* builder,
 
 static bool dom_element_store_attribute(DomElement* element, const char* key,
         const char* value, bool remove) {
-    if (element->is_synthetic()) return remove
-        ? dom_element_remove_synthetic_attribute(element, key)
-        : dom_element_set_synthetic_attribute(element, key, value ? value : "");
+    bool namespace_uri = is_namespace_uri_attribute(key);
+    if (element->is_synthetic()) {
+        if (namespace_uri) return remove ? clear_direct_namespace_uri(element)
+            : set_direct_namespace_uri(element, value ? value : "");
+        return remove ? dom_element_remove_synthetic_attribute(element, key)
+            : dom_element_set_synthetic_attribute(element, key, value ? value : "");
+    }
     if (!element->doc) return false;
     Element* backing = dom_element_to_element(element);
     MarkEditor editor(element->doc, EDIT_MODE_INLINE);
     Item value_item = ItemNull;
     if (!remove && value) {
-        String* stored = dom_attribute_value(element->doc, editor.builder(), value);
+        String* stored = namespace_uri ? namespace_uri_intern(dom_name_pool(element->doc), value)
+            : dom_attribute_value(element->doc, editor.builder(), value);
         if (!stored) return false;
         value_item.item = s2it(stored);
     }
@@ -2880,7 +3054,7 @@ static bool dom_element_store_attribute(DomElement* element, const char* key,
         if (!remove && recorded) {
             const char* colon = strchr(key, ':');
             String* prefix = editor.builder()->createName(key, colon ? (size_t)(colon-key) : 0);
-            ns = namespace_target(element->storage_pool(), recorded->namespace_uri,
+            ns = namespace_target(element->storage_pool(), dom_name_pool(element->storage_owner()), recorded->namespace_uri,
                 prefix ? prefix->chars : "", ':');
             local = recorded->local_name;
             if (!ns) return false;
@@ -2899,6 +3073,8 @@ static bool dom_element_store_attribute(DomElement* element, const char* key,
         log_error("dom_element_store_attribute: inline edit failed or changed backing identity");
         return false;
     }
+    // explicit legacy writes can update the Mark-backed metadata read by native adapters.
+    if (namespace_uri) clear_direct_namespace_uri(element);
     return true;
 }
 
@@ -2918,7 +3094,7 @@ static bool dom_element_set_attribute_value(DomElement* element, const char* nam
     const char* previous = element->get_attribute(key);
     bool same = previous && strcmp(previous, value) == 0;
     if (!dom_element_store_attribute(element, key, value, false)) return false;
-    if ((recorded || (element->ext && element->ext->attributes_are_recorded)) &&
+    if (!is_namespace_uri_attribute(key) && (recorded || element->has_recorded_attributes()) &&
         !dom_element_record_namespaced_attribute(element, uri, key, value)) return false;
     dom_attribute_nodes_did_set(element, key, value, uri);
     if (invalidate_style) {
@@ -2939,16 +3115,21 @@ bool dom_element_set_non_style_metadata(DomElement* element, const char* name, c
 
 bool dom_element_set_namespace_identity(DomElement* element,
         const char* namespace_uri, const char* local_name) {
-    if (!element || !local_name) return false;
-    // expanded names belong to the DOM; Mark attributes also feed strict map/SVG consumers.
-    return dom_element_set_synthetic_attribute(element, "__lambda_ns_uri", namespace_uri ? namespace_uri : "") &&
-        dom_element_set_synthetic_attribute(element, "__lambda_ns_local_name", local_name);
+    if (!element || !element->tag_name || !local_name || !element->storage_pool()) return false;
+    bool same_tag = !strcmp(element->tag_name, local_name);
+    const char* suffix = !same_tag ? tag_local_suffix(element) : nullptr;
+    bool same_suffix = suffix && !strcmp(suffix, local_name);
+    if (!same_tag && !same_suffix) return false;
+    if (!set_direct_namespace_uri(element, namespace_uri ? namespace_uri : "")) return false;
+    element->set_flag(ELMT_FLAG_LOCAL_NAME_IS_TAG, same_tag);
+    element->set_flag(ELMT_FLAG_LOCAL_NAME_IS_TAG_SUFFIX, same_suffix);
+    return true;
 }
 
 DomAttributeIterator dom_element_attribute_iterator(DomElement* element) {
     DomAttributeIterator iterator = {};
     iterator.element = element;
-    iterator.recorded = element && element->ext && element->ext->attributes_are_recorded;
+    iterator.recorded = element && element->has_recorded_attributes();
     if (iterator.recorded) iterator.next = dom_element_namespaced_attributes(element);
     else if (element) iterator.names = element->attribute_names(&iterator.count);
     return iterator;
@@ -3027,13 +3208,14 @@ bool DomElement::set_attribute(NameId name_id, const char* value) {
 
 const char* DomElement::local_name() const {
     if (!tag_name) return "";
-    const char* stored = dom_element_stored_attribute(const_cast<DomElement*>(this), "__lambda_ns_local_name");
-    if (stored) return stored;
-    const char* prefix = strchr(tag_name, ':');
+    if (flag(ELMT_FLAG_LOCAL_NAME_IS_TAG)) return tag_name;
+    const char* suffix = tag_local_suffix(this);
+    if (!suffix) return tag_name;
+    if (flag(ELMT_FLAG_LOCAL_NAME_IS_TAG_SUFFIX)) return suffix;
     // a colon in an HTML local name is literal unless a namespace factory recorded a qualified name.
     bool literal_html = doc && !doc->xml_document && doc->page_kind == DOM_PAGE_KIND_HTML &&
         !dom_element_stored_attribute(const_cast<DomElement*>(this), "__lambda_ns_uri");
-    return prefix && !literal_html ? prefix + 1 : tag_name;
+    return literal_html ? tag_name.get() : suffix;
 }
 
 const char* DomElement::get_attribute(const char* name) {
@@ -3067,7 +3249,7 @@ bool DomElement::remove_attribute(const char* name) {
     char lower_name[128];
     const char* key = dom_element_attr_key(element, name, lower_name, sizeof(lower_name));
 
-    if (element->ext && element->ext->attributes_are_recorded) {
+    if (element->has_recorded_attributes() && !is_namespace_uri_attribute(key)) {
         DomNamespacedAttribute* recorded = dom_first_recorded_attribute(element, key);
         if (recorded) return dom_element_remove_attribute_ns(element, recorded->namespace_uri, recorded->local_name);
     }
@@ -3093,7 +3275,9 @@ bool DomElement::has_attribute(const char* name) {
     char lower_name[128];
     const char* key = dom_element_attr_key(element, name, lower_name, sizeof(lower_name));
 
-    if (element->ext && element->ext->attributes_are_recorded)
+    if (element->is_synthetic() && is_namespace_uri_attribute(key))
+        return direct_namespace_uri(element) != nullptr;
+    if (element->has_recorded_attributes())
         return dom_first_recorded_attribute(element, key) != nullptr;
     if (!element->is_synthetic())
         return markup_attribute_field((TypeMap*)dom_element_to_element(element)->type, key) != nullptr;
@@ -3113,8 +3297,8 @@ const char** DomElement::attribute_names(int* count) {
     }
 
     *count = 0;
-    if (element->ext && element->ext->attributes_are_recorded) {
-        DomElementExt* ext = element->ext;
+    if (element->has_recorded_attributes()) {
+        DomAttributeCache* ext = element->attribute_cache();
         int size = 0;
         for (DomNamespacedAttribute* attr = ext->namespaced_attributes; attr; attr = attr->next)
             if (attr->active) size++;
@@ -3127,7 +3311,7 @@ const char** DomElement::attribute_names(int* count) {
     }
 
     if (element->is_synthetic()) {
-        DomElementExt* data = element->ext;
+        DomAttributeCache* data = element->attribute_cache();
         int attr_count = data ? data->synthetic_attribute_count : 0;
         if (attr_count == 0) return nullptr;
         if (!lam::pool_grow_array(element->storage_pool(),
@@ -3147,7 +3331,7 @@ const char** DomElement::attribute_names(int* count) {
     int attr_count = reader.attrCount();
     if (attr_count == 0) return nullptr;
 
-    DomElementExt* data = element->ensure_ext();
+    DomAttributeCache* data = element->ensure_attribute_cache();
     if (!data) return nullptr;
     if (!lam::pool_grow_array(element->storage_pool(),
             &data->attribute_names_cache, &data->attribute_names_capacity,
@@ -3829,11 +4013,13 @@ bool dom_element_clear_pseudo_styles(DomElement* element) {
     CssSelectionStyle* selection = style_epoch_selection_style(element, false);
     bool cleared = selection &&
         (selection->color.source || selection->background_color.source);
+    cleared |= element->shared_pseudo_reset_slots != 0;
+    element->shared_pseudo_reset_slots = 0;
     style_epoch_selection_clear_element(element);
-    if (!element->ext) return cleared;
-    for (int kind = 0; kind < PSEUDO_STYLE_COUNT; kind++) {
-        lam::Own<StyleTree>* slot = &element->ext->pseudo_styles[kind];
-        StyleTree* style = *slot;
+    DomPseudoStyleGroup* group = element->pseudo_style_group();
+    if (!group) return cleared;
+    for (auto& slot : group->styles) {
+        StyleTree* style = slot;
         if (!style) continue;
         StyleTree* replacement = style_tree_create(element->storage_pool());
         if (!replacement) {
@@ -3843,7 +4029,7 @@ bool dom_element_clear_pseudo_styles(DomElement* element) {
             cleared = true;
             continue;
         }
-        *slot = lam::own(replacement);
+        slot = lam::own(replacement);
         // Retained generated boxes still borrow `style`.  Its declaration graph
         // becomes reclaimable as each box rebinds or leaves the view tree.
         style_tree_retire_borrow_source(style);
@@ -3929,9 +4115,117 @@ static bool dom_pseudo_style_kind(int pseudo_element, PseudoStyleKind* kind, con
     return false;
 }
 
+static bool is_universal_pseudo_reset(const CssSelector* selector, PseudoStyleKind kind) {
+    if (!selector || selector->compound_selector_count != 1 || kind > PSEUDO_STYLE_AFTER)
+        return false;
+    const CssCompoundSelector* compound = selector->compound_selectors[0];
+    if (!compound || !compound->simple_selector_count || compound->simple_selector_count > 2)
+        return false;
+    CssSelectorType pseudo = kind == PSEUDO_STYLE_BEFORE
+        ? CSS_SELECTOR_PSEUDO_ELEMENT_BEFORE : CSS_SELECTOR_PSEUDO_ELEMENT_AFTER;
+    const CssSimpleSelector* last = compound->simple_selectors[compound->simple_selector_count - 1];
+    if (!last || last->type != pseudo) return false;
+    const CssSimpleSelector* first = compound->simple_selectors[0];
+    return first == last || (first && first->type == CSS_SELECTOR_TYPE_UNIVERSAL);
+}
+
+static const CssDeclaration* pseudo_reset_declaration(const CssRule* rule) {
+    if (rule->type != CSS_RULE_STYLE || !rule->data.style_rule.declarations) return nullptr;
+    const CssDeclaration* reset = nullptr;
+    for (size_t i = 0; i < rule->data.style_rule.declaration_count; i++) {
+        const CssDeclaration* declaration = rule->data.style_rule.declarations[i];
+        if (!declaration || !declaration->valid ||
+            declaration->property_code != CSS_PROPERTY_BOX_SIZING || !declaration->value ||
+            declaration->value->type != CSS_VALUE_TYPE_KEYWORD ||
+            declaration->presentation_value || declaration->pending_identity_shorthand) return nullptr;
+        CssEnum keyword = declaration->value->data.keyword;
+        if (keyword != CSS_VALUE_CONTENT_BOX && keyword != CSS_VALUE_BORDER_BOX) return nullptr;
+        // identical prefixed declarations leave the last spelling at the same cascade rank.
+        if (reset && (reset->value->data.keyword != keyword || reset->important != declaration->important ||
+                      reset->layer_order != declaration->layer_order)) return nullptr;
+        reset = declaration;
+    }
+    return reset;
+}
+
+static bool pseudo_reset_equal(const CssDeclaration* a, const CssDeclaration* b) {
+    if (a->value->data.keyword != b->value->data.keyword || a->name_id != b->name_id ||
+        a->origin != b->origin || a->important != b->important ||
+        css_declaration_cascade_compare(a, b) != 0 || a->source_line != b->source_line) return false;
+    StrView a_name = css_declaration_name(a), b_name = css_declaration_name(b);
+    if (!strview_eq(&a_name, &b_name) || a->value_text_len != b->value_text_len) return false;
+    if (a->value_text != b->value_text && (!a->value_text || !b->value_text ||
+        memcmp(a->value_text, b->value_text, a->value_text_len))) return false;
+    return a->source_file == b->source_file || (a->source_file && b->source_file &&
+        !strcmp(a->source_file, b->source_file));
+}
+
+static unsigned find_shared_pseudo_reset(DomDocument* owner, const CssDeclaration& reset) {
+    if (!owner || !owner->document_pool) return 0;
+    Pool* pool = owner->document_pool;
+    DomSharedPseudoResets* cache = owner->services.shared_pseudo_resets;
+    if (!cache) {
+        cache = (DomSharedPseudoResets*)pool_calloc(pool, sizeof(DomSharedPseudoResets));
+        if (!cache) return 0;
+        owner->services.shared_pseudo_resets = lam::own(cache);
+    }
+    for (unsigned i = 0; i < cache->count; i++) {
+        if (pseudo_reset_equal(&reset, style_tree_get_declaration(cache->styles[i], CSS_PROPERTY_BOX_SIZING)))
+            return i + 1;
+    }
+    if (cache->count >= DomSharedPseudoResets::capacity) return 0;
+    StyleTree* tree = style_tree_create(pool);
+    if (!tree) return 0;
+    CssDeclaration* declaration = css_declaration_clone_owned(&reset, reset.specificity, reset.origin, pool);
+    if (!declaration || !style_tree_apply_declaration(tree, declaration)) {
+        if (declaration) css_declaration_destroy_owned(declaration, pool);
+        style_tree_destroy_owned(tree);
+        return 0;
+    }
+    style_tree_init_declaration_cache(tree);
+    cache->styles[cache->count++] = lam::own(tree);
+    return cache->count;
+}
+
+static bool share_pseudo_reset(DomElement* element, CssRule* rule, CssSpecificity specificity,
+                               PseudoStyleKind kind, uint32_t proximity, const CssSelector* selector) {
+    if (!is_universal_pseudo_reset(selector, kind)) return false;
+    DomPseudoStyleGroup* group = element->pseudo_style_group();
+    StyleTree* local = group ? group->styles[kind].get() : nullptr;
+    if (local && local->declaration_count) return false;
+    const CssDeclaration* declaration = pseudo_reset_declaration(rule);
+    if (!declaration) return false;
+    CssDeclaration reset = *declaration;
+    reset.specificity = specificity;
+    reset.specificity.important = declaration->important;
+    reset.origin = rule->origin;
+    reset.scope_proximity = proximity;
+    reset.source_order = 1; // compare the rank of a standalone declaration in the shared tree.
+    unsigned previous = element->shared_pseudo_reset_slot(kind);
+    if (previous) {
+        // a second distinct rule requires a private cascade with the first rule seeded into it.
+        return pseudo_reset_equal(&reset, style_tree_get_declaration(
+            element->shared_pseudo_style(kind), CSS_PROPERTY_BOX_SIZING));
+    }
+    unsigned slot = find_shared_pseudo_reset(element->storage_owner(), reset);
+    if (!slot) return false;
+    if (local) {
+        style_tree_retire_borrow_source(local);
+        group->styles[kind] = nullptr;
+        bool occupied = false;
+        for (const auto& style : group->styles) occupied |= (bool)style;
+        if (!occupied) {
+            element->release_pseudo_style_group();
+            if (element->prop_ext->empty()) element->release_prop_ext();
+        }
+    }
+    element->set_shared_pseudo_reset_slot(kind, slot);
+    return true;
+}
+
 int dom_element_apply_pseudo_element_rule(DomElement* element, CssRule* rule,
                                           CssSpecificity specificity, int pseudo_element,
-                                          uint32_t scope_proximity) {
+                                          uint32_t scope_proximity, const CssSelector* selector) {
     log_debug("[CSS-PSEUDO] Applying pseudo-element rule to <%s>, pseudo_type=%d",
               element ? element->tag_name : "NULL", pseudo_element);
 
@@ -3950,7 +4244,13 @@ int dom_element_apply_pseudo_element_rule(DomElement* element, CssRule* rule,
         log_debug("[CSS] Unknown pseudo-element type: %d", pseudo_element);
         return 0;
     }
+    if (share_pseudo_reset(element, rule, specificity, kind, scope_proximity, selector)) {
+        element->advance_style_version();
+        element->set_needs_style_recompute(true);
+        return (int)rule->data.style_rule.declaration_count;
+    }
     lam::Own<StyleTree>* target_style = element->pseudo_style_slot(kind);
+    if (!target_style) return 0;
 
     // Create style tree if needed
     if (!*target_style) {

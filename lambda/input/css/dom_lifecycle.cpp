@@ -271,18 +271,20 @@ void dom_lifecycle_destroy(DomDocument* doc) {
     if (!doc) return;
     dom_lifecycle_release_backing_roots(doc);
     DomNodeRegistry* registry = dom_registry(doc);
-    if (registry) {
-        // Assignments may link nodes whose storage belongs to different documents.
-        for (DomNodeRecord* record = registry->all_records; record; record = record->all_next) {
-            if (record->current_owner && record->state != DOM_NODE_RETIRED)
-                dom_slot_release_manual_links(record->address, record->manual_slot_link);
-        }
-        dom_retire_dequeue(registry);
-    }
+    if (registry) dom_retire_dequeue(registry);
     // Registry records are document-pool allocations and disappear in the
     // immediately following pool destruction; clearing the owner blocks any
     // teardown callback from validating already-destroyed arena storage.
     doc->services.node_registry = nullptr;
+}
+
+void dom_lifecycle_release_slot_links(DomDocument* doc) {
+    DomNodeRegistry* registry = dom_registry(doc);
+    if (!registry) return;
+    for (DomNodeRecord* record = registry->all_records; record; record = record->all_next) {
+        if (record->current_owner && record->state != DOM_NODE_RETIRED)
+            dom_slot_release_manual_links(record->address, record->manual_slot_link);
+    }
 }
 
 static bool dom_node_registry_register_owned(DomDocument* doc, DomNode* node,
@@ -787,6 +789,9 @@ static size_t dom_retire_collect(DomDocument* doc) {
                     view_state_detach_subtree(doc->state, root);
                     if (doc->view_tree) {
                         view_tree_release_retired_subtree(doc->view_tree, root);
+                    } else {
+                        // a script can allocate form props before the first view exists.
+                        view_pool_release_detached_form_props(root);
                     }
                     retired += dom_retire_subtree(doc, root, &pending);
                 } else {

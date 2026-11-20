@@ -32,6 +32,9 @@ struct XmlInputContext : InputContext {
     const char* document_start;
     XmlNamespaceFrame* namespaces = nullptr;
     bool doctype_seen = false;
+    String* xml_uri = nullptr;
+    String* empty_uri = nullptr;
+    Target* xml_target = nullptr;
     bool document_seen = false;
     bool html_entity_catalog = false;
     XmlInputContext(Input* input, const char* source, const XmlParseOptions* opts)
@@ -72,7 +75,7 @@ static Item parse_cdata(XmlInputContext& ctx, const char **xml);
 static Item parse_entity(XmlInputContext& ctx, const char **xml);
 static Item parse_doctype(XmlInputContext& ctx, const char **xml, int depth = 0);
 static Item parse_dtd_declaration(XmlInputContext& ctx, const char **xml);
-static String* parse_string_content(XmlInputContext& ctx, const char **xml, char end_char);
+static String* parse_string_content(XmlInputContext& ctx, const char **xml, char end_char, bool namespace_binding);
 
 static inline bool xml_ref_at_limit(const char* xml, const char* limit) {
     return !xml || !*xml || (limit && xml >= limit);
@@ -192,7 +195,7 @@ static const char* xml_find_terminator(const char* p, const char* term) {
     }
 }
 
-static String* parse_string_content(XmlInputContext& ctx, const char **xml, char end_char) {
+static String* parse_string_content(XmlInputContext& ctx, const char **xml, char end_char, bool namespace_binding) {
     MarkBuilder& builder = ctx.builder;
     StringBuf* sb = ctx.sb;
     stringbuf_reset(sb);
@@ -213,7 +216,8 @@ static String* parse_string_content(XmlInputContext& ctx, const char **xml, char
         *xml = run;
     }
 
-    return builder.createString(sb->str->chars, sb->length);
+    return namespace_binding ? namespace_uri_intern(ctx.input()->name_pool, sb->str->chars)
+        : builder.createString(sb->str->chars, sb->length);
 }
 
 static bool xml_name_start(uint32_t cp) {
@@ -278,7 +282,7 @@ static bool xml_skip_closing_tag(XmlInputContext& ctx, const char** xml, const S
     return true;
 }
 
-struct XmlAttributeName { const char* name; const char* value; Target* target = nullptr; };
+struct XmlAttributeName { const char* name; String* value; Target* target = nullptr; };
 HASHMAP_DEFINE_STRKEY(xml_attribute_names, XmlAttributeName, name)
 struct XmlAttributeSet {
     HashMap* names = nullptr;
@@ -336,12 +340,13 @@ static bool parse_attributes(XmlInputContext& ctx, ElementBuilder* element, cons
         char quote_char = **xml;
         (*xml)++; // skip opening quote
         const char* value_start = *xml;
-        String* attr_value = parse_string_content(ctx, xml, quote_char);
+        bool namespace_binding = frame && xml_namespace_declaration_name(attr_name->chars);
+        String* attr_value = parse_string_content(ctx, xml, quote_char, namespace_binding);
         if (!attr_value) return false;
         if (ctx.strict() && **xml != quote_char)
             return xml_error(ctx, *xml, "XML_ATTRIBUTE_VALUE", "Unterminated XML attribute value");
         if (frame) {
-            XmlAttributeName key = {attr_name->chars, attr_value->chars}; hashmap_set(attributes.names, &key);
+            XmlAttributeName key = {attr_name->chars, attr_value}; hashmap_set(attributes.names, &key);
             if (hashmap_oom(attributes.names)) return xml_error(ctx, *xml, "XML_ALLOCATION", "XML attribute allocation failed");
         }
         if (declaration) {
@@ -368,16 +373,26 @@ static bool parse_attributes(XmlInputContext& ctx, ElementBuilder* element, cons
     return true;
 }
 
-static const char* xml_namespace_uri(XmlInputContext& ctx, const char* prefix, size_t length) {
-    if (length == 3 && !memcmp(prefix, "xml", 3)) return "http://www.w3.org/XML/1998/namespace";
+static constexpr char XML_NAMESPACE_URI[] = "http://www.w3.org/XML/1998/namespace";
+
+static XmlAttributeName* xml_namespace_binding(XmlInputContext& ctx, const char* prefix, size_t length) {
     stringbuf_reset(ctx.sb); stringbuf_append_str(ctx.sb, "xmlns");
     if (length) { stringbuf_append_char(ctx.sb, ':'); stringbuf_append_str_n(ctx.sb, prefix, length); }
     XmlAttributeName key = {ctx.sb->str->chars, nullptr};
     for (XmlNamespaceFrame* frame = ctx.namespaces; frame; frame = frame->parent) {
-        const XmlAttributeName* binding = (const XmlAttributeName*)hashmap_get(frame->attributes.names, &key);
-        if (binding) return binding->value;
+        XmlAttributeName* binding = (XmlAttributeName*)hashmap_get(frame->attributes.names, &key);
+        if (binding) return binding;
     }
     return nullptr;
+}
+
+static String* xml_namespace_uri(XmlInputContext& ctx, const char* prefix, size_t length) {
+    if (length == 3 && !memcmp(prefix, "xml", 3)) {
+        if (!ctx.xml_uri) ctx.xml_uri = namespace_uri_intern(ctx.input()->name_pool, XML_NAMESPACE_URI);
+        return ctx.xml_uri;
+    }
+    XmlAttributeName* binding = xml_namespace_binding(ctx, prefix, length);
+    return binding ? binding->value : nullptr;
 }
 
 // XML bindings live for the Input lifetime; equal URI aliases share identity,
@@ -385,31 +400,30 @@ static const char* xml_namespace_uri(XmlInputContext& ctx, const char* prefix, s
 static Target* xml_resolved_target(XmlInputContext& ctx, const char* name, bool attribute) {
     const char* colon = strchr(name, ':');
     if (!colon && attribute) return nullptr; // default namespaces never apply to attributes
-    if (colon && colon - name == 3 && !memcmp(name, "xml", 3))
-        return namespace_target(ctx.input()->pool, "http://www.w3.org/XML/1998/namespace", "xml", ':');
-    stringbuf_reset(ctx.sb); stringbuf_append_str(ctx.sb, "xmlns");
-    if (colon) { stringbuf_append_char(ctx.sb, ':'); stringbuf_append_str_n(ctx.sb, name, (size_t)(colon - name)); }
-    XmlAttributeName key = {ctx.sb->str->chars, nullptr};
-    for (XmlNamespaceFrame* frame = ctx.namespaces; frame; frame = frame->parent) {
-        XmlAttributeName* binding = (XmlAttributeName*)hashmap_get(frame->attributes.names, &key);
-        if (!binding) continue;
-        if (!binding->value || !*binding->value) return nullptr;
-        if (!binding->target) binding->target = namespace_target(ctx.input()->pool,
-            binding->value, colon ? binding->name + 6 : "", ':');
-        return binding->target;
+    size_t length = colon ? (size_t)(colon - name) : 0;
+    if (length == 3 && !memcmp(name, "xml", 3)) {
+        if (!ctx.xml_target) ctx.xml_target = namespace_target(ctx.input()->pool, ctx.input()->name_pool,
+            XML_NAMESPACE_URI, "xml", ':');
+        return ctx.xml_target;
     }
-    return nullptr;
+    XmlAttributeName* binding = xml_namespace_binding(ctx, name, length);
+    if (!binding || !binding->value || !binding->value->len) return nullptr;
+    if (!binding->target) binding->target = namespace_target(ctx.input()->pool, ctx.input()->name_pool,
+        binding->value->chars, colon ? binding->name + 6 : "", ':');
+    return binding->target;
 }
 
-struct XmlExpandedAttribute { const char* uri; const char* local; };
+struct XmlExpandedAttribute { String* uri; const char* local; };
 static uint64_t xml_expanded_hash(const void* item, uint64_t seed0, uint64_t seed1) {
     const XmlExpandedAttribute* key = (const XmlExpandedAttribute*)item;
-    return hashmap_sip(key->uri, strlen(key->uri), seed0, seed1) ^ hashmap_sip(key->local, strlen(key->local), seed0, seed1);
+    return hashmap_sip(key->uri ? key->uri->chars : "", key->uri ? key->uri->len : 0, seed0, seed1) ^
+        hashmap_sip(key->local, strlen(key->local), seed0, seed1);
 }
 static int xml_expanded_compare(const void* left, const void* right, void*) {
     const XmlExpandedAttribute* a = (const XmlExpandedAttribute*)left;
     const XmlExpandedAttribute* b = (const XmlExpandedAttribute*)right;
-    int result = strcmp(a->uri, b->uri); return result ? result : strcmp(a->local, b->local);
+    int result = strcmp(a->uri ? a->uri->chars : "", b->uri ? b->uri->chars : "");
+    return result ? result : strcmp(a->local, b->local);
 }
 
 static bool xml_resolve_qname(XmlInputContext& ctx, const char* name, bool attribute,
@@ -421,9 +435,9 @@ static bool xml_resolve_qname(XmlInputContext& ctx, const char* name, bool attri
         return xml_error(ctx, at, "XML_QNAME", "Invalid namespace-qualified XML name");
     if (colon && (size_t)(colon - name) == 5 && !memcmp(name, "xmlns", 5))
         return xml_error(ctx, at, "XML_NAMESPACE", "The xmlns prefix is reserved for namespace declarations");
-    result->uri = !colon && attribute ? "" : xml_namespace_uri(ctx, name, colon ? (size_t)(colon - name) : 0);
-    if (colon && (!result->uri || !*result->uri)) return xml_error(ctx, at, "XML_NAMESPACE", "XML namespace prefix has no binding");
-    if (!result->uri) result->uri = "";
+    result->uri = !colon && attribute ? nullptr : xml_namespace_uri(ctx, name, colon ? (size_t)(colon - name) : 0);
+    if (colon && (!result->uri || !result->uri->len))
+        return xml_error(ctx, at, "XML_NAMESPACE", "XML namespace prefix has no binding");
     return true;
 }
 
@@ -431,16 +445,17 @@ static bool xml_validate_namespaces(XmlInputContext& ctx, XmlNamespaceFrame& fra
     size_t cursor = 0; void* item = nullptr;
     while (hashmap_iter(frame.attributes.names, &cursor, &item)) {
         const XmlAttributeName* attribute = (const XmlAttributeName*)item;
-        bool default_binding = !strcmp(attribute->name, "xmlns");
-        if (!default_binding && strncmp(attribute->name, "xmlns:", 6)) continue;
+        if (!xml_namespace_declaration_name(attribute->name)) continue;
+        bool default_binding = attribute->name[5] == '\0';
         const char* prefix = default_binding ? "" : attribute->name + 6;
         uint32_t cp = 0;
         bool invalid_prefix = !default_binding && (!*prefix || strchr(prefix, ':') ||
             str_utf8_decode(prefix, strlen(prefix), &cp) <= 0 || !xml_name_start(cp));
         bool xml_prefix = !strcmp(prefix, "xml");
-        bool xml_uri = !strcmp(attribute->value, "http://www.w3.org/XML/1998/namespace");
+        const char* uri = attribute->value->chars;
+        bool xml_uri = !strcmp(uri, XML_NAMESPACE_URI);
         if (invalid_prefix || !strcmp(prefix, "xmlns") || xml_prefix != xml_uri ||
-            !strcmp(attribute->value, "http://www.w3.org/2000/xmlns/") || (!default_binding && !*attribute->value))
+            !strcmp(uri, "http://www.w3.org/2000/xmlns/") || (!default_binding && !*uri))
             return xml_error(ctx, at, "XML_NAMESPACE", "Invalid or reserved XML namespace binding");
     }
     XmlExpandedAttribute expanded = {};
@@ -451,7 +466,7 @@ static bool xml_validate_namespaces(XmlInputContext& ctx, XmlNamespaceFrame& fra
     cursor = 0;
     while (hashmap_iter(frame.attributes.names, &cursor, &item)) {
         const XmlAttributeName* attribute = (const XmlAttributeName*)item;
-        if (!strcmp(attribute->name, "xmlns") || !strncmp(attribute->name, "xmlns:", 6)) continue;
+        if (xml_namespace_declaration_name(attribute->name)) continue;
         if (!xml_resolve_qname(ctx, attribute->name, true, at, &expanded)) return false;
         if (hashmap_get(expanded_names.names, &expanded))
             return xml_error(ctx, at, "XML_DUPLICATE_ATTRIBUTE", "Duplicate expanded XML attribute name");
@@ -1045,11 +1060,12 @@ static Item parse_element(XmlInputContext& ctx, const char **xml, int depth) {
     const char* output_name = tag_name->chars;
     if (ctx.xhtml()) {
         if (!xml_resolve_qname(ctx, tag_name->chars, false, element_start, &identity)) return ItemError;
-        if (!depth && (strcmp(identity.uri, "http://www.w3.org/1999/xhtml") || strcmp(identity.local, "html"))) {
+        const char* uri = identity.uri ? identity.uri->chars : "";
+        if (!depth && (strcmp(uri, "http://www.w3.org/1999/xhtml") || strcmp(identity.local, "html"))) {
             xml_error(ctx, element_start, "XHTML_DOCUMENT_ELEMENT", "XHTML requires an html root in the XHTML namespace");
             return ItemError;
         }
-        if (xml_namespace_uses_html_names(identity.uri)) output_name = identity.local;
+        if (xml_namespace_uses_html_names(uri)) output_name = identity.local;
     }
     Target* tag_target = xml_resolved_target(ctx, tag_name->chars, false);
     const char* tag_colon = tag_target ? strchr(tag_name->chars, ':') : nullptr;
@@ -1059,15 +1075,17 @@ static Item parse_element(XmlInputContext& ctx, const char **xml, int depth) {
     for (int index = 0; index < arraylist_size(namespaces.ordered_attributes); index += 2) {
         String* name = (String*)arraylist_get(namespaces.ordered_attributes, index);
         String* value = (String*)arraylist_get(namespaces.ordered_attributes, index + 1);
-        bool declaration = !strcmp(name->chars, "xmlns") || !strncmp(name->chars, "xmlns:", 6);
+        bool declaration = xml_namespace_declaration_name(name->chars);
         Target* ns = declaration ? nullptr : xml_resolved_target(ctx, name->chars, true);
         const char* colon = ns ? strchr(name->chars, ':') : nullptr;
         element.attr(ns, colon ? colon + 1 : name->chars, {.item = s2it(value)});
     }
     if (ctx.xhtml()) {
         // explicit identity also protects xmlns resets and XHTML nested inside SVG from HTML namespace inference.
-        element.attr("__lambda_ns_uri", identity.uri);
-        element.attr("__lambda_ns_local_name", identity.local);
+        if (!identity.uri && !ctx.empty_uri) ctx.empty_uri = namespace_uri_intern(ctx.input()->name_pool, "");
+        String* uri = identity.uri ? identity.uri : ctx.empty_uri;
+        if (!uri) return ItemError;
+        element.attr("__lambda_ns_uri", {.item = s2it(uri)});
         if (!depth) element.attr("__lambda_xml_document", true);
     }
     if (ctx.options && ctx.options->track_source_lines) {

@@ -7,6 +7,7 @@
 // Target is the IO-owned normalization of a Lambda Path or URL. Runtime and
 // parser consumers may inspect it, but URL/path ownership remains in lambda-io.
 typedef struct Url Url;
+struct NamePool;
 
 typedef enum {
     TARGET_SCHEME_FILE = 0,
@@ -41,8 +42,11 @@ extern "C" {
 #endif
 
 Target* item_to_target(uint64_t item, Url* cwd);
-Target* namespace_target(Pool* owner, const char* uri, const char* prefix,
-                         char separator);
+bool xml_namespace_declaration_name(const char* name);
+String* namespace_uri_intern(struct NamePool* names, const char* uri);
+// The caller keeps the name pool alive alongside the namespace target.
+Target* namespace_target(Pool* owner, struct NamePool* names, const char* uri,
+                         const char* prefix, char separator);
 void* target_to_local_path(Target* target, Url* cwd);
 const char* target_to_url_string(Target* target, void* out_buf);
 bool target_is_local(Target* target);

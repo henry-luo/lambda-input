@@ -1,7 +1,7 @@
 # Vendored archive input readers
 
 Lambda links a memory-reader subset of [libarchive](https://github.com/libarchive/libarchive)
-for [archive input Phase 3](../../vibe/Lambda_IO_Zip.md#10-phase-3-7zip-tar-and-rar-input).
+for [archive input Phase 3](../../../vibe/Lambda_IO_Zip.md#10-phase-3-7zip-tar-and-rar-input).
 All imported sources retain their upstream basenames directly in this directory.
 Existing ZIP input/output keeps the Lambda-owned implementation in `lambda/io/zip_archive.cpp`.
 

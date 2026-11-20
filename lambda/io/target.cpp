@@ -17,6 +17,7 @@
 #include <stdbool.h>
 
 #include "../core/data.hpp"
+#include "../core/name_pool.hpp"
 #include "lib/strbuf.h"
 #include "lib/log.h"
 #include "lib/memtrack.h"
@@ -159,18 +160,27 @@ void target_cleanup(void* value) {
     target_free((Target*)value);
 }
 
-Target* namespace_target(Pool* owner, const char* uri, const char* prefix,
-        char separator) {
+bool xml_namespace_declaration_name(const char* name) {
+    return name && !strncmp(name, "xmlns", 5) && (name[5] == '\0' || name[5] == ':');
+}
+
+String* namespace_uri_intern(NamePool* names, const char* uri) {
+    return name_pool_create_name(names, uri ? uri : "");
+}
+
+Target* namespace_target(Pool* owner, NamePool* names, const char* uri,
+        const char* prefix, char separator) {
     if (!owner || !uri || !*uri) return NULL;
+    String* canonical = namespace_uri_intern(names, uri);
+    if (!canonical) return NULL;
     Target* target = (Target*)mem_calloc(1, sizeof(Target), MEM_CAT_SYSTEM);
     if (!target) return NULL;
     target->type = TARGET_TYPE_URL;
-    target->original = pool_strdup(owner, uri);
+    target->original = canonical->chars;
     target->name_prefix = prefix ? pool_strdup(owner, prefix) : NULL;
     target->name_separator = separator;
-    target->url = url_parse(uri);
-    if (!target->original || !target->url ||
-            (prefix && !target->name_prefix)) { target_free(target); return NULL; }
+    target->url = url_parse(target->original);
+    if (!target->url || (prefix && !target->name_prefix)) { target_free(target); return NULL; }
     target->scheme = scheme_from_url(target->url);
     target->url_hash = target_compute_hash(target);
     if (!pool_add_cleanup(owner, target_cleanup, target)) {

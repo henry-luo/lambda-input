@@ -796,15 +796,20 @@ TEST_F(NamespaceTest, PrintCollectionEscapesStringContents) {
 TEST_F(NamespaceTest, QualifiedCopiesOwnNamespacesAndKeepGlobalKeysSeparate) {
     Pool* source_owner = pool_create();
     ASSERT_NE(source_owner, nullptr);
-    Target* ns = namespace_target(source_owner, "urn:lambda:copy", "p", ':');
-    Target* alias = namespace_target(input->pool, "urn:lambda:copy", "q", '.');
+    Input* source_input = Input::create(source_owner);
+    ASSERT_NE(source_input, nullptr);
+    Target* ns = namespace_target(source_owner, source_input->name_pool, "urn:lambda:copy", "p", ':');
+    Target* alias = namespace_target(input->pool, input->name_pool, "urn:lambda:copy", "q", '.');
     ASSERT_NE(ns, nullptr);
     ASSERT_NE(alias, nullptr);
     ASSERT_TRUE(target_equal(ns, alias));
+    EXPECT_NE(ns->original, alias->original);
     MarkBuilder builder(input);
-    Item source = builder.element("root").namespace_tag(ns)
-        .attr(ns, "a", builder.createStringItem("qualified"))
-        .attr("a", builder.createStringItem("global")).final();
+    MarkBuilder source_builder(source_input);
+    Item source = source_builder.element("root").namespace_tag(ns)
+        .attr(ns, "a", source_builder.createStringItem("qualified"))
+        .attr("xmlns:p", ns->original).attr("__lambda_ns_uri", ns->original)
+        .attr("a", source_builder.createStringItem("global")).final();
     Item copied = builder.deep_copy(source, true);
     Item map = builder.map().put(ns, "a", builder.createStringItem("qualified"))
         .put("a", builder.createStringItem("global")).final();
@@ -816,16 +821,19 @@ TEST_F(NamespaceTest, QualifiedCopiesOwnNamespacesAndKeepGlobalKeysSeparate) {
 
     ElementReader element(copied.element);
     EXPECT_STREQ(element.get_attr("a").asString()->chars, "global");
-    EXPECT_TRUE(target_equal(element.namespaceTarget(), alias));
+    ASSERT_NE(element.namespaceTarget(), nullptr);
+    EXPECT_EQ(element.namespaceTarget()->original, alias->original);
+    EXPECT_EQ(element.get_attr("xmlns:p").asString()->chars, alias->original);
+    EXPECT_EQ(element.get_attr("__lambda_ns_uri").asString()->chars, alias->original);
     EXPECT_STREQ(copied.element->get_attr(copied_key).string()->chars, "qualified");
     EXPECT_STREQ(copied_map.map->get("a").string()->chars, "global");
     EXPECT_STREQ(copied_map.map->get(copied_key).string()->chars, "qualified");
-    EXPECT_TRUE(target_equal(copied_key.get_safe_symbol()->ns, alias));
+    EXPECT_EQ(copied_key.get_safe_symbol()->ns->original, alias->original);
 }
 
 TEST_F(NamespaceTest, EditorRebuildsKeepQualifiedAndGlobalFieldsSeparate) {
     MarkBuilder builder(input);
-    Target* ns = namespace_target(input->pool, "urn:lambda:edit", "p", ':');
+    Target* ns = namespace_target(input->pool, input->name_pool, "urn:lambda:edit", "p", ':');
     ASSERT_NE(ns, nullptr);
     Symbol* qualified = builder.createSymbol("a"); qualified->ns = ns;
     Item key = {.item = y2it(qualified)};

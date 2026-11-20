@@ -61,6 +61,7 @@ typedef struct DomLifecycleStats {
 bool dom_lifecycle_init(DomDocument* doc);
 void dom_lifecycle_destroy(DomDocument* doc);
 void dom_lifecycle_release_backing_roots(DomDocument* doc);
+void dom_lifecycle_release_slot_links(DomDocument* doc);
 bool dom_node_registry_register(DomDocument* doc, DomNode* node,
                                 size_t primary_size, bool recyclable);
 bool dom_node_registry_transfer(DomDocument* source, DomDocument* destination,
