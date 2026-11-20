@@ -30,6 +30,7 @@ struct Gltf {
     const uint8_t* binary;
     size_t embedded_length;
     bool quantization=false,meshopt=false;
+    bool color_clamped=false; // one clamp warning per asset, not per vertex
     explicit Gltf(SceneAsset& asset,Item input,const uint8_t* data,size_t length):
         a(asset),source(asset_read(input)),binary(data),embedded_length(length) {}
     ~Gltf() {for(auto& view:decoded) if(view.data) mem_free((void*)view.data);}
@@ -476,7 +477,13 @@ struct Gltf {
                 for(unsigned n=0;n<3;n++) t[n]/=length;t[3]=t[3]<0?-1:1;
             }
             if(k==2) for(size_t v=0;v<vertices;v++) for(unsigned n=0;n<c;n++) {
-                double& value=data[v*c+n];if(value<0||value>1) return fail("vertex color outside [0,1]");
+                // float COLOR_0 multipliers beyond [0,1] (exporters emit facet jitter up to ~1.02) clamp with a
+                // warning, as MTL diffuse colors do; the native color lane is a [0,1] encoded value.
+                double& value=data[v*c+n];
+                if(value<0||value>1) {
+                    if(!color_clamped) {a.ctx.addWarning("scene3d asset: vertex color outside [0,1] is clamped");color_clamped=true;}
+                    value=fmin(1,fmax(0,value));
+                }
                 if(n<3) value=value<=.0031308?12.92*value:1.055*pow(value,1.0/2.4)-.055;
             }
             columns[k+1].name=attrs[k];columns[k+1].width=c;

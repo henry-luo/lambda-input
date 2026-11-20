@@ -977,8 +977,8 @@ Item MarkBuilder::copy_ui_content(Item item) {
     return copied;
 }
 
-static Target* copy_name_namespace(Pool* owner, Target* ns) {
-    return ns ? namespace_target(owner, ns->original, ns->name_prefix, ns->name_separator) : nullptr;
+static Target* copy_name_namespace(Pool* owner, NamePool* names, Target* ns) {
+    return ns ? namespace_target(owner, names, ns->original, ns->name_prefix, ns->name_separator) : nullptr;
 }
 
 struct DomContractCopy {
@@ -1018,7 +1018,7 @@ bool MarkBuilder::copy_dom_field(ShapeEntry* target, const ShapeEntry* source) {
         target->name = name;
         target->name_id = name_ref_id(owned);
     }
-    target->ns = copy_name_namespace(pool_, source->ns);
+    target->ns = copy_name_namespace(pool_, name_pool_, source->ns);
     Type* contract = copy_dom_contract(source->type);
     if (!contract) return false;
     // the cached lane must point into the copied graph as well (D3.4.6/D5.5.3).
@@ -1136,7 +1136,7 @@ Type* MarkBuilder::copy_dom_contract_inner(const Type* source) {
             if (binder->name) {
                 Name* name = (Name*)pool_alloc(pool_, sizeof(Name));
                 if (!name) return nullptr;
-                *name = {createName(binder->name->name->chars, binder->name->name->len), copy_name_namespace(pool_, binder->name->ns)};
+                *name = {createName(binder->name->name->chars, binder->name->name->len), copy_name_namespace(pool_, name_pool_, binder->name->ns)};
                 binder->name = name;
             }
             break;
@@ -1169,7 +1169,7 @@ Type* MarkBuilder::copy_dom_contract_inner(const Type* source) {
             String* name = createName(element->name.str, element->name.length);
             if (!name) return nullptr;
             element->name = {name->chars, name->len};
-            element->ns = copy_name_namespace(pool_, element->ns);
+            element->ns = copy_name_namespace(pool_, name_pool_, element->ns);
             element->content_list = (TypeList*)copy_dom_contract(element->content_list);
         }
         if (mark_type_is_declared_nominal(source)) {
@@ -1240,7 +1240,7 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
         Symbol* sym = typed.ptr();
         if (!sym) return createNull();
         Symbol* copied_sym = createSymbol(sym->chars, sym->len);
-        if (copied_sym) copied_sym->ns = copy_name_namespace(pool_, symbol_lambda_namespace(sym));
+        if (copied_sym) copied_sym->ns = copy_name_namespace(pool_, name_pool_, symbol_lambda_namespace(sym));
         return mark_item_from_bits(y2it(copied_sym));
     } else if constexpr (Tag == LMD_TYPE_STRING) {
         String* str = typed.ptr();
@@ -1308,7 +1308,7 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
             Item field_item = value.item();
             Item copied_field = deep_copy_internal(field_item);
             if (key) {
-                map_builder.put(copy_name_namespace(pool_, ns), key, copied_field);
+                map_builder.put(copy_name_namespace(pool_, name_pool_, ns), key, copied_field);
             } else {
                 map_builder.put(key, copied_field);
             }
@@ -1322,7 +1322,7 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
         // Get tag name via reader (returns const char*)
         const char* tag_name = reader.tagName();
         ElementBuilder elem_builder = element(tag_name);
-        elem_builder.namespace_tag(copy_name_namespace(pool_, reader.namespaceTarget()));
+        elem_builder.namespace_tag(copy_name_namespace(pool_, name_pool_, reader.namespaceTarget()));
 
         // Copy attributes using ElementReader
         // ElementReader.get_attr() handles proper Item reconstruction from stored data
@@ -1337,7 +1337,7 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
             occurrence->type = elem_type;
             view_type = elmt_clone_type_for_mutation(occurrence, pool_, true);
             if (!view_type) return ItemNull;
-            view_type->ns = copy_name_namespace(pool_, elem_type->ns);
+            view_type->ns = copy_name_namespace(pool_, name_pool_, elem_type->ns);
             view_type->struct_name = elem_type->struct_name ? pool_strdup(pool_, elem_type->struct_name) : nullptr;
             view_type->content_list = (TypeList*)copy_dom_contract(elem_type->content_list);
             if (elem_type->content_list && !view_type->content_list) return ItemNull;
@@ -1355,7 +1355,19 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
             lam::ShapeRef attr = lam::shape_borrow(elem_type->shape);
             while (attr) {
                 Item attr_item = map_shape_field_to_item(elem->data, attr.get());
-                Item copied_item = deep_copy_internal(attr_item);
+                Item copied_item;
+                const char* name = !attr->ns && attr->name ? attr->name->str : nullptr;
+                bool namespace_text = name && ((name[0] == '_' && !strcmp(name, "__lambda_ns_uri")) ||
+                    (name[0] == 'x' && xml_namespace_declaration_name(name)));
+                String* uri = namespace_text ? attr_item.get_safe_string() : nullptr;
+                if (uri) {
+                    // the destination's name pool owns the copied namespace spelling.
+                    String* interned = name_pool_create_len(name_pool_, uri->chars, uri->len);
+                    if (!interned) return ItemNull;
+                    copied_item.item = s2it(interned);
+                } else {
+                    copied_item = deep_copy_internal(attr_item);
+                }
                 if (view_type) {
                     if (!copy_dom_field(view_attr, attr.get())) return ItemNull;
                     set_field_value(view_attr, map_field_ptr(elem_builder.final().element->data, view_attr), copied_item);
@@ -1363,7 +1375,7 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
                 } else if (attr->name) {
                     // Copy attribute name bytes from external NamePool
                     String* attr_name = createName(attr->name->str, attr->name->length);
-                    elem_builder.attr(copy_name_namespace(pool_, attr->ns), attr_name->chars, copied_item);
+                    elem_builder.attr(copy_name_namespace(pool_, name_pool_, attr->ns), attr_name->chars, copied_item);
                 } else {
                     // attr->name is null for nested map
                     elem_builder.attr((String*)nullptr, copied_item);
