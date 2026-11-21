@@ -1742,6 +1742,8 @@ const CssProperty* css_property_get_by_name(const char* name);
 CssPropertyCode css_property_code_from_name(const char* name);
 CssPropertyCode css_property_code_from_name_id(NameId name_id);
 NameId css_property_name_id(CssPropertyCode property_code);
+CssPropertyCode css_property_canonical_code(CssPropertyCode property_code);
+const char* css_webkit_box_orientation_name(const char* flex_direction);
 
 const char* css_property_spelling_from_code(CssPropertyCode property_code);
 

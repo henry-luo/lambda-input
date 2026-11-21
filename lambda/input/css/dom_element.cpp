@@ -3853,7 +3853,7 @@ bool dom_element_set_presentation_style(DomElement* element, const char* propert
     return false;
 #else
     if (!element || !element->doc || !property || !value) return false;
-    CssPropertyCode code = css_property_code_from_name(property);
+    CssPropertyCode code = css_property_canonical_code(css_property_code_from_name(property));
     bool custom = property[0] == '-' && property[1] == '-' && property[2];
     if (!custom && (code <= 0 || code >= CSS_PROPERTY_CUSTOM)) return false;
     CssDeclaration* old = nullptr;
