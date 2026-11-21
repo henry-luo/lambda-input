@@ -37,7 +37,7 @@
 #include "../html5/html5_parser.h"
 #include <limits.h>
 
-extern "C" uint64_t dom_mutation_epoch(DomDocument* doc) {
+extern "C" uint32_t dom_mutation_epoch(DomDocument* doc) {
     return doc ? doc->mutation_epoch : 0;
 }
 
@@ -1759,7 +1759,7 @@ Url* dom_document_resolve_url(const DomDocument* document, const char* reference
 
 extern "C" __attribute__((weak)) void dom_css_document_language_changed(void* document) {
     DomDocument* doc = (DomDocument*)document;
-    if (doc) { doc->mutation_epoch++; doc->style_content_epoch++; }
+    if (doc) { doc->advance_mutation_epoch(); doc->style_content_epoch++; }
 }
 
 static bool dom_document_replace_language(DomDocument* document, lam::Own<char>* slot, StrView value) {

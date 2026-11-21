@@ -51,7 +51,9 @@ void dom_mark_dirty_ancestors(DomNode* node);
 void dom_layer_note_mutation(DomNode* node, bool moves_only = false);
 extern "C" void dom_invalidate_layout_subtree(void* node);
 extern "C" void dom_svg_invalidate_presentation(void* node);
-extern "C" uint64_t dom_mutation_epoch(DomDocument* doc);
+extern "C" uint32_t dom_mutation_epoch(DomDocument* doc);
+
+constexpr uint32_t DOM_MUTATION_EPOCH_UNSTAMPED = UINT32_MAX;
 
 // shared slot assignment for the DOM, HTML directionality and the renderer.
 struct DomSlotAssignment {
@@ -527,7 +529,7 @@ struct DomDocument : DomDocumentResourceData {
 
     // Keep new editing state at the document tail: native/JIT consumers depend
     // on the offsets of the long-lived DOM/JS members above.
-    uint64_t mutation_epoch;
+    uint32_t mutation_epoch;
 
     // Document provenance, set by the loader that built this tree. Kept here at
     // the tail (rather than beside html_version) so no existing member offset
@@ -594,9 +596,14 @@ struct DomDocument : DomDocumentResourceData {
     // non-inherited properties, which reach neither other elements' computed
     // style nor selector matching. Content caches outside the written subtree
     // (inline SVG layers) key on this instead of every DOM write.
-    uint64_t style_content_epoch;
+    uint32_t style_content_epoch;
     // native attribute/style setters also invalidate computed queries before a DOM commit.
-    uint64_t style_query_epoch;
+    uint32_t style_query_epoch;
+
+    void advance_mutation_epoch() {
+        // keep the unstamped value outside the document's epoch sequence.
+        if (++mutation_epoch == DOM_MUTATION_EPOCH_UNSTAMPED) mutation_epoch = 0;
+    }
 
     // Constructor
     DomDocument() : input(nullptr), document_pool(nullptr), node_arena(nullptr),
@@ -1249,9 +1256,7 @@ struct DomElement : DomNode {
     lam::Own<DomStyleExt> ext;
     lam::Own<DomStyleRareExt> rare_ext; // rare DOM/view state, allocated lazily from doc pool
 
-    // vector path for PDF/SVG curve rendering
     // Layout cache for avoiding redundant layout computations (Taffy-inspired)
-    // Stores up to 9 measurement results + 1 final layout result
     lam::ViewProp<radiant::LayoutCache, DomViewSlot::layout_cache> layout_cache;
 
     // Factories rely on zeroed arena/pool storage and write only semantic non-zero fields.
