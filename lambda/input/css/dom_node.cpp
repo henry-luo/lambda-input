@@ -142,6 +142,21 @@ void dom_unlink_from_sibling_chain(DomNode* child) {
     child->parent = nullptr;
     child->prev_sibling = nullptr;
     child->next_sibling = nullptr;
+    dom_node_own_unlinked(child);
+}
+
+bool dom_child_links_valid(DomElement* parent) {
+    DomNode* previous = nullptr;
+    DomNode* slow = parent->first_child;
+    DomNode* fast = slow;
+    for (DomNode* child = slow; child; child = child->next_sibling) {
+        if (child->parent != parent || dom_previous_linked_sibling(parent, child) != previous) return false;
+        previous = child;
+        slow = slow ? slow->next_sibling.get() : nullptr;
+        fast = fast && fast->next_sibling ? fast->next_sibling->next_sibling.get() : nullptr;
+        if (fast && fast == slow) return false;
+    }
+    return parent->last_child == previous;
 }
 
 static bool dom_insertion_would_cycle(DomNode* parent, DomNode* child) {

@@ -346,7 +346,7 @@ struct DomDocumentServices {
     uint32_t layout_cache_allocations;
     struct FormControlProp* form_controls = nullptr; // live control payloads owned by this document
     lam::Own<struct hashmap> manual_slot_endpoints = nullptr; // endpoints participating in manual assignment
-    void* node_registry;       // external generations, pins, and detached candidates
+    void* node_registry;       // detached roots, pending retirement and precise GC slots
     void* style_epoch_manager; // versioned canonical specified-style pools
     void* scene3d_registry;   // document-owned native 3D viewport projections
     void* canvas_registry;     // document-owned HTMLCanvasElement backing surfaces

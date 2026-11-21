@@ -208,6 +208,13 @@ static void dom_restore_backing_content(Element* backing, const Array& previous)
     backing->extra = previous.extra;
 }
 
+static void dom_text_forget_removed_source(DomText* text) {
+    // Only a borrowed Mark source loses its identity on removal. An owned
+    // replacement stays with the live text through reinsertion or retirement.
+    if (!text->owns_native_string() && !(text->node_flags & DOM_NODE_FLAG_TEXT_REINSERTABLE))
+        text->native_string = nullptr;
+}
+
 // returns 1 after removal, 0 when there is no nested slot, and -1 on failure.
 static int dom_remove_nested_backed_child(DomElement* parent, DomNode* child) {
     Array* owner = nullptr;
@@ -227,8 +234,7 @@ static int dom_remove_nested_backed_child(DomElement* parent, DomNode* child) {
         dom_restore_backing_content(backing, previous);
         return -1;
     }
-    if (child->is_text() && !(child->node_flags & DOM_NODE_FLAG_TEXT_REINSERTABLE))
-        child->as_text()->native_string = nullptr;
+    if (child->is_text()) dom_text_forget_removed_source(child->as_text());
     if (child->is_comment()) child->as_comment()->native_element = nullptr;
     return 1;
 }
@@ -1633,7 +1639,7 @@ static DomText* dom_text_from_fat_string(DomDocument* doc, String* string_value)
     if (!dom_document_owns_node_storage(doc, candidate)) return nullptr;
     if (candidate->node_type != DOM_NODE_TEXT || (candidate->doc && candidate->doc != doc)) return nullptr;
     if (candidate->native_string != string_value) return nullptr;
-    // Every adopted fat string needs a lifecycle record, including strings
+    // Every adopted fat string needs a live identity, including strings
     // flattened from arrays and text introduced by MarkEditor mutations.
     if (!candidate->id) candidate->id = dom_document_alloc_node_id(doc);
     size_t primary_size = sizeof(DomText) + sizeof(String) + candidate->length + 1;
@@ -2308,7 +2314,10 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
         dom_unlink_from_sibling_chain(element);
         for (DomNode* child = element->first_child; child;) {
             DomNode* next = child->next_sibling;
-            if (child->parent == element) dom_unlink_from_sibling_chain(child);
+            if (child->parent == element) {
+                dom_unlink_from_sibling_chain(child);
+                dom_node_schedule_detached(element->doc, child);
+            }
             child = next;
         }
         element->first_child = nullptr;
@@ -2334,7 +2343,10 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
         element->set_styles_resolved(false);
     }
 
-    static_cast<DomNode*>(element)->id = retained_id ? retained_id : dom_document_alloc_node_id(doc);
+    uint32_t id = retained_id ? retained_id : dom_document_alloc_node_id(doc);
+    if (element->lifecycle_live && element->doc != doc &&
+        !dom_node_registry_transfer(element->doc, doc, element, &id)) return nullptr;
+    static_cast<DomNode*>(element)->id = id;
     element->node_type = DOM_NODE_ELEMENT;
     element->doc = lam::up(doc);
 
@@ -2454,6 +2466,7 @@ DomElement* dom_attach_shadow_root(DomElement* host, DomShadowInit options) {
     // publish both links only after both groups have been allocated.
     state->host = lam::up(host);
     host_state->root = lam::own(root);
+    dom_node_cancel_detached(host->doc, root);
     host->doc->js.has_shadow_roots = true;
     return root;
 }
@@ -5605,11 +5618,7 @@ bool dom_text_remove(DomText* text_node) {
         return false;
     }
 
-    if (!(text_node->node_flags & DOM_NODE_FLAG_TEXT_REINSERTABLE)) {
-        // static Mark text keeps the old invalidation behavior so relinking a
-        // removed source node cannot recover a stale wrapper.
-        text_node->native_string = nullptr;
-    }
+    dom_text_forget_removed_source(text_node);
     log_debug("dom_text_remove: removed text node at index %lld", child_idx);
     return true;
 }
@@ -5854,7 +5863,7 @@ bool dom_comment_set_content(DomComment* comment_node, const char* new_content,
         return false;
     }
 
-    // disconnected comments still mutate their backing in their registry owner's arena.
+    // disconnected comments still mutate their backing in their document's arena.
     if (!document || !dom_node_registry_owns(document, comment_node)) {
         log_error("dom_comment_set_content: missing registered document owner");
         return false;
