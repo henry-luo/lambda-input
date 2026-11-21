@@ -820,11 +820,12 @@ const char* dom_element_lookup_namespace_uri(DomElement* element, const char* pr
         return dom_element_namespace_binding(element, prefix, prefix_length);
     for (DomElement* current = element; current; current = dom_parent_element(current)) {
         // native fragments use element storage but are not a DOM parentElement.
-        if (!current->tag_name || current->tag_name[0] == '#') return nullptr;
-        const char* colon = strchr(current->tag_name, ':');
+        const char* tag_name = current->tag_name();
+        if (!tag_name || tag_name[0] == '#') return nullptr;
+        const char* colon = strchr(tag_name, ':');
         bool has_prefix = colon && !strcmp(current->local_name(), colon + 1);
-        bool matches = prefix ? has_prefix && (size_t)(colon - current->tag_name.get()) == prefix_length &&
-            !memcmp(current->tag_name, prefix, prefix_length) : !has_prefix;
+        bool matches = prefix ? has_prefix && (size_t)(colon - tag_name) == prefix_length &&
+            !memcmp(tag_name, prefix, prefix_length) : !has_prefix;
         const char* uri = dom_element_namespace_uri(current);
         // an element's expanded name precedes declarations, including names created without xmlns attributes.
         if (matches && uri && *uri) return uri;
