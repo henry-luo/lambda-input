@@ -356,7 +356,7 @@ struct DomDocumentServices {
     lam::Own<char> pragma_language;    // document-owned default retained after a meta insertion
     lam::Own<char> protocol_language;  // document-owned single Content-Language response value
     lam::Up<const char> html_namespace_uri, empty_namespace_uri; // Input name-pool bytes
-    lam::Own<struct hashmap> tag_name_overrides; // spellings absent from the backing type and catalog
+    lam::Own<struct hashmap> tag_name_overrides = nullptr; // spellings absent from the backing type and catalog
     lam::Own<DomSharedPseudoResets> shared_pseudo_resets = nullptr; // physical document pool
     bool svg_source_document = false; // standalone SVG source uses DOM serialization on SVG save
     bool svg_image_document; // SVG image processing forbids external subordinate resources
