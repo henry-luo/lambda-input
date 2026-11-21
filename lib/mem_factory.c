@@ -66,10 +66,10 @@ static void pool_destroy_fn(void* a) {
     pool_destroy((Pool*)a);
 }
 
-Pool* mem_pool_create_sized(MemContext* ctx, size_t initial_extent_size,
-                            MemRole role, const char* label) {
+Pool* mem_pool_create_sized_aligned(MemContext* ctx, size_t initial_extent_size,
+                                   PoolAlignment alignment, MemRole role, const char* label) {
     ensure_release_hooks();
-    Pool* p = pool_create_sized(initial_extent_size);
+    Pool* p = pool_create_sized_aligned(initial_extent_size, alignment);
     if (!p) return NULL;
     MemContext* owner_context = ctx ? ctx : mem_context_root();
     pool_set_mem_context(p, owner_context);
@@ -78,6 +78,11 @@ Pool* mem_pool_create_sized(MemContext* ctx, size_t initial_extent_size,
                               pool_stat_fn, pool_destroy_fn);
     pool_set_mem_node(p, n);
     return p;
+}
+
+Pool* mem_pool_create_sized(MemContext* ctx, size_t initial_extent_size,
+                           MemRole role, const char* label) {
+    return mem_pool_create_sized_aligned(ctx, initial_extent_size, POOL_ALIGNMENT_16, role, label);
 }
 
 Pool* mem_pool_create(MemContext* ctx, MemRole role, const char* label) {

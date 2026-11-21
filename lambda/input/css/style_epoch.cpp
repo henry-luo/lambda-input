@@ -417,7 +417,7 @@ static void style_builder_add(StyleEpochManager* manager,
     if (manager->cascade_mode == STYLE_EPOCH_CASCADE_REPLACE)
         style_epoch_selection_clear_element(element);
     builder->eligible = !element->specified_style_borrowed() &&
-        element->css_variables == nullptr &&
+        element->css_variables() == nullptr &&
         (element->specified_style_shared() ||
          style_tree_is_empty(element->specified_style));
     if (manager->cascade_mode == STYLE_EPOCH_CASCADE_EXTEND &&

@@ -356,6 +356,7 @@ struct DomDocumentServices {
     lam::Own<char> pragma_language;    // document-owned default retained after a meta insertion
     lam::Own<char> protocol_language;  // document-owned single Content-Language response value
     lam::Up<const char> html_namespace_uri, empty_namespace_uri; // Input name-pool bytes
+    lam::Own<struct hashmap> tag_name_overrides; // spellings absent from the backing type and catalog
     lam::Own<DomSharedPseudoResets> shared_pseudo_resets = nullptr; // physical document pool
     bool svg_source_document = false; // standalone SVG source uses DOM serialization on SVG save
     bool svg_image_document; // SVG image processing forbids external subordinate resources
@@ -700,15 +701,34 @@ bool dom_document_set_embedding(DomDocument* embedded, DomDocument* parent,
 void dom_document_clear_embedding(DomDocument* embedded);
 DomElement* dom_document_embedding_element(DomDocument* embedded);
 
-// tier-1: doc-pool, survives relayout
-typedef struct {
+class DisplayInner {
+    static constexpr uint16_t list_item_bit = 1u << 15;
+    static_assert(CSS_VALUE__LAST_ENTRY < list_item_bit, "display modes must leave room for list-item");
+    uint16_t encoded_;
+
+public:
+    DisplayInner() = default;
+    constexpr DisplayInner(CssEnum mode, bool list_item = false)
+        : encoded_(static_cast<uint16_t>(mode) | (list_item ? list_item_bit : 0)) {}
+
+    // layout checks read the mode; copies retain the list marker.
+    constexpr CssEnum mode() const { return static_cast<CssEnum>(encoded_ & ~list_item_bit); }
+    constexpr operator CssEnum() const { return mode(); }
+    constexpr DisplayInner& operator=(CssEnum mode) {
+        encoded_ = (encoded_ & list_item_bit) | static_cast<uint16_t>(mode);
+        return *this;
+    }
+    constexpr bool list_item() const { return (encoded_ & list_item_bit) != 0; }
+    constexpr void set_list_item(bool enabled) {
+        encoded_ = (encoded_ & ~list_item_bit) | (enabled ? list_item_bit : 0);
+    }
+};
+static_assert(sizeof(DisplayInner) == sizeof(CssEnum), "encoded display mode must fit in one CSS enum");
+
+struct DisplayValue {
     CssEnum outer;
-    CssEnum inner;
-    bool list_item;  // true when 'list-item' keyword present (generates ::marker)
-    uint8_t legacy_box; // computed legacy flex spelling: 0 none, 1 block, 2 inline
-    bool legacy_clamp; // this element's legacy declaration became a clamped flow box
-    bool legacy_vertical; // used flex axis, independent of computed flex-direction
-} DisplayValue;
+    DisplayInner inner;
+};
 
 typedef struct InlineProp InlineProp;
 typedef struct FlexItemProp FlexFlowProp;
@@ -722,7 +742,7 @@ typedef struct PositionProp PositionProp;
 typedef struct TransformProp TransformProp;
 typedef struct FilterProp FilterProp;
 typedef struct PseudoContentProp PseudoContentProp;
-typedef struct EmbedProp EmbedProp;
+typedef struct EmbedStyle EmbedStyle;
 typedef struct TableCellProp TableCellProp;
 typedef struct TableProp TableProp;
 typedef struct FormControlProp FormControlProp;
@@ -734,7 +754,7 @@ extern const FontProp FONT_PROP_DEFAULT;
 extern const InlineProp INLINE_PROP_DEFAULT;
 extern const ScrollProp SCROLL_PROP_DEFAULT;
 extern const PositionProp POSITION_PROP_DEFAULT;
-extern const EmbedProp EMBED_PROP_DEFAULT;
+extern const EmbedStyle EMBED_STYLE_DEFAULT;
 extern const TransformProp TRANSFORM_PROP_DEFAULT;
 extern const FilterProp FILTER_PROP_DEFAULT;
 extern const MultiColumnProp MULTICOL_PROP_DEFAULT;
@@ -805,6 +825,7 @@ enum DomElementFlag : uint32_t {
     ELMT_FLAG_HTML_NAMESPACE = 1u << 7,
     ELMT_FLAG_LOCAL_NAME_IS_TAG = 1u << 8,
     ELMT_FLAG_LOCAL_NAME_IS_TAG_SUFFIX = 1u << 9,
+    ELMT_FLAG_TAG_NAME_NONCANONICAL = 1u << 10,
     ELMT_FLAG_PARENT_ITEM_KIND_SHIFT = 11,
     ELMT_FLAG_PARENT_ITEM_KIND_MASK = 3u << ELMT_FLAG_PARENT_ITEM_KIND_SHIFT,
     ELMT_FLAG_ROLE_KIND_SHIFT = 13,
@@ -967,14 +988,12 @@ void dom_attribute_node_attach(DomElement* element, DomAttr* attribute);
 void dom_attribute_node_detach(DomAttr* attribute);
 void dom_attribute_node_release_retired_storage(DomAttr* attribute);
 
-// An element's pointers into its document's view tree (props, item props,
-// layout caches and fragments), as lam::ViewProp / lam::ViewRef fields on the
-// element or its extension. A field can name only a listed slot, and the
-// view-tree teardown handles every listed slot (a switch over this enum).
+// Property slots on the element or its extensions. View teardown checks the
+// view-owned slots; the DOM retires document-owned groups (D5.5.1).
 #define DOM_ELEMENT_VIEW_SLOTS(X) \
     X(font) X(in_line) X(bound) X(blk) X(scroller) X(embed) X(position) \
     X(transform) X(pseudo) X(layout_cache) X(fi) X(gi) X(tb) X(td) X(form) \
-    X(multicol) X(vpath) X(filter) X(backdrop_filter) X(marker) X(layout_fragments)
+    X(multicol) X(vpath) X(filter) X(backdrop_filter) X(marker) X(layout_fragments) X(popover) X(shadow)
 enum class DomViewSlot {
 #define DOM_VIEW_SLOT_ENUM(name) name,
     DOM_ELEMENT_VIEW_SLOTS(DOM_VIEW_SLOT_ENUM)
@@ -983,18 +1002,18 @@ enum class DomViewSlot {
 };
 
 // tier-1: authored pseudo styles survive the view that borrows them.
-struct DomPseudoStyleGroup {
+struct PseudoStyle {
     lam::Own<StyleTree> styles[PSEUDO_STYLE_COUNT];
 };
 
-// the node's storage pool owns this directory, which borrows Input namespace bytes.
-struct DomPropExt {
+// the node's storage pool owns this directory, which borrows the namespace URI.
+struct DomStyleExt {
     lam::ViewProp<TableProp, DomViewSlot::tb> tb;
     lam::ViewProp<FormControlProp, DomViewSlot::form> form;
     lam::ViewProp<TransformProp, DomViewSlot::transform> transform;
     lam::ViewProp<PseudoContentProp, DomViewSlot::pseudo> pseudo;
     lam::Up<const char> namespace_uri;
-    lam::Own<DomPseudoStyleGroup> pseudo_styles;
+    lam::Own<PseudoStyle> pseudo_styles;
 
     bool empty() const { return !tb && !form && !transform && !pseudo && !namespace_uri && !pseudo_styles; }
 };
@@ -1021,6 +1040,7 @@ struct DomFragmentGeometry {
     bool has_ruby_column_geometry;
     bool has_empty_ruby_base;
     bool has_ruby_parallel_fragments; // selected text rectangles own each line's allocation
+};
 
 // task generations suppress stale toggle events after state changes.
 struct DomToggleTaskTracker {
@@ -1029,21 +1049,45 @@ struct DomToggleTaskTracker {
     bool old_open;
 };
 
+// Document-owned state for popovers and their shared top-layer placement.
+struct PopoverStyle {
+    DomNodeRef implicit_anchor;
+    uint64_t order; // document-wide opening sequence, with zero reserved
+    DomToggleTaskTracker toggle;
+    bool in_top_layer : 1;
+    bool open : 1;
+    bool hiding : 1;
+    DomPopoverMode attribute_mode : 2;
+    DomPopoverMode opened_mode : 2;
+};
+
+// Document-owned links and metadata for hosts, roots, and scoped stylesheets.
+struct ShadowStyle {
+    lam::Up<DomElement> host;
+    lam::Own<DomElement> root;
+    lam::Up<CssStylesheet> inline_stylesheet;
+    int64_t source_position; // one plus the declaration's parsed child index
+    bool closed : 1;
+    bool delegates_focus : 1;
+    bool manual_slot_assignment : 1;
+    bool clonable : 1;
+    bool serializable : 1;
+    bool declarative : 1;
+};
+
 // tier-1: doc-pool, survives relayout
 struct DomElementExt {
     // adoption changes ownerDocument, not the pool owning reclaimable metadata (D5.5.1).
     lam::Up<DomDocument> storage_document;
-    NameId name_id;
+    NameId name_id;  // caches the catalog ID of a namespaced tag’s local name
     // pack node state in the alignment gap before the pointer slots.
     bool has_last_remembered_width : 1;
     bool has_last_remembered_height : 1;
     bool has_animated_display : 1;
-    bool shadow_closed : 1;
-    bool shadow_delegates_focus : 1;
-    bool shadow_manual_slot_assignment : 1;
-    bool popover_open : 1;
     bool dialog_modal : 1;
     bool dialog_cancel_dispatching : 1;
+    bool form_constructing_entries : 1;
+    bool form_firing_submission_events : 1;
     bool selected_content_pending : 1;
     bool selected_content_reset_pending : 1;
     bool script_already_started : 1;
@@ -1061,15 +1105,9 @@ struct DomElementExt {
     int layout_fragment_count;
     float last_remembered_width;
     float last_remembered_height;
+    DisplayValue animated_display; // fills the gap before the animation pointer
     lam::Own<CssWebAnimationState> web_animation_state;  // head of the element's effect list
-    DisplayValue animated_display;
-    lam::Up<DomElement> shadow_host;
-    lam::Own<DomElement> shadow_root;
-    lam::Up<CssStylesheet> shadow_inline_stylesheet;
-    bool shadow_clonable;
-    bool shadow_serializable;
-    bool shadow_declarative;
-    int64_t shadow_source_position; // one plus the declaration's parsed child index
+    lam::ViewProp<ShadowStyle, DomViewSlot::shadow> shadow;
     lam::Own<DomManualSlotLink> manual_slot_first;
     lam::Up<DomManualSlotLink> manual_slot_last;
     lam::OwnArr<DomNodeRef> signaled_slot_assignment;
@@ -1081,22 +1119,22 @@ struct DomElementExt {
     lam::Own<const char> dialog_return_value; // document-pooled WebIDL state, independent of JS expandos
     float form_image_selected_x; // image-relative CSS pixels, rounded at submission
     float form_image_selected_y;
-    // deferred text-control events keep their queue links across layout teardown.
-    bool in_top_layer;
-    DomNodeRef implicit_anchor;
-    bool popover_hiding;
-    DomPopoverMode popover_attribute_mode;
-    DomPopoverMode popover_opened_mode;
-    DomToggleTaskTracker popover_toggle;
-    uint64_t popover_order;
+    lam::ViewProp<PopoverStyle, DomViewSlot::popover> popover;
     DomNodeRef dialog_previous_focus;
     DomToggleTaskTracker dialog_toggle;
-    bool form_constructing_entries;
-    bool form_firing_submission_events;
+    // deferred text-control events keep their queue links across layout teardown.
     lam::Up<DomElement> selectionchange_event_next;
     // ::marker layout state; markers have no BlockProp
     lam::ViewProp<MarkerProp, DomViewSlot::marker> marker;
+    lam::Own<CssCustomProp> css_variables;
     lam::Own<struct CssCustomPropertyIndex> custom_property_index;
+};
+
+struct DomClassList {
+    int class_count;
+    const char* class_names[];
+
+    static DomClassList* allocate(Pool* pool, int capacity);
 };
 
 /**
@@ -1138,9 +1176,6 @@ struct DomElement : DomNode {
     // this embedded value, so mutations happen in-place.
     Element elmt;
 
-    // Basic element information
-    lam::Up<const char> tag_name;   // Element tag name (cached string)
-
     // Tree structure (only elements can have children)
     lam::Own<DomNode> first_child;  // First child node (Element, Text, or Comment); owns the sibling chain
     lam::Up<DomNode> last_child;    // Last child node
@@ -1149,8 +1184,7 @@ struct DomElement : DomNode {
 
     // HTML/CSS style related
     lam::Up<const char> id;      // Element ID attribute (cached)
-    lam::OwnArr<const char*> class_names;  // Array of class names (cached)
-    int class_count;             // Number of classes
+    lam::Own<DomClassList> classes; // cached class count and name pointers share one allocation
     NameId tag_id;               // Generated markup identity; custom tags use NAME_ID_NONE.
     uint32_t elmt_flags;         // compact element state; use the accessors below
 
@@ -1163,11 +1197,10 @@ struct DomElement : DomNode {
 
     // Version tracking for cache invalidation
     uint32_t style_version;      // Incremented when specified styles change
+    DisplayValue display;
+
     lam::Shared<StyleTree> specified_style;  // Specified values from CSS rules (AVL tree)
     // we do not store computed_style;
-
-    // CSS custom properties (CSS variables)
-    lam::Own<struct CssCustomProp> css_variables;  // list of --var-name: value
 
     // CSS Text soft hyphen fragments can contribute to an inline element's
     // border-box union without producing an additional DOM text rect.
@@ -1183,7 +1216,6 @@ struct DomElement : DomNode {
     // own border/padding is applied when its DOMRect is computed.
 
     // view related fields
-    DisplayValue display;
 
     // span properties
     lam::ViewProp<FontProp, DomViewSlot::font> font;  // font style
@@ -1194,8 +1226,8 @@ struct DomElement : DomNode {
     float content_width, content_height;  // width and height of the child content including padding
     lam::ViewProp<BlockProp, DomViewSlot::blk> blk;  // block specific style properties
     lam::ViewProp<ScrollProp, DomViewSlot::scroller> scroller;  // handles overflow
-    // block content related properties for flexbox, image, iframe
-    lam::ViewProp<EmbedProp, DomViewSlot::embed> embed;
+    // document-pool storage for flexbox, grid, images, and embedded documents
+    lam::Own<EmbedStyle> embed;
     // positioning properties for CSS positioning
     lam::ViewProp<PositionProp, DomViewSlot::position> position;
     // Parent-item and own-role storage are independent because CSS permits a
@@ -1210,8 +1242,8 @@ struct DomElement : DomNode {
         lam::ViewProp<GridItemProp, DomViewSlot::gi> gi;
     };
     lam::ViewProp<TableCellProp, DomViewSlot::td> td;  // table cell specific properties
+    lam::Own<DomStyleExt> style_ext;
     lam::Own<DomElementExt> ext; // rare DOM/view state, allocated lazily from doc pool
-    lam::Own<DomPropExt> prop_ext;
 
     // vector path for PDF/SVG curve rendering
     // Layout cache for avoiding redundant layout computations (Taffy-inspired)
@@ -1224,6 +1256,9 @@ struct DomElement : DomNode {
     static DomElement* create_in(Pool* pool);
     static DomElement* create_in(DomElement* storage, DomDocument* doc,
                                  const char* tag_name, Element* backing);
+
+    int class_count() const { return classes ? classes->class_count : 0; }
+    const char* const* class_names() const { return classes ? classes->class_names : nullptr; }
 
     void advance_style_version() {
         style_version++;
@@ -1377,21 +1412,21 @@ struct DomElement : DomNode {
     }
     FlexItemProp* flex_item() const { return parent_item_kind() == PARENT_ITEM_FLEX ? fi : nullptr; }
     GridItemProp* grid_item() const { return parent_item_kind() == PARENT_ITEM_GRID ? gi : nullptr; }
-    TableProp* table_storage() const { return prop_ext ? prop_ext->tb.get() : nullptr; }
+    TableProp* table_storage() const { return style_ext ? style_ext->tb.get() : nullptr; }
     TableProp* table_prop() const { return role_kind() == ROLE_TABLE ? table_storage() : nullptr; }
     TableCellProp* cell_prop() const { return role_kind() == ROLE_CELL ? td : nullptr; }
-    FormControlProp* form_storage() const { return prop_ext ? prop_ext->form.get() : nullptr; }
+    FormControlProp* form_storage() const { return style_ext ? style_ext->form.get() : nullptr; }
     FormControlProp* form_control() const {
         RoleKind role = role_kind();
         return (role == ROLE_FORM || role == ROLE_TABLE || role == ROLE_CELL) ? form_storage() : nullptr;
     }
-    TransformProp* transform_prop() const { return prop_ext ? prop_ext->transform.get() : nullptr; }
-    PseudoContentProp* pseudo_prop() const { return prop_ext ? prop_ext->pseudo.get() : nullptr; }
+    TransformProp* transform_prop() const { return style_ext ? style_ext->transform.get() : nullptr; }
+    PseudoContentProp* pseudo_prop() const { return style_ext ? style_ext->pseudo.get() : nullptr; }
 
-    DomPropExt* ensure_prop_ext();
-    void release_prop_ext();
+    DomStyleExt* ensure_style_ext();
+    void release_style_ext();
     bool set_form_storage(FormControlProp* value) {
-        DomPropExt* slots = value ? ensure_prop_ext() : prop_ext.get();
+        DomStyleExt* slots = value ? ensure_style_ext() : style_ext.get();
         if (slots) slots->form = lam::view_prop(value);
         return slots || !value;
     }
@@ -1402,7 +1437,7 @@ struct DomElement : DomNode {
     const InlineProp* inl() const;
     const ScrollProp* scroll() const;
     const PositionProp* positionp() const;
-    const EmbedProp* embedp() const;
+    const EmbedStyle* embedp() const;
     const TransformProp* transformp() const;
     const FilterProp* filterp() const;
     BlockProp* block_mut();
@@ -1411,7 +1446,7 @@ struct DomElement : DomNode {
     InlineProp* inline_mut();
     ScrollProp* scroll_mut();
     PositionProp* position_mut();
-    EmbedProp* embed_mut();
+    EmbedStyle* embed_mut();
     TransformProp* transform_mut();
     FilterProp* filter_mut();
 
@@ -1421,7 +1456,7 @@ struct DomElement : DomNode {
     InlineProp* ensure_inline(ViewTree* tree);
     ScrollProp* ensure_scroll(ViewTree* tree);
     PositionProp* ensure_position(ViewTree* tree);
-    EmbedProp* ensure_embed(ViewTree* tree);
+    EmbedStyle* ensure_embed();
     TransformProp* ensure_transform(ViewTree* tree);
     FilterProp* ensure_filter(ViewTree* tree);
     MultiColumnProp* ensure_multicol(ViewTree* tree);
@@ -1440,7 +1475,6 @@ struct DomElement : DomNode {
     InlineProp* ensure_inline(LayoutContext* lycon);
     ScrollProp* ensure_scroll(LayoutContext* lycon);
     PositionProp* ensure_position(LayoutContext* lycon);
-    EmbedProp* ensure_embed(LayoutContext* lycon);
     TransformProp* ensure_transform(LayoutContext* lycon);
     FilterProp* ensure_filter(LayoutContext* lycon);
     MultiColumnProp* ensure_multicol(LayoutContext* lycon);
@@ -1488,26 +1522,26 @@ struct DomElement : DomNode {
         }
         return ext;
     }
-    template<class T>
-    T* ensure_ext_group(lam::Own<T> DomElementExt::*slot) {
+    template<class T, class Slot>
+    T* ensure_ext_group(Slot DomElementExt::*slot) {
         DomElementExt* data = ensure_ext();
         if (!data) return nullptr;
-        lam::Own<T>& group = data->*slot;
-        if (!group) group = lam::own((T*)pool_calloc(storage_pool(), sizeof(T)));
+        Slot& group = data->*slot;
+        if (!group) group = Slot((T*)pool_calloc(storage_pool(), sizeof(T)));
         return group;
     }
     DomAttributeCache* attribute_cache() const { return ext ? ext->attributes.get() : nullptr; }
-    DomAttributeCache* ensure_attribute_cache() { return ensure_ext_group(&DomElementExt::attributes); }
+    DomAttributeCache* ensure_attribute_cache() { return ensure_ext_group<DomAttributeCache>(&DomElementExt::attributes); }
     bool has_recorded_attributes() const {
         const DomAttributeCache* cache = attribute_cache();
         return cache && cache->attributes_are_recorded;
     }
     DomFragmentGeometry* fragment_geometry() const { return ext ? ext->fragment_geometry.get() : nullptr; }
-    DomFragmentGeometry* ensure_fragment_geometry() { return ensure_ext_group(&DomElementExt::fragment_geometry); }
-    DomPseudoStyleGroup* pseudo_style_group() const { return prop_ext ? prop_ext->pseudo_styles.get() : nullptr; }
+    DomFragmentGeometry* ensure_fragment_geometry() { return ensure_ext_group<DomFragmentGeometry>(&DomElementExt::fragment_geometry); }
+    PseudoStyle* pseudo_style_group() const { return style_ext ? style_ext->pseudo_styles.get() : nullptr; }
     StyleTree* pseudo_style(PseudoStyleKind kind) const {
         if (node_flags & DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES) {
-            if (StyleTree* style = prop_ext->pseudo_styles->styles[kind]) return style;
+            if (StyleTree* style = style_ext->pseudo_styles->styles[kind]) return style;
         }
         return shared_pseudo_reset_slots && kind <= PSEUDO_STYLE_AFTER
             ? shared_pseudo_style(kind) : nullptr;
@@ -1515,7 +1549,7 @@ struct DomElement : DomNode {
     unsigned shared_pseudo_reset_slot(PseudoStyleKind kind) const;
     void set_shared_pseudo_reset_slot(PseudoStyleKind kind, unsigned slot);
     StyleTree* shared_pseudo_style(PseudoStyleKind kind) const;
-    DomPseudoStyleGroup* ensure_pseudo_style_group();
+    PseudoStyle* ensure_pseudo_style_group();
     void release_pseudo_style_group();
     lam::Own<StyleTree>* pseudo_style_slot(PseudoStyleKind kind);
     void set_pseudo_style(PseudoStyleKind kind, StyleTree* style);
@@ -1576,6 +1610,10 @@ struct DomElement : DomNode {
         }
     }
     CssWebAnimationState* web_animation_state() const { return ext ? ext->web_animation_state : nullptr; }
+    CssCustomProp* css_variables() const { return ext ? ext->css_variables.get() : nullptr; }
+    CssCustomProp* prepend_css_variable(const char* name);
+    bool display_list_item() const { return display.inner.list_item(); }
+    void set_display_list_item(bool value) { display.inner.set_list_item(value); }
     void set_web_animation_state(CssWebAnimationState* value) {
         if (value || ext) ensure_ext()->web_animation_state = lam::own(value);
     }
@@ -1593,24 +1631,52 @@ struct DomElement : DomNode {
     void clear_animated_display() {
         if (ext) ext->has_animated_display = false;
     }
-    DomElement* shadow_host_element() const { return ext ? ext->shadow_host : nullptr; }
-    void set_shadow_host_element(DomElement* value) { if (value || ext) ensure_ext()->shadow_host = lam::up(value); }
-    DomElement* shadow_root_element() const { return ext ? ext->shadow_root : nullptr; }
-    void set_shadow_root_element(DomElement* value) { if (value || ext) ensure_ext()->shadow_root = lam::own(value); }
+    ShadowStyle* shadow_style() const { return ext ? ext->shadow.get() : nullptr; }
+    ShadowStyle* ensure_shadow_style() { return ensure_ext_group<ShadowStyle>(&DomElementExt::shadow); }
+    DomElement* shadow_host_element() const {
+        const ShadowStyle* state = shadow_style();
+        return state ? state->host.get() : nullptr;
+    }
+    DomElement* shadow_root_element() const {
+        const ShadowStyle* state = shadow_style();
+        return state ? state->root.get() : nullptr;
+    }
+    bool is_closed_shadow_root() const {
+        const ShadowStyle* state = shadow_style();
+        return state && state->closed;
+    }
+    void set_shadow_host_element(DomElement* value) {
+        ShadowStyle* state = value ? ensure_shadow_style() : shadow_style();
+        if (state) state->host = lam::up(value);
+    }
+    void set_shadow_root_element(DomElement* value) {
+        ShadowStyle* state = value ? ensure_shadow_style() : shadow_style();
+        if (state) state->root = lam::own(value);
+    }
     float pending_scroll_x() const { return ext ? ext->pending_element_scroll_x : 0.0f; }
     void set_pending_scroll_x(float value) { ensure_ext()->pending_element_scroll_x = value; }
     float pending_scroll_y() const { return ext ? ext->pending_element_scroll_y : 0.0f; }
     void set_pending_scroll_y(float value) { ensure_ext()->pending_element_scroll_y = value; }
+    const char* tag_name() const {
+        if (flag(ELMT_FLAG_TAG_NAME_NONCANONICAL)) return noncanonical_tag_name();
+        return tag_id == NAME_ID_NONE ? nullptr : well_known_name_view(tag_id).str;
+    }
+    const char* noncanonical_tag_name() const;
     NameId tag_name_id() const {
         if (ext && ext->name_id != NAME_ID_NONE) return ext->name_id;
-        return tag_name ? well_known_name_id({tag_name, strlen(tag_name)}) : NAME_ID_NONE;
+        if (flag(ELMT_FLAG_TAG_NAME_NONCANONICAL)) {
+            const char* name = noncanonical_tag_name();
+            return name ? well_known_name_id({name, strlen(name)}) : NAME_ID_NONE;
+        }
+        return tag_id;
     }
-    void set_tag_name_id(NameId value) { ensure_ext()->name_id = value; }
-    bool is_popover_open() const { return ext && ext->popover_open; }
-    bool is_in_top_layer() const { return ext && ext->in_top_layer; }
+    PopoverStyle* popover_style() const { return ext ? ext->popover.get() : nullptr; }
+    PopoverStyle* ensure_popover_style() { return ensure_ext_group<PopoverStyle>(&DomElementExt::popover); }
+    bool is_popover_open() const { const auto* data = popover_style(); return data && data->open; }
+    bool is_in_top_layer() const { const auto* data = popover_style(); return data && data->in_top_layer; }
     void set_popover_open(bool value) {
-        DomElementExt* data = ensure_ext();
-        if (data) data->popover_open = value;
+        PopoverStyle* data = value ? ensure_popover_style() : popover_style();
+        if (data) data->open = value;
     }
     bool is_dialog_modal() const { return ext && ext->dialog_modal; }
     void set_dialog_modal(bool value) {
@@ -1672,11 +1738,11 @@ static inline bool dom_is_css_element_child(const DomNode* node) {
 inline DomElement* dom_document_body_element(DomDocument* document) {
     DomElement* root = document ? document->root : nullptr;
     if (!root) return nullptr;
-    if (root->tag_name && strcmp(root->tag_name, "body") == 0) return root;
+    if (root->tag_name() && strcmp(root->tag_name(), "body") == 0) return root;
     for (DomNode* child = root->first_child; child; child = child->next_sibling) {
         if (!child->is_element()) continue;
         DomElement* element = child->as_element();
-        if (element && element->tag_name && strcmp(element->tag_name, "body") == 0) {
+        if (element && element->tag_name() && strcmp(element->tag_name(), "body") == 0) {
             return element;
         }
     }
@@ -1785,14 +1851,6 @@ DomParsedChildren dom_parsed_children(DomDocument* document, Element* parent);
 inline DomNode* dom_element_to_node(DomElement* de) { return static_cast<DomNode*>(de); }
 inline DomElement* node_to_dom_element(DomNode* dn) { return static_cast<DomElement*>(dn); }
 
-inline void dom_element_retain_tag_name(DomElement* element, lam::PoolPtr<const char> tag_name) {
-    element->tag_name = lam::up(tag_name.get());
-}
-
-inline void dom_element_retain_tag_name(DomElement* element, lam::PoolPtr<char> tag_name) {
-    dom_element_retain_tag_name(element, lam::borrow_const(tag_name));
-}
-
 inline void dom_element_retain_id(DomElement* element, lam::PoolPtr<const char> id) {
     element->id = lam::up(id.get());
 }
@@ -1803,14 +1861,6 @@ inline void dom_element_retain_id(DomElement* element, lam::PoolPtr<char> id) {
 
 inline void dom_element_clear_id(DomElement* element) {
     element->id = nullptr;
-}
-
-inline void dom_element_retain_class_names(DomElement* element, lam::PoolPtr<const char*> class_names) {
-    element->class_names = lam::own_arr(class_names.get());
-}
-
-inline void dom_element_clear_class_names(DomElement* element) {
-    element->class_names = nullptr;
 }
 
 // Ensure embedded Element is 8-byte aligned (required for pointer fields in Element)
@@ -2110,7 +2160,7 @@ DomElement* dom_parent_element(DomElement* element);
 inline bool dom_is_generated_pseudo_node(DomNode* node) {
     if (!node || !node->is_element()) return false;
     DomElement* element = node->as_element();
-    return element->tag_name && element->tag_name[0] == ':' && element->tag_name[1] == ':';
+    return element->tag_name() && element->tag_name()[0] == ':' && element->tag_name()[1] == ':';
 }
 
 #endif // DOM_ELEMENT_H

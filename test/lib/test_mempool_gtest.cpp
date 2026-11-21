@@ -414,7 +414,7 @@ TEST_F(MemoryPoolTest, ReallocFailurePreservesOriginalAllocation) {
     pool_free(pool, ptr);
 }
 
-TEST_F(MemoryPoolTest, RandomizedAllocationFreeReallocModel) {
+static void check_randomized_allocation_free_realloc_model(Pool* pool) {
     enum { SLOT_COUNT = 64, OPERATION_COUNT = 2500 };
     void* pointers[SLOT_COUNT] = {};
     size_t sizes[SLOT_COUNT] = {};
@@ -477,6 +477,42 @@ TEST_F(MemoryPoolTest, RandomizedAllocationFreeReallocModel) {
     PoolStats stats;
     pool_get_detailed_stats(pool, &stats);
     EXPECT_EQ(stats.live_bytes, 0u);
+}
+
+TEST_F(MemoryPoolTest, RandomizedAllocationFreeReallocModel) {
+    check_randomized_allocation_free_realloc_model(pool);
+}
+
+TEST(MemoryPoolDesignTest, EightBytePoolSupportsMixedAllocationAndRealloc) {
+    Pool* pool = pool_create_sized_aligned(0, POOL_ALIGNMENT_8);
+    ASSERT_NE(pool, nullptr);
+    check_randomized_allocation_free_realloc_model(pool);
+    pool_destroy(pool);
+}
+
+TEST(MemoryPoolDesignTest, EightBytePoolCanReuseTinyBlocksBesideLiveBlocks) {
+    Pool* pool = pool_create_sized_aligned(0, POOL_ALIGNMENT_8);
+    ASSERT_NE(pool, nullptr);
+    void* tiny = pool_alloc(pool, 1);
+    void* record = pool_alloc(pool, 40);
+    void* guard = pool_alloc(pool, 48);
+    ASSERT_NE(tiny, nullptr);
+    ASSERT_NE(record, nullptr);
+    ASSERT_NE(guard, nullptr);
+    EXPECT_EQ((uintptr_t)tiny % 8, 0u);
+    EXPECT_EQ((uintptr_t)record % 8, 0u);
+    EXPECT_EQ((uintptr_t)guard % 8, 0u);
+    if (sizeof(void*) == 8) {
+        EXPECT_EQ(pool_allocation_size(pool, tiny), 40u);
+        EXPECT_EQ(pool_allocation_size(pool, record), 64u);
+        EXPECT_EQ(pool_allocation_size(pool, guard), 72u);
+    }
+    fill_pattern(record, 40, 0x51);
+    pool_free(pool, tiny);
+    EXPECT_TRUE(pool_owns(pool, record));
+    EXPECT_EQ(pool_alloc(pool, 8), tiny);
+    EXPECT_TRUE(verify_pattern(record, 40, 0x51));
+    pool_destroy(pool);
 }
 
 TEST_F(MemoryPoolTest, WrongOwnerOperationsDoNotChangeSourcePool) {

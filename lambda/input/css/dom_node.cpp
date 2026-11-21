@@ -84,7 +84,8 @@ const char* DomNode::node_name() const {
             return static_cast<const DomAttr*>(this)->qualified_name;
         case DOM_NODE_ELEMENT: {
             const DomElement* elem = static_cast<const DomElement*>(this);
-            return elem->tag_name ? elem->tag_name : "#unnamed";
+            const char* spelling = elem->tag_name();
+            return spelling ? spelling : "#unnamed";
         }
         case DOM_NODE_TEXT:
             return "#text";
@@ -402,11 +403,11 @@ void DomNode::print(StrBuf* buf, int indent) const {
             if (elem->id) {
                 printf(" id=\"%s\"", elem->id.get());
             }
-            if (elem->class_count > 0) {
+            if (elem->class_count() > 0) {
                 printf(" class=\"");
-                for (int i = 0; i < elem->class_count; i++) {
+                for (int i = 0; i < elem->class_count(); i++) {
                     if (i > 0) printf(" ");
-                    printf("%s", elem->class_names[i]);
+                    printf("%s", elem->class_names()[i]);
                 }
                 printf("\"");
             }
@@ -448,7 +449,7 @@ void DomNode::print(StrBuf* buf, int indent) const {
         strbuf_append_char_n(buf, ' ', indent);
 
         // Print opening tag
-        strbuf_append_all(buf, 2, "<", element->tag_name ? element->tag_name : "unknown");
+        strbuf_append_all(buf, 2, "<", element->tag_name() ? element->tag_name() : "unknown");
 
         // Print id attribute first if present
         if (element->id && element->id[0] != '\0') {
@@ -457,13 +458,13 @@ void DomNode::print(StrBuf* buf, int indent) const {
         }
 
         // Print class attribute if present
-        if (element->class_count > 0 && element->class_names) {
+        if (element->class_count() > 0) {
             strbuf_append_str(buf, " class=\"");
-            for (int i = 0; i < element->class_count; i++) {
+            for (int i = 0; i < element->class_count(); i++) {
                 if (i > 0) {
                     strbuf_append_char(buf, ' ');
                 }
-                strbuf_append_str(buf, element->class_names[i]);
+                strbuf_append_str(buf, element->class_names()[i]);
             }
             strbuf_append_char(buf, '"');
         }
@@ -488,7 +489,7 @@ void DomNode::print(StrBuf* buf, int indent) const {
         strbuf_append_char(buf, '>');
 
         // Print specified CSS styles if present
-        if (element->id || element->class_count > 0 || element->specified_style) {
+        if (element->id || element->class_count() > 0 || element->specified_style) {
             int has_text = false;
             strbuf_append_str(buf, "[");
 
@@ -499,12 +500,12 @@ void DomNode::print(StrBuf* buf, int indent) const {
             }
 
             // print classes
-            if (element->class_count > 0 && element->class_names) {
+            if (element->class_count() > 0) {
                 strbuf_append_str(buf, has_text ? ", classes:" : "classes:");
                 strbuf_append_char(buf, '[');
-                for (int i = 0; i < element->class_count; i++) {
-                    strbuf_append_format(buf, "\"%s\"", element->class_names[i]);
-                    if (i < element->class_count - 1) strbuf_append_char(buf, ',');
+                for (int i = 0; i < element->class_count(); i++) {
+                    strbuf_append_format(buf, "\"%s\"", element->class_names()[i]);
+                    if (i < element->class_count() - 1) strbuf_append_char(buf, ',');
                 }
                 strbuf_append_char(buf, ']');
                 has_text = true;
@@ -590,7 +591,7 @@ void DomNode::print(StrBuf* buf, int indent) const {
                 strbuf_append_char(buf, '\n');
                 strbuf_append_char_n(buf, ' ', indent);
             }
-            strbuf_append_all(buf, 2, "</", element->tag_name ? element->tag_name : "unknown");
+            strbuf_append_all(buf, 2, "</", element->tag_name() ? element->tag_name() : "unknown");
             strbuf_append_char(buf, '>');
 
             // Add trailing newline only for root element (indent == 0)

@@ -1401,10 +1401,6 @@ static bool css_value_is_text_indent_amount(const CssValue* value) {
         css_value_is_length_expression(value, true, false);
 }
 
-bool css_display_legacy_keyword_supported(const char* name) {
-    return name && (strcmp(name, "-webkit-box") == 0 || strcmp(name, "-webkit-inline-box") == 0);
-}
-
 uint8_t css_text_decoration_line_flag(CssEnum keyword) {
     switch (keyword) {
         case CSS_VALUE_UNDERLINE: return CSS_TEXT_DECO_UNDERLINE;
@@ -4054,10 +4050,6 @@ bool css_property_validate_value_mode(CssPropertyCode id,
                     strcmp(name, "env") == 0 || strcmp(name, "attr") == 0 ||
                     (strcmp(name, "layout") == 0 &&
                      value->data.function->arg_count >= 1);
-            }
-            if (value->type == CSS_VALUE_TYPE_CUSTOM) {
-                return css_display_legacy_keyword_supported(
-                    value->data.custom_property.name);
             }
             if (value->type == CSS_VALUE_TYPE_KEYWORD) {
                 if (value->data.keyword == CSS_VALUE_NONE ||

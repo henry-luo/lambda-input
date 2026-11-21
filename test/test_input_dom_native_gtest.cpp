@@ -544,7 +544,7 @@ TEST(InputDomNativeTest, CreatesDetachedBackedElementsWithDocumentNamespaces) {
     EXPECT_EQ(dom_create_backed_element_identity(document, "", nullptr, false), nullptr);
     DomElement* html = dom_create_backed_element_identity(document, "B", nullptr, false);
     ASSERT_NE(html, nullptr);
-    EXPECT_STREQ(html->tag_name, "b");
+    EXPECT_STREQ(html->tag_name(), "b");
     EXPECT_STREQ(dom_element_namespace_uri(html), "http://www.w3.org/1999/xhtml");
     EXPECT_NE(dom_element_backing(html), nullptr);
     EXPECT_EQ(html->parent, nullptr);
@@ -557,7 +557,7 @@ TEST(InputDomNativeTest, CreatesDetachedBackedElementsWithDocumentNamespaces) {
     document->xml_document = true;
     DomElement* xml = dom_create_backed_element_identity(document, "B", nullptr, false);
     ASSERT_NE(xml, nullptr);
-    EXPECT_STREQ(xml->tag_name, "B");
+    EXPECT_STREQ(xml->tag_name(), "B");
     EXPECT_STREQ(dom_element_namespace_uri(xml), "");
     EXPECT_NE(dom_element_backing(xml), nullptr);
     dom_document_destroy(document);
