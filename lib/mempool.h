@@ -19,6 +19,11 @@ extern "C" {
  */
 typedef struct Pool Pool;
 
+typedef enum PoolAlignment {
+    POOL_ALIGNMENT_8 = 8,
+    POOL_ALIGNMENT_16 = 16
+} PoolAlignment;
+
 /**
  * Create a new memory pool with the default 1 KiB initial growth extent.
  * @return Pointer to new pool, or NULL on failure
@@ -30,6 +35,9 @@ Pool* pool_create(void);
  * clamp to 1 KiB; other values round up to 1 KiB * 2^n.
  */
 Pool* pool_create_sized(size_t initial_size);
+
+/** Create a pool with the given payload alignment and the same initial-size rules. */
+Pool* pool_create_sized_aligned(size_t initial_size, PoolAlignment alignment);
 
 /**
  * Destroy a memory pool and free all associated memory

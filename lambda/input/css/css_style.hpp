@@ -1992,7 +1992,6 @@ bool css_text_emphasis_parse_style(const CssValue* value, bool vertical,
                                    uint32_t* mark, const CssValue** color);
 const CssValue* css_text_emphasis_shorthand_longhand(const CssValue* value,
     CssPropertyCode property, Pool* pool);
-bool css_display_legacy_keyword_supported(const char* name);
 bool css_value_as_seconds(const CssValue* value, double* seconds);
 struct CssLinearEasingPoint { double input, output; };
 // returns zero for invalid syntax; output, when supplied, holds the returned count.

@@ -188,7 +188,7 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
         opened->inherited_bindings = context.bindings;
         opened->default_namespace = frame ? frame->default_namespace : "";
         opened->child = dom_source_child(element, true);
-        opened->fragment = !strcmp(element->tag_name, "#document-fragment");
+        opened->fragment = !strcmp(element->tag_name(), "#document-fragment");
         if (opened->fragment) { frame = opened; continue; }
 
         // declarations are recorded before choosing names, without changing the DOM.
@@ -205,7 +205,7 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
         const char* uri = dom_element_namespace_uri(element);
         bool omit_default = false;
         bool append_default = false;
-        StrView preferred = dom_xml_name_prefix(element->tag_name, element->local_name());
+        StrView preferred = dom_xml_name_prefix(element->tag_name(), element->local_name());
         if (!strcmp(uri, opened->default_namespace)) {
             omit_default = true;
         } else if (!strcmp(uri, DOM_XML_NAMESPACE)) {

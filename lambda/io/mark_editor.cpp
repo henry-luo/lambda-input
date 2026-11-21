@@ -144,7 +144,7 @@ static DomNode* mark_editor_create_relinked_ui_child(DomElement* parent, Item ch
             DomElement* storage = element_to_dom_element(child.element);
             if (dom_document_owns_node_storage(parent->doc, storage) &&
                 storage->node_type == DOM_NODE_ELEMENT && !storage->doc &&
-                !storage->tag_name && dom_element_to_element(storage) == child.element &&
+                !storage->tag_name() && dom_element_to_element(storage) == child.element &&
                 tag_name) {
                 // UI-mode MarkBuilder reserves a DomElement prefix for every
                 // new Element. A parser-created fragment has not joined a

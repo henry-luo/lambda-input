@@ -195,9 +195,9 @@ void selector_matcher_set_pseudo_state_resolver(SelectorMatcher* matcher,
 }
 
 bool selector_element_is_open_disclosure(DomElement* element) {
-    return element && element->tag_name &&
-        (str_icmp_cstr(element->tag_name, "details") == 0 ||
-         str_icmp_cstr(element->tag_name, "dialog") == 0) &&
+    return element && element->tag_name() &&
+        (str_icmp_cstr(element->tag_name(), "details") == 0 ||
+         str_icmp_cstr(element->tag_name(), "dialog") == 0) &&
         element->has_attribute("open");
 }
 
@@ -685,7 +685,7 @@ static DomElement* selector_slotted_host(DomElement* element) {
     DomElement* parent = element->parent->as_element();
     DomElement* host = parent->shadow_root_element();
     if (!host) {
-        if (!parent->tag_name || strcmp(parent->tag_name, "#document-fragment") != 0) {
+        if (!parent->tag_name() || strcmp(parent->tag_name(), "#document-fragment") != 0) {
             return nullptr;
         }
         host = parent->shadow_host_element();
@@ -703,7 +703,7 @@ static bool selector_slotted_has_slot(DomNode* node, DomElement* element) {
     if (!node || !element) return false;
     if (node->is_element()) {
         DomElement* candidate = node->as_element();
-        if (candidate->tag_name && strcmp(candidate->tag_name, "slot") == 0) {
+        if (candidate->tag_name() && strcmp(candidate->tag_name(), "slot") == 0) {
             const char* slot_name = candidate->get_attribute("name");
             const char* assigned_name = element->get_attribute("slot");
             if (!slot_name) slot_name = "";
@@ -809,8 +809,8 @@ bool selector_matcher_matches_simple(SelectorMatcher* matcher,
             bool exact_name = false;
             if (simple_selector->value) {
                 // safety check for NULL or invalid tag_name
-                if (!element->tag_name || (uintptr_t)element->tag_name.get() < 0x1000) {
-                    log_error("Invalid tag_name pointer in element: %p", element->tag_name);
+                if (!element->tag_name() || (uintptr_t)element->tag_name() < 0x1000) {
+                    log_error("Invalid tag_name pointer in element: %p", element->tag_name());
                     return false;
                 }
                 const char* local_name = element->local_name();
@@ -830,10 +830,10 @@ bool selector_matcher_matches_simple(SelectorMatcher* matcher,
         case CSS_SELECTOR_TYPE_CLASS:
             // Match class - with case sensitivity based on configuration
             if (!simple_selector->value) return false;
-            for (int i = 0; i < element->class_count; i++) {
+            for (int i = 0; i < element->class_count(); i++) {
                 int cmp = matcher->case_sensitive_classes
-                    ? strcmp(element->class_names[i], simple_selector->value)
-                    : str_icmp_cstr(element->class_names[i], simple_selector->value);
+                    ? strcmp(element->class_names()[i], simple_selector->value)
+                    : str_icmp_cstr(element->class_names()[i], simple_selector->value);
                 if (cmp == 0) return true;
             }
             return false;
@@ -879,8 +879,8 @@ bool selector_matcher_matches_simple(SelectorMatcher* matcher,
             // Here we just return true to not block the match
             return true;
         case CSS_SELECTOR_PSEUDO_ELEMENT_FILE_SELECTOR_BUTTON:
-            return element->tag_name &&
-                str_icmp_cstr(element->tag_name, "input") == 0 &&
+            return element->tag_name() &&
+                str_icmp_cstr(element->tag_name(), "input") == 0 &&
                 element->get_attribute("type") &&
                 str_icmp_cstr(element->get_attribute("type"), "file") == 0;
 
@@ -1456,8 +1456,8 @@ bool selector_matcher_matches_pseudo_class(SelectorMatcher* matcher,
         case CSS_SELECTOR_PSEUDO_DEFINED:
             // Built-in/foreign elements are defined without a registry entry;
             // autonomous custom elements become defined on registration.
-            return !element->tag_name || !strchr(element->tag_name, '-') ||
-                dom_css_custom_element_defined(element->tag_name);
+            return !element->tag_name() || !strchr(element->tag_name(), '-') ||
+                dom_css_custom_element_defined(element->tag_name());
         case CSS_SELECTOR_PSEUDO_READ_ONLY:
             return selector_matcher_get_pseudo_state(matcher, element, PSEUDO_STATE_READ_ONLY);
         case CSS_SELECTOR_PSEUDO_READ_WRITE:
@@ -1525,7 +1525,7 @@ bool selector_matcher_matches_structural(SelectorMatcher* matcher,
         case CSS_SELECTOR_PSEUDO_ROOT: {
             bool is_root = element->doc && element->doc->root == element;
             log_debug("[SELECTOR] :root check for <%s>: doc_root=%p, is_root=%d",
-                      element->tag_name, element->doc ? element->doc->root : nullptr, is_root);
+                      element->tag_name(), element->doc ? element->doc->root : nullptr, is_root);
             return is_root;
         }
 
@@ -2050,11 +2050,11 @@ bool selector_matcher_same_tag(DomElement* element1, DomElement* element2) {
         return false;
     }
 
-    if (!element1->tag_name || !element2->tag_name) {
+    if (!element1->tag_name() || !element2->tag_name()) {
         return false;
     }
 
-    return str_icmp_cstr(element1->tag_name, element2->tag_name) == 0;
+    return str_icmp_cstr(element1->tag_name(), element2->tag_name()) == 0;
 }
 
 bool selector_matcher_parse_nth_formula(const char* formula_str, CssNthFormula* formula) {

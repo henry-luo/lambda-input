@@ -111,9 +111,8 @@ template<class T> struct Foreign {
 #undef LAM_MEM_KIND_POINTER_BODY
 #undef LAM_MEM_KIND_UPCAST
 
-// A pointer from a Document-level node into its document's view tree. A
-// ViewTree exists only for a viewed document, so these are the one sanctioned
-// downward pointers: the slot ties each field to its view-tree teardown entry.
+// A property pointer on a document-level node. The slot identifies which
+// owner tears it down. View-tree slots may point below the document lifetime.
 template<class T> struct ViewPropInit { T* p_; };
 template<class T> struct ViewRefInit { T* p_; };
 

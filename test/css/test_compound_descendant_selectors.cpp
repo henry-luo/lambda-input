@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "helpers/css_test_helpers.hpp"
+#include "lambda/core/well_known_markup_names.h"
 #include "lambda/input/css/dom_element.hpp"
 #include "lambda/input/css/selector_matcher.hpp"
 
@@ -31,7 +32,7 @@ TEST_F(CompoundDescendantSelectorTest, TableFixupsPreserveSourceAxesAndStructura
     const char* tags[] = {"table", "::anon-tbody", "::anon-tbody", "tr", "tr", "td", "td"};
     for (size_t i = 0; i < sizeof(nodes) / sizeof(nodes[0]); i++) {
         nodes[i]->node_type = DOM_NODE_ELEMENT;
-        nodes[i]->tag_name = lam::up(tags[i]);
+        nodes[i]->tag_id = DomNode::tag_name_to_id(tags[i]);
     }
     group_a.set_synthetic(true); group_a.set_table_fixup(true);
     group_b.set_synthetic(true); group_b.set_table_fixup(true);
@@ -78,7 +79,7 @@ TEST_F(CompoundDescendantSelectorTest, TableFixupsPreserveSourceAxesAndStructura
     EXPECT_TRUE(selector_matcher_find_all(matcher, (CssSelector*)sheet->rules[0]->data.style_rule.selector, &table, &matches, &count));
     ASSERT_EQ(count, 2); EXPECT_EQ(matches[0], &row_a); EXPECT_EQ(matches[1], &row_b);
     // source-authored display:contents elements remain real parents.
-    group_a.set_synthetic(false); group_a.set_table_fixup(false); group_a.tag_name = lam::up("section");
+    group_a.set_synthetic(false); group_a.set_table_fixup(false); group_a.tag_id = MARKUP_NAME_SECTION;
     EXPECT_EQ(dom_source_parent(&row_a), &group_a);
 }
 
@@ -89,12 +90,12 @@ TEST_F(CompoundDescendantSelectorTest, TableFixupsPreserveSourceAxesAndStructura
 TEST_F(CompoundDescendantSelectorTest, RejectAncestorBeforeCountingFilteredSiblings) {
     DomElement parent = {}, options[64] = {};
     parent.node_type = DOM_NODE_ELEMENT;
-    parent.tag_name = lam::up("select");
+    parent.tag_id = MARKUP_NAME_SELECT;
     parent.first_child = lam::own<DomNode>(&options[0]);
     parent.last_child = lam::up<DomNode>(&options[63]);
     for (size_t i = 0; i < 64; i++) {
         options[i].node_type = DOM_NODE_ELEMENT;
-        options[i].tag_name = lam::up("option");
+        options[i].tag_id = MARKUP_NAME_OPTION;
         options[i].parent = lam::up<DomNode>(&parent);
         if (i) options[i].prev_sibling = lam::up<DomNode>(&options[i - 1]);
         if (i + 1 < 64) options[i].next_sibling = lam::own<DomNode>(&options[i + 1]);
@@ -109,7 +110,7 @@ TEST_F(CompoundDescendantSelectorTest, RejectAncestorBeforeCountingFilteredSibli
     EXPECT_FALSE(selector_matcher_matches(matcher, selector, &options[63], nullptr));
     // an unrelated table rule must not scan the native font menu's siblings.
     EXPECT_LT(matcher->total_matches, 8u);
-    parent.tag_name = lam::up("table");
+    parent.tag_id = MARKUP_NAME_TABLE;
     EXPECT_TRUE(selector_matcher_matches(matcher, selector, &options[63], nullptr));
     EXPECT_FALSE(selector_matcher_matches(matcher, selector, &options[62], nullptr));
 }

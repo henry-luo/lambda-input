@@ -25,9 +25,7 @@
 #define POOL_VALID_MARKER 0xDEADBEEF
 #define POOL_BLOCK_MAGIC 0x50424C4Bu
 #define POOL_EXTENT_MAGIC 0x50455854u
-#define POOL_ALIGNMENT 16u
 #define POOL_SMALL_BIN_COUNT 32u
-#define POOL_SMALL_MAX_SPAN (POOL_ALIGNMENT * POOL_SMALL_BIN_COUNT)
 #define POOL_BIN_COUNT 64u
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -113,7 +111,7 @@ typedef struct PoolCleanup {
     struct PoolCleanup* next;
 } PoolCleanup;
 
-// PoolBlock is the physical boundary tag, 32 bytes ahead of every payload. The
+// PoolBlock is the physical boundary tag before each aligned payload. The
 // Pool owns the containing extent, so no global pointer index is required.
 // A free block keeps its free-list links in its own payload (POOL_MIN_PAYLOAD
 // holds them) and is marked free by requested == 0: a live block always has
@@ -123,8 +121,8 @@ typedef struct PoolCleanup {
 struct PoolBlock {
     uint32_t magic;
     uint32_t requested;   // the caller's size, 0 while free (SIZE_LIMIT fits)
-    size_t span;
-    size_t prev_span;
+    uint32_t span;
+    uint32_t prev_span;
     PoolExtent* extent;
 };
 
@@ -160,6 +158,9 @@ struct Pool {
     unsigned pool_id;
     unsigned valid;
     bool struct_tracked;
+    uint8_t alignment;
+    uint8_t alignment_shift;
+    uint8_t header_size;
     MemCategory category;
     MemContext* context;
     PoolExtent* extents;
@@ -187,18 +188,18 @@ void pool_set_node_release_hook(void (*fn)(void*)) {
     g_pool_node_release = fn;
 }
 
-static size_t pool_align_up(size_t value) {
+static size_t pool_align_up(const Pool* pool, size_t value) {
     size_t result = 0;
-    return math_size_align_up(value, POOL_ALIGNMENT, &result) ? result : 0;
+    return math_size_align_up(value, pool->alignment, &result) ? result : 0;
 }
 
-static size_t block_header_size(void) {
-    return pool_align_up(sizeof(PoolBlock));
+static size_t pool_min_block_span(const Pool* pool) {
+    return pool->header_size + POOL_MIN_PAYLOAD;
 }
 
 // only meaningful while the block is free
-static PoolFreeLinks* pool_block_links(PoolBlock* block) {
-    return (PoolFreeLinks*)((uint8_t*)block + block_header_size());
+static PoolFreeLinks* pool_block_links(const Pool* pool, PoolBlock* block) {
+    return (PoolFreeLinks*)((uint8_t*)block + pool->header_size);
 }
 
 static size_t pool_page_size(void) {
@@ -241,18 +242,15 @@ static size_t pool_normalize_initial_size(size_t requested) {
     return size;
 }
 
-static size_t pool_next_growth_size(size_t current) {
-    return current > SIZE_MAX / 2 ? SIZE_MAX : current * 2;
-}
-
 static size_t pool_max_size(size_t left, size_t right) {
     return left > right ? left : right;
 }
 
-static size_t pool_block_required_size(size_t requested) {
+static size_t pool_block_required_size(const Pool* pool, size_t requested) {
+    // even the smallest live allocation must hold its links once freed.
     size_t total = 0;
-    if (!math_checked_add(block_header_size(), requested, &total)) return 0;
-    return pool_align_up(total);
+    if (!math_checked_add(pool->header_size, pool_max_size(POOL_MIN_PAYLOAD, requested), &total)) return 0;
+    return pool_align_up(pool, total);
 }
 
 static bool pool_block_can_hold(size_t span, size_t required) {
@@ -265,12 +263,13 @@ static bool pool_block_is_free(const PoolBlock* block) {
 
 // Small aligned spans need distinct bins: revisiting thousands of 176-byte
 // holes for every 192-byte allocation made large DOM layouts quadratic.
-static unsigned pool_bin_index(size_t span) {
-    if (span <= POOL_SMALL_MAX_SPAN) {
-        return span ? (unsigned)((span - 1) / POOL_ALIGNMENT) : 0;
+static unsigned pool_bin_index(const Pool* pool, size_t span) {
+    size_t small_max_span = (size_t)POOL_SMALL_BIN_COUNT << pool->alignment_shift;
+    if (span <= small_max_span) {
+        return span ? (unsigned)((span - 1) >> pool->alignment_shift) : 0;
     }
     unsigned floor_log2 = (unsigned)(63 - math_clz64((uint64_t)span));
-    unsigned small_log2 = (unsigned)(63 - math_clz64(POOL_SMALL_MAX_SPAN));
+    unsigned small_log2 = (unsigned)(63 - math_clz64(small_max_span));
     unsigned index = POOL_SMALL_BIN_COUNT + floor_log2 - small_log2;
     return index < POOL_BIN_COUNT - 1 ? index : POOL_BIN_COUNT - 1;
 }
@@ -289,16 +288,17 @@ static bool pool_block_range_valid(const PoolBlock* block,
     if (offset > extent->committed || block->span > extent->committed - offset) {
         return false;
     }
-    if (block->span < block_header_size() ||
-        block->span % POOL_ALIGNMENT != 0 ||
-        block->requested > block->span - block_header_size()) {
+    const Pool* pool = extent->owner;
+    if (block->span < pool_min_block_span(pool) ||
+        block->span % pool->alignment != 0 ||
+        block->requested > block->span - pool->header_size) {
         return false;
     }
     if (block->prev_span == 0) {
         if (offset != 0) return false;
     } else {
         if (block->prev_span > offset ||
-            block->prev_span % POOL_ALIGNMENT != 0) {
+            block->prev_span % pool->alignment != 0) {
             return false;
         }
         PoolBlock* previous = (PoolBlock*)((uint8_t*)block - block->prev_span);
@@ -339,26 +339,26 @@ static PoolBlock* pool_block_prev(const PoolBlock* block) {
 }
 
 static void pool_free_list_insert(Pool* pool, PoolBlock* block) {
-    unsigned index = pool_bin_index(block->span);
-    PoolFreeLinks* links = pool_block_links(block);
+    unsigned index = pool_bin_index(pool, block->span);
+    PoolFreeLinks* links = pool_block_links(pool, block);
     links->prev = NULL;
     links->next = pool->free_bins[index];
-    if (links->next) pool_block_links(links->next)->prev = block;
+    if (links->next) pool_block_links(pool, links->next)->prev = block;
     pool->free_bins[index] = block;
     pool->free_bin_mask |= UINT64_C(1) << index;
 }
 
 static void pool_free_list_remove(Pool* pool, PoolBlock* block) {
-    unsigned index = pool_bin_index(block->span);
-    PoolFreeLinks* links = pool_block_links(block);
-    if (links->prev) pool_block_links(links->prev)->next = links->next;
+    unsigned index = pool_bin_index(pool, block->span);
+    PoolFreeLinks* links = pool_block_links(pool, block);
+    if (links->prev) pool_block_links(pool, links->prev)->next = links->next;
     else if (pool->free_bins[index] == block) pool->free_bins[index] = links->next;
-    if (links->next) pool_block_links(links->next)->prev = links->prev;
+    if (links->next) pool_block_links(pool, links->next)->prev = links->prev;
     if (!pool->free_bins[index]) pool->free_bin_mask &= ~(UINT64_C(1) << index);
 }
 
 static PoolBlock* pool_find_suitable(Pool* pool, size_t required) {
-    unsigned first = pool_bin_index(required);
+    unsigned first = pool_bin_index(pool, required);
     // the same bins in the same order as testing each one, empty ones skipped
     uint64_t mask = pool->free_bin_mask & (UINT64_MAX << first);
     while (mask) {
@@ -370,17 +370,17 @@ static PoolBlock* pool_find_suitable(Pool* pool, size_t required) {
                 pool_block_can_hold(block->span, required)) {
                 return block;
             }
-            block = pool_block_links(block)->next;
+            block = pool_block_links(pool, block)->next;
         }
     }
     return NULL;
 }
 
 static void pool_init_free_block(PoolBlock* block, PoolExtent* extent,
-                                 size_t span, size_t prev_span) {
+                                 size_t span, uint32_t prev_span) {
     memset(block, 0, sizeof(*block));
     block->magic = POOL_BLOCK_MAGIC;
-    block->span = span;
+    block->span = (uint32_t)span;
     block->prev_span = prev_span;
     block->extent = extent;
 }
@@ -409,11 +409,14 @@ static void pool_free_struct(Pool* pool) {
     else free(pool);
 }
 
-static void pool_init(Pool* pool, size_t initial_size) {
+static void pool_init(Pool* pool, size_t initial_size, PoolAlignment alignment) {
     // pool creation is independent across threads; only the diagnostic sequence is shared.
     pool->pool_id = atomic_fetch_add_explicit(&next_pool_id, 1, memory_order_relaxed);
     pool->valid = POOL_VALID_MARKER;
     pool->category = MEM_CAT_SYSTEM;
+    pool->alignment = (uint8_t)alignment;
+    pool->alignment_shift = alignment == POOL_ALIGNMENT_8 ? 3 : 4;
+    pool->header_size = (uint8_t)pool_align_up(pool, sizeof(PoolBlock));
     pool->next_extent_size = initial_size;
 }
 
@@ -469,7 +472,7 @@ static bool pool_append_committed_range(Pool* pool, PoolExtent* extent,
 
     if (last && pool_block_is_free(last)) {
         pool_free_list_remove(pool, last);
-        last->span += added;
+        last->span += (uint32_t)added;
         extent->last = last;
         pool_free_list_insert(pool, last);
     } else {
@@ -516,15 +519,22 @@ static PoolExtent* pool_create_extent(Pool* pool, size_t required) {
         if (target == 0) return NULL;
     }
 
+    bool use_vm = target >= POOL_VM_THRESHOLD && pool_vm_api_available();
+    size_t extent_alignment = use_vm ? pool_page_size() : pool->alignment;
+    // adjacent free blocks can merge into one span covering the entire extent.
+    size_t span_limit = (size_t)PTRDIFF_MAX < UINT32_MAX ? (size_t)PTRDIFF_MAX : UINT32_MAX;
+    size_t extent_limit = span_limit - span_limit % extent_alignment;
+    if (required > extent_limit) return NULL;
+    if (target > extent_limit) target = extent_limit;
+
     PoolExtent* extent = (PoolExtent*)pool_meta_alloc(pool, sizeof(*extent));
     if (!extent) return NULL;
     memset(extent, 0, sizeof(*extent));
     extent->magic = POOL_EXTENT_MAGIC;
     extent->owner = pool;
 
-    bool use_vm = target >= POOL_VM_THRESHOLD && pool_vm_api_available();
     if (use_vm) {
-        size_t page = pool_page_size();
+        size_t page = extent_alignment;
         size_t reserved = 0;
         size_t commit_size = 0;
         size_t minimum_commit = pool_max_size(POOL_VM_THRESHOLD, required);
@@ -560,7 +570,7 @@ static PoolExtent* pool_create_extent(Pool* pool, size_t required) {
         extent->reserved = mem_vm_region_reserved_bytes(extent->vm_region);
         extent->committed = commit_size;
     } else {
-        size_t reserved = pool_align_up(target);
+        size_t reserved = pool_align_up(pool, target);
         if (reserved == 0) {
             pool_meta_free(extent);
             return NULL;
@@ -584,7 +594,7 @@ static PoolExtent* pool_create_extent(Pool* pool, size_t required) {
     pool->committed_bytes += extent->committed;
 
     size_t growth_base = extent->reserved;
-    pool->next_extent_size = pool_next_growth_size(growth_base);
+    pool->next_extent_size = growth_base > extent_limit / 2 ? extent_limit : growth_base * 2;
     pool_free_list_insert(pool, extent->first);
     return extent;
 }
@@ -611,13 +621,12 @@ static PoolBlock* pool_find_block(Pool* pool, void* ptr) {
     uintptr_t address = (uintptr_t)ptr;
     uintptr_t base = (uintptr_t)extent->base;
     size_t offset = (size_t)(address - base);
-    if (extent->committed < block_header_size() ||
-        offset < block_header_size() ||
-        offset >= extent->committed) {
+    if (offset < pool->header_size || offset >= extent->committed ||
+        offset % pool->alignment != 0) {
         return NULL;
     }
 
-    PoolBlock* block = (PoolBlock*)((uint8_t*)ptr - block_header_size());
+    PoolBlock* block = (PoolBlock*)((uint8_t*)ptr - pool->header_size);
     // the pointer is already proven inside committed storage; validating the
     // header's lower bound is sufficient because range validation checks the
     // complete block span, including a payload ending at the extent boundary.
@@ -630,13 +639,12 @@ static PoolBlock* pool_find_block(Pool* pool, void* ptr) {
 static void pool_split_block(Pool* pool, PoolBlock* block, size_t required) {
     if (!pool || !block || block->span <= required) return;
     size_t remainder_span = block->span - required;
-    size_t minimum_remainder = pool_align_up(block_header_size() + POOL_MIN_PAYLOAD);
-    if (remainder_span < minimum_remainder) return;
+    if (remainder_span < pool_min_block_span(pool)) return;
 
     PoolExtent* extent = block->extent;
     PoolBlock* remainder = (PoolBlock*)((uint8_t*)block + required);
-    pool_init_free_block(remainder, extent, remainder_span, required);
-    block->span = required;
+    pool_init_free_block(remainder, extent, remainder_span, (uint32_t)required);
+    block->span = (uint32_t)required;
     if (extent->last == block) extent->last = remainder;
 
     PoolBlock* next = pool_block_next(remainder);
@@ -731,14 +739,19 @@ bool pool_add_cleanup(Pool* pool, void (*fn)(void* arg), void* arg) {
     return true;
 }
 
-Pool* pool_create_sized(size_t initial_size) {
+Pool* pool_create_sized_aligned(size_t initial_size, PoolAlignment alignment) {
+    if (alignment != POOL_ALIGNMENT_8 && alignment != POOL_ALIGNMENT_16) return NULL;
     size_t normalized = pool_normalize_initial_size(initial_size);
     if (normalized == 0 || normalized > SIZE_LIMIT) return NULL;
 
     Pool* pool = pool_alloc_struct();
     if (!pool) return NULL;
-    pool_init(pool, normalized);
+    pool_init(pool, normalized, alignment);
     return pool;
+}
+
+Pool* pool_create_sized(size_t initial_size) {
+    return pool_create_sized_aligned(initial_size, POOL_ALIGNMENT_16);
 }
 
 Pool* pool_create(void) {
@@ -791,7 +804,7 @@ void* pool_alloc(Pool* pool, size_t size) {
     if (!pool || pool->valid != POOL_VALID_MARKER || size == 0 ||
         size > SIZE_LIMIT) return NULL;
 
-    size_t required = pool_block_required_size(size);
+    size_t required = pool_block_required_size(pool, size);
     if (required == 0) return NULL;
 
     PoolBlock* block = pool_take_block(pool, required, size);
@@ -806,7 +819,7 @@ void* pool_alloc(Pool* pool, size_t size) {
     if (pool->live_bytes > pool->high_water_live_bytes) {
         pool->high_water_live_bytes = pool->live_bytes;
     }
-    return (uint8_t*)block + block_header_size();
+    return (uint8_t*)block + pool->header_size;
 }
 
 void* pool_calloc(Pool* pool, size_t size) {
@@ -852,12 +865,11 @@ static void pool_shrink_block(Pool* pool, PoolBlock* block, size_t required,
                               size_t new_size) {
     size_t old_span = block->span;
     size_t remainder_span = old_span - required;
-    size_t minimum_remainder = pool_align_up(block_header_size() + POOL_MIN_PAYLOAD);
-    if (remainder_span >= minimum_remainder) {
+    if (remainder_span >= pool_min_block_span(pool)) {
         PoolExtent* extent = block->extent;
         PoolBlock* remainder = (PoolBlock*)((uint8_t*)block + required);
-        pool_init_free_block(remainder, extent, remainder_span, required);
-        block->span = required;
+        pool_init_free_block(remainder, extent, remainder_span, (uint32_t)required);
+        block->span = (uint32_t)required;
         if (extent->last == block) extent->last = remainder;
         PoolBlock* next = pool_block_next(remainder);
         if (next) next->prev_span = remainder->span;
@@ -869,24 +881,20 @@ static void pool_shrink_block(Pool* pool, PoolBlock* block, size_t required,
 static bool pool_grow_block_in_place(Pool* pool, PoolBlock* block,
                                      size_t required, size_t new_size) {
     PoolBlock* next = pool_block_next(block);
-    if (!next || !pool_block_is_free(next) ||
-        block->span > SIZE_MAX - next->span ||
-        block->span + next->span < required) {
-        return false;
-    }
+    if (!next || !pool_block_is_free(next)) return false;
 
     PoolExtent* extent = block->extent;
-    size_t combined = block->span + next->span;
+    size_t combined = (size_t)block->span + next->span;
+    if (combined < required) return false;
     pool_free_list_remove(pool, next);
-    block->span = combined;
+    block->span = (uint32_t)combined;
     if (extent->last == next) extent->last = block;
 
     size_t remainder_span = combined - required;
-    size_t minimum_remainder = pool_align_up(block_header_size() + POOL_MIN_PAYLOAD);
-    if (remainder_span >= minimum_remainder) {
+    if (remainder_span >= pool_min_block_span(pool)) {
         PoolBlock* remainder = (PoolBlock*)((uint8_t*)block + required);
-        pool_init_free_block(remainder, extent, remainder_span, required);
-        block->span = required;
+        pool_init_free_block(remainder, extent, remainder_span, (uint32_t)required);
+        block->span = (uint32_t)required;
         if (extent->last == block) extent->last = remainder;
         PoolBlock* after = pool_block_next(remainder);
         if (after) after->prev_span = remainder->span;
@@ -915,7 +923,7 @@ void* pool_realloc(Pool* pool, void* ptr, size_t size) {
                   ptr, pool->pool_id);
         return NULL;
     }
-    size_t required = pool_block_required_size(size);
+    size_t required = pool_block_required_size(pool, size);
     if (required == 0) return NULL;
     size_t old_size = block->requested;
 
