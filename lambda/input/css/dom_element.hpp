@@ -1076,7 +1076,7 @@ struct ShadowStyle {
 };
 
 // tier-1: doc-pool, survives relayout
-struct DomElementExt {
+struct DomStyleRareExt {
     // adoption changes ownerDocument, not the pool owning reclaimable metadata (D5.5.1).
     lam::Up<DomDocument> storage_document;
     NameId name_id;  // caches the catalog ID of a namespaced tag’s local name
@@ -1243,7 +1243,7 @@ struct DomElement : DomNode {
     };
     lam::ViewProp<TableCellProp, DomViewSlot::td> td;  // table cell specific properties
     lam::Own<DomStyleExt> style_ext;
-    lam::Own<DomElementExt> ext; // rare DOM/view state, allocated lazily from doc pool
+    lam::Own<DomStyleRareExt> ext; // rare DOM/view state, allocated lazily from doc pool
 
     // vector path for PDF/SVG curve rendering
     // Layout cache for avoiding redundant layout computations (Taffy-inspired)
@@ -1272,7 +1272,7 @@ struct DomElement : DomNode {
         return owner ? owner->document_pool.get() : nullptr;
     }
     bool preserve_storage_owner() {
-        DomElementExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_ext();
         if (!data) return false;
         if (!data->storage_document) data->storage_document = doc;
         return true;
@@ -1515,29 +1515,29 @@ struct DomElement : DomNode {
     DomText* append_text(const char* text_content);
     DomComment* append_comment(const char* comment_content);
 
-    DomElementExt* ensure_ext() {
+    DomStyleRareExt* ensure_ext() {
         if (!ext && doc && storage_pool()) {
-            ext = lam::own((DomElementExt*)pool_calloc(storage_pool(), sizeof(DomElementExt)));
+            ext = lam::own((DomStyleRareExt*)pool_calloc(storage_pool(), sizeof(DomStyleRareExt)));
             if (ext) doc->services.ext_allocations++;
         }
         return ext;
     }
     template<class T, class Slot>
-    T* ensure_ext_group(Slot DomElementExt::*slot) {
-        DomElementExt* data = ensure_ext();
+    T* ensure_ext_group(Slot DomStyleRareExt::*slot) {
+        DomStyleRareExt* data = ensure_ext();
         if (!data) return nullptr;
         Slot& group = data->*slot;
         if (!group) group = Slot((T*)pool_calloc(storage_pool(), sizeof(T)));
         return group;
     }
     DomAttributeCache* attribute_cache() const { return ext ? ext->attributes.get() : nullptr; }
-    DomAttributeCache* ensure_attribute_cache() { return ensure_ext_group<DomAttributeCache>(&DomElementExt::attributes); }
+    DomAttributeCache* ensure_attribute_cache() { return ensure_ext_group<DomAttributeCache>(&DomStyleRareExt::attributes); }
     bool has_recorded_attributes() const {
         const DomAttributeCache* cache = attribute_cache();
         return cache && cache->attributes_are_recorded;
     }
     DomFragmentGeometry* fragment_geometry() const { return ext ? ext->fragment_geometry.get() : nullptr; }
-    DomFragmentGeometry* ensure_fragment_geometry() { return ensure_ext_group<DomFragmentGeometry>(&DomElementExt::fragment_geometry); }
+    DomFragmentGeometry* ensure_fragment_geometry() { return ensure_ext_group<DomFragmentGeometry>(&DomStyleRareExt::fragment_geometry); }
     PseudoStyle* pseudo_style_group() const { return style_ext ? style_ext->pseudo_styles.get() : nullptr; }
     StyleTree* pseudo_style(PseudoStyleKind kind) const {
         if (node_flags & DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES) {
@@ -1596,14 +1596,14 @@ struct DomElement : DomNode {
     float last_remembered_width() const { return ext ? ext->last_remembered_width : 0.0f; }
     float last_remembered_height() const { return ext ? ext->last_remembered_height : 0.0f; }
     void set_last_remembered_width(float value) {
-        DomElementExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_ext();
         if (data) {
             data->last_remembered_width = value;
             data->has_last_remembered_width = true;
         }
     }
     void set_last_remembered_height(float value) {
-        DomElementExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_ext();
         if (data) {
             data->last_remembered_height = value;
             data->has_last_remembered_height = true;
@@ -1622,7 +1622,7 @@ struct DomElement : DomNode {
         return ext ? ext->animated_display : DisplayValue{CSS_VALUE__UNDEF, CSS_VALUE__UNDEF};
     }
     void set_animated_display(DisplayValue value) {
-        DomElementExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_ext();
         if (data) {
             data->animated_display = value;
             data->has_animated_display = true;
@@ -1632,7 +1632,7 @@ struct DomElement : DomNode {
         if (ext) ext->has_animated_display = false;
     }
     ShadowStyle* shadow_style() const { return ext ? ext->shadow.get() : nullptr; }
-    ShadowStyle* ensure_shadow_style() { return ensure_ext_group<ShadowStyle>(&DomElementExt::shadow); }
+    ShadowStyle* ensure_shadow_style() { return ensure_ext_group<ShadowStyle>(&DomStyleRareExt::shadow); }
     DomElement* shadow_host_element() const {
         const ShadowStyle* state = shadow_style();
         return state ? state->host.get() : nullptr;
@@ -1671,7 +1671,7 @@ struct DomElement : DomNode {
         return tag_id;
     }
     PopoverStyle* popover_style() const { return ext ? ext->popover.get() : nullptr; }
-    PopoverStyle* ensure_popover_style() { return ensure_ext_group<PopoverStyle>(&DomElementExt::popover); }
+    PopoverStyle* ensure_popover_style() { return ensure_ext_group<PopoverStyle>(&DomStyleRareExt::popover); }
     bool is_popover_open() const { const auto* data = popover_style(); return data && data->open; }
     bool is_in_top_layer() const { const auto* data = popover_style(); return data && data->in_top_layer; }
     void set_popover_open(bool value) {
@@ -1680,7 +1680,7 @@ struct DomElement : DomNode {
     }
     bool is_dialog_modal() const { return ext && ext->dialog_modal; }
     void set_dialog_modal(bool value) {
-        DomElementExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_ext();
         if (data) data->dialog_modal = value;
     }
     void reset_view_ext() {
@@ -1696,7 +1696,7 @@ struct DomElement : DomNode {
 };
 
 LAM_NODE_OF(DomElement, NodeDocument);
-LAM_NODE_OF(DomElementExt, NodeDocument);
+LAM_NODE_OF(DomStyleRareExt, NodeDocument);
 LAM_NODE_OF(DomDocument, NodeDocument);
 
 inline const DomNode* dom_shadow_including_parent(const DomNode* node) {

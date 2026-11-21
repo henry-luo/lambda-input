@@ -1123,7 +1123,7 @@ struct DomManualSlotLink {
 
 static void dom_manual_slot_unlink(DomManualSlotLink* link) {
     if (!link) return;
-    DomElementExt* state = link->slot->ext;
+    DomStyleRareExt* state = link->slot->ext;
     if (link->previous) link->previous->next = link->next;
     else state->manual_slot_first = link->next;
     if (link->next) link->next->previous = link->previous;
@@ -1166,7 +1166,7 @@ DomNode* dom_slot_assigned_adjacent(const DomSlotAssignment& assignment,
                                   DomNode* current, bool forward) {
     if (!assignment.host) return nullptr;
     if (assignment.manual) {
-        DomElementExt* state = assignment.slot->ext;
+        DomStyleRareExt* state = assignment.slot->ext;
         if (!state) return nullptr;
         DomManualSlotLink* link = dom_manual_slot_link(assignment.host->doc, current);
         if (current && (!link || link->slot != assignment.slot)) return nullptr;
@@ -1212,7 +1212,7 @@ static bool dom_slot_add_changed_root(ArrayList* roots, DomElement* root) {
 
 bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* inputs,
                                    int count, ArrayList* affected_roots) {
-    DomElementExt* state = count ? slot->ensure_ext() : slot->ext.get();
+    DomStyleRareExt* state = count ? slot->ensure_ext() : slot->ext.get();
     if (!state) return count == 0;
     struct NodeIdentity { DomNode* node; };
     TypedHashMap<NodeIdentity, HashMapPointerMemberKeyOps<NodeIdentity, &NodeIdentity::node>> seen = {};
@@ -2289,7 +2289,7 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
             if (!qualified_tag) return nullptr;
             NameId local_id = well_known_name_id(native_type->name);
             if (local_id != NAME_ID_NONE) {
-                DomElementExt* state = element->ensure_ext();
+                DomStyleRareExt* state = element->ensure_ext();
                 if (!state) {
                     pool_free(element->storage_pool(), (void*)qualified_tag);
                     return nullptr;
@@ -2431,7 +2431,7 @@ void dom_element_invalidate_custom_property_index(DomElement* element) {
 }
 
 CssCustomProp* DomElement::prepend_css_variable(const char* name) {
-    DomElementExt* state = ensure_ext();
+    DomStyleRareExt* state = ensure_ext();
     if (!state) return nullptr;
     // the list and index follow the node's physical owner through adoption (D5.5.1).
     CssCustomProp* entry = (CssCustomProp*)pool_calloc(storage_pool(), sizeof(CssCustomProp));
@@ -2626,7 +2626,7 @@ bool dom_element_commit_inline_declarations(DomElement* element, CssRule* rule, 
     return false;
 #else
     if (!element || !element->doc || !rule || !text) return false;
-    DomElementExt* ext = element->ensure_ext();
+    DomStyleRareExt* ext = element->ensure_ext();
     if (!ext) return false;
     DomInlineDeclarations* block = ext->inline_declarations;
     if (!block) {
@@ -3187,7 +3187,7 @@ void dom_attribute_node_release_retired_storage(DomAttr* attribute) {
 
 void dom_attribute_node_attach(DomElement* element, DomAttr* attribute) {
     if (!element || !attribute || attribute->owner_element == element) return;
-    DomElementExt* extension = element->ensure_ext();
+    DomStyleRareExt* extension = element->ensure_ext();
     if (!extension) return;
     dom_attribute_node_detach(attribute);
     attribute->owner_element = lam::up(element);
@@ -4010,7 +4010,7 @@ static int css_custom_property_index_compare(const void* first, const void* seco
 static CssCustomPropertyIndex* css_custom_property_index(DomElement* element) {
     CssCustomProp* variables = element->css_variables();
     if (!variables || !variables->next || !element->doc) return nullptr;
-    DomElementExt* ext = element->ext;
+    DomStyleRareExt* ext = element->ext;
     CssCustomPropertyIndex* index = ext->custom_property_index;
     if (index && index->source == variables) return index;
     dom_element_invalidate_custom_property_index(element);
