@@ -755,15 +755,15 @@ static const char* tag_local_suffix(const char* spelling) {
 
 static const char* direct_namespace_uri(const DomElement* element) {
     if (element->flag(ELMT_FLAG_HTML_NAMESPACE)) return dom_html_namespace_uri(element->doc);
-    return element->style_ext ? element->style_ext->namespace_uri.get() : nullptr;
+    return element->ext ? element->ext->namespace_uri.get() : nullptr;
 }
 
 static bool clear_direct_namespace_uri(DomElement* element) {
-    if (!element->flag(ELMT_FLAG_HTML_NAMESPACE) && (!element->style_ext || !element->style_ext->namespace_uri))
+    if (!element->flag(ELMT_FLAG_HTML_NAMESPACE) && (!element->ext || !element->ext->namespace_uri))
         return false;
     element->set_flag(ELMT_FLAG_HTML_NAMESPACE, false);
-    if (element->style_ext) element->style_ext->namespace_uri = nullptr;
-    if (element->style_ext && element->style_ext->empty()) element->release_style_ext();
+    if (element->ext) element->ext->namespace_uri = nullptr;
+    if (element->ext && element->ext->empty()) element->release_ext();
     return true;
 }
 
@@ -772,10 +772,10 @@ static bool set_direct_namespace_uri(DomElement* element, const char* uri) {
     if (!html) {
         const char* canonical = dom_intern_namespace_uri(element->storage_owner(), uri);
         if (!canonical) return false;
-        DomStyleExt* slots = element->ensure_style_ext();
+        DomStyleExt* slots = element->ensure_ext();
         if (!slots) return false;
         slots->namespace_uri = lam::up(canonical);
-    } else if (element->style_ext && element->style_ext->namespace_uri) {
+    } else if (element->ext && element->ext->namespace_uri) {
         clear_direct_namespace_uri(element);
     }
     // the flags and sidecar retain the expanded namespace after reparenting.
@@ -1123,7 +1123,7 @@ struct DomManualSlotLink {
 
 static void dom_manual_slot_unlink(DomManualSlotLink* link) {
     if (!link) return;
-    DomStyleRareExt* state = link->slot->ext;
+    DomStyleRareExt* state = link->slot->rare_ext;
     if (link->previous) link->previous->next = link->next;
     else state->manual_slot_first = link->next;
     if (link->next) link->next->previous = link->previous;
@@ -1137,8 +1137,8 @@ void dom_slot_release_manual_links(DomNode* node, DomManualSlotLink* binding) {
     // them before either endpoint can recycle, including across adoption.
     dom_manual_slot_unlink(binding);
     DomElement* element = node->as_element();
-    while (element && element->ext && element->ext->manual_slot_first)
-        dom_manual_slot_unlink(element->ext->manual_slot_first);
+    while (element && element->rare_ext && element->rare_ext->manual_slot_first)
+        dom_manual_slot_unlink(element->rare_ext->manual_slot_first);
 }
 
 void dom_slot_transfer_manual_link(DomManualSlotLink** source, DomManualSlotLink** destination) {
@@ -1166,7 +1166,7 @@ DomNode* dom_slot_assigned_adjacent(const DomSlotAssignment& assignment,
                                   DomNode* current, bool forward) {
     if (!assignment.host) return nullptr;
     if (assignment.manual) {
-        DomStyleRareExt* state = assignment.slot->ext;
+        DomStyleRareExt* state = assignment.slot->rare_ext;
         if (!state) return nullptr;
         DomManualSlotLink* link = dom_manual_slot_link(assignment.host->doc, current);
         if (current && (!link || link->slot != assignment.slot)) return nullptr;
@@ -1212,7 +1212,7 @@ static bool dom_slot_add_changed_root(ArrayList* roots, DomElement* root) {
 
 bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* inputs,
                                    int count, ArrayList* affected_roots) {
-    DomStyleRareExt* state = count ? slot->ensure_ext() : slot->ext.get();
+    DomStyleRareExt* state = count ? slot->ensure_rare_ext() : slot->rare_ext.get();
     if (!state) return count == 0;
     struct NodeIdentity { DomNode* node; };
     TypedHashMap<NodeIdentity, HashMapPointerMemberKeyOps<NodeIdentity, &NodeIdentity::node>> seen = {};
@@ -2234,7 +2234,7 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
         element->shared_pseudo_reset_slots = 0;
         element->set_flag(ELMT_FLAG_LOCAL_NAME_IS_TAG, false);
         element->set_flag(ELMT_FLAG_LOCAL_NAME_IS_TAG_SUFFIX, false);
-        if (element->ext) element->ext->name_id = NAME_ID_NONE;
+        if (element->rare_ext) element->rare_ext->name_id = NAME_ID_NONE;
         if (element->specified_style_shared()) {
             style_epoch_unbind_element(element);
         } else if (element->specified_style_borrowed()) {
@@ -2289,7 +2289,7 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
             if (!qualified_tag) return nullptr;
             NameId local_id = well_known_name_id(native_type->name);
             if (local_id != NAME_ID_NONE) {
-                DomStyleRareExt* state = element->ensure_ext();
+                DomStyleRareExt* state = element->ensure_rare_ext();
                 if (!state) {
                     pool_free(element->storage_pool(), (void*)qualified_tag);
                     return nullptr;
@@ -2421,17 +2421,17 @@ struct CssCustomPropertyIndex {
 };
 
 void dom_element_invalidate_custom_property_index(DomElement* element) {
-    CssCustomPropertyIndex* index = element && element->ext
-        ? element->ext->custom_property_index.get() : nullptr;
+    CssCustomPropertyIndex* index = element && element->rare_ext
+        ? element->rare_ext->custom_property_index.get() : nullptr;
     if (!index) return;
     // names and candidates borrow declaration storage; retire before recascade frees it (D5.5.1).
     pool_free(element->storage_pool(), index->entries);
     pool_free(element->storage_pool(), index);
-    element->ext->custom_property_index = nullptr;
+    element->rare_ext->custom_property_index = nullptr;
 }
 
 CssCustomProp* DomElement::prepend_css_variable(const char* name) {
-    DomStyleRareExt* state = ensure_ext();
+    DomStyleRareExt* state = ensure_rare_ext();
     if (!state) return nullptr;
     // the list and index follow the node's physical owner through adoption (D5.5.1).
     CssCustomProp* entry = (CssCustomProp*)pool_calloc(storage_pool(), sizeof(CssCustomProp));
@@ -2459,9 +2459,9 @@ static bool dom_element_custom_property_selected(const CssCustomProp* prop,
 static bool dom_element_clear_custom_properties(DomElement* element,
     CssCustomSelection selection, const char* name = nullptr,
     const CssDeclaration* keep = nullptr, const void* effect = nullptr) {
-    if (!element || !element->doc || !element->ext) return false;
+    if (!element || !element->doc || !element->rare_ext) return false;
     bool removed = false;
-    lam::Own<CssCustomProp>* slot = &element->ext->css_variables;
+    lam::Own<CssCustomProp>* slot = &element->rare_ext->css_variables;
     while (*slot) {
         CssCustomProp* prop = *slot;
         if (prop->declaration == keep || !dom_element_custom_property_selected(prop, selection, name, effect)) {
@@ -2611,13 +2611,13 @@ static void dom_inline_declarations_destroy(DomDocumentResourceData* resource) {
 }
 
 static void dom_element_clear_inline_declaration_block(DomElement* element) {
-    if (element->ext && element->ext->inline_declarations)
-        dom_inline_declarations_reset(element->ext->inline_declarations);
+    if (element->rare_ext && element->rare_ext->inline_declarations)
+        dom_inline_declarations_reset(element->rare_ext->inline_declarations);
 }
 
 CssRule* dom_element_inline_declaration_block(DomElement* element) {
-    DomInlineDeclarations* block = element && element->ext
-        ? element->ext->inline_declarations : nullptr;
+    DomInlineDeclarations* block = element && element->rare_ext
+        ? element->rare_ext->inline_declarations : nullptr;
     return block && block->pool ? &block->rule : nullptr;
 }
 
@@ -2626,7 +2626,7 @@ bool dom_element_commit_inline_declarations(DomElement* element, CssRule* rule, 
     return false;
 #else
     if (!element || !element->doc || !rule || !text) return false;
-    DomStyleRareExt* ext = element->ensure_ext();
+    DomStyleRareExt* ext = element->ensure_rare_ext();
     if (!ext) return false;
     DomInlineDeclarations* block = ext->inline_declarations;
     if (!block) {
@@ -2671,18 +2671,18 @@ bool dom_element_commit_inline_declarations(DomElement* element, CssRule* rule, 
 #endif
 }
 
-DomStyleExt* DomElement::ensure_style_ext() {
-    if (!style_ext) {
+DomStyleExt* DomElement::ensure_ext() {
+    if (!ext) {
         Pool* pool = storage_pool();
-        if (pool) style_ext = lam::own((DomStyleExt*)pool_calloc(pool, sizeof(DomStyleExt)));
+        if (pool) ext = lam::own((DomStyleExt*)pool_calloc(pool, sizeof(DomStyleExt)));
     }
-    return style_ext;
+    return ext;
 }
 
-void DomElement::release_style_ext() {
-    if (!style_ext) return;
+void DomElement::release_ext() {
+    if (!ext) return;
     release_pseudo_style_group();
-    lam::free_owned(storage_pool(), style_ext);
+    lam::free_owned(storage_pool(), ext);
 }
 
 // slot zero is absence; a published reset is immutable until its physical document retires.
@@ -2711,12 +2711,12 @@ StyleTree* DomElement::shared_pseudo_style(PseudoStyleKind kind) const {
 }
 
 PseudoStyle* DomElement::ensure_pseudo_style_group() {
-    DomStyleExt* slots = ensure_style_ext();
+    DomStyleExt* slots = ensure_ext();
     if (!slots) return nullptr;
     if (!slots->pseudo_styles) {
         slots->pseudo_styles = lam::own((PseudoStyle*)pool_calloc(storage_pool(), sizeof(PseudoStyle)));
         if (!slots->pseudo_styles) {
-            if (slots->empty()) release_style_ext();
+            if (slots->empty()) release_ext();
             return nullptr;
         }
         node_flags |= DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES;
@@ -2730,7 +2730,7 @@ void DomElement::release_pseudo_style_group() {
     for (auto& slot : group->styles) {
         if (slot) style_tree_retire_borrow_source(slot);
     }
-    lam::free_owned(storage_pool(), style_ext->pseudo_styles);
+    lam::free_owned(storage_pool(), ext->pseudo_styles);
     node_flags &= ~DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES;
 }
 
@@ -2766,8 +2766,8 @@ void DomElement::set_pseudo_style(PseudoStyleKind kind, StyleTree* style) {
 void dom_element_release_retired_storage(DomElement* element) {
     if (!element || !element->doc) return;
     // no live Attr wrapper can reach an owner selected for retirement; keep detached values intact.
-    while (element->ext && element->ext->attribute_nodes)
-        dom_attribute_node_detach(element->ext->attribute_nodes);
+    while (element->rare_ext && element->rare_ext->attribute_nodes)
+        dom_attribute_node_detach(element->rare_ext->attribute_nodes);
     Element* backing_source = dom_node_registry_backing_source(
         element->doc, static_cast<DomNode*>(element));
     if (element->doc->element_dom_map && backing_source &&
@@ -2795,12 +2795,12 @@ void dom_element_release_retired_storage(DomElement* element) {
     dom_element_invalidate_custom_property_index(element);
     style_epoch_selection_clear_element(element);
     // retirement releases both the authored pool and its document resource registration (D5.5.1).
-    if (element->ext && element->ext->inline_declarations)
-        dom_document_release_resource(element->storage_owner(), element->ext->inline_declarations);
+    if (element->rare_ext && element->rare_ext->inline_declarations)
+        dom_document_release_resource(element->storage_owner(), element->rare_ext->inline_declarations);
     // pre-layout image loads can allocate a style before the view teardown can see it
     lam::free_owned(element->storage_pool(), element->embed);
-    element->release_style_ext();
-    if (element->ext) {
+    element->release_ext();
+    if (element->rare_ext) {
         // the snapshot and its dynamic tracks survive relayout, then retire together.
         CssTransitionElemState* transition = element->transition_state_prop();
         if (transition) {
@@ -2810,15 +2810,15 @@ void dom_element_release_retired_storage(DomElement* element) {
         element->set_transition_state_prop(nullptr);
         if (DomAttributeCache* attrs = element->attribute_cache()) {
             pool_free(element->storage_pool(), attrs->attribute_names_cache);
-            lam::free_owned(element->storage_pool(), element->ext->attributes);
+            lam::free_owned(element->storage_pool(), element->rare_ext->attributes);
         }
-        lam::free_owned(element->storage_pool(), element->ext->fragment_geometry);
+        lam::free_owned(element->storage_pool(), element->rare_ext->fragment_geometry);
         if (element->is_in_top_layer()) dom_top_layer_remove(element);
-        lam::free_owned(element->storage_pool(), element->ext->popover);
-        lam::free_owned(element->storage_pool(), element->ext->shadow);
-        pool_free(element->storage_pool(), element->ext->signaled_slot_assignment.get());
-        pool_free(element->storage_pool(), element->ext);
-        element->ext = nullptr;
+        lam::free_owned(element->storage_pool(), element->rare_ext->popover);
+        lam::free_owned(element->storage_pool(), element->rare_ext->shadow);
+        pool_free(element->storage_pool(), element->rare_ext->signaled_slot_assignment.get());
+        pool_free(element->storage_pool(), element->rare_ext);
+        element->rare_ext = nullptr;
     }
 }
 
@@ -2947,7 +2947,7 @@ static void dom_element_attribute_did_set(DomElement* element,
         dom_element_release_cached_classes(element);
         element->classes = lam::own(classes);
     } else if (strcmp(lower_name, "style") == 0) {
-        DomInlineDeclarations* block = element->ext ? element->ext->inline_declarations : nullptr;
+        DomInlineDeclarations* block = element->rare_ext ? element->rare_ext->inline_declarations : nullptr;
         if (same_value && !(block && block->updating)) return;
         dom_element_clear_inline_style_declarations(element);
         if (!(block && block->updating)) dom_element_clear_inline_declaration_block(element);
@@ -3158,11 +3158,11 @@ void dom_attribute_node_detach(DomAttr* attribute) {
     DomElement* owner = attribute ? attribute->owner_element.get() : nullptr;
     if (!owner) return;
     DomAttr* previous = nullptr;
-    for (DomAttr* current = owner->ext ? owner->ext->attribute_nodes.get() : nullptr;
+    for (DomAttr* current = owner->rare_ext ? owner->rare_ext->attribute_nodes.get() : nullptr;
          current; current = current->attribute_next) {
         if (current == attribute) {
             if (previous) previous->attribute_next = attribute->attribute_next;
-            else owner->ext->attribute_nodes = attribute->attribute_next;
+            else owner->rare_ext->attribute_nodes = attribute->attribute_next;
             break;
         }
         previous = current;
@@ -3187,7 +3187,7 @@ void dom_attribute_node_release_retired_storage(DomAttr* attribute) {
 
 void dom_attribute_node_attach(DomElement* element, DomAttr* attribute) {
     if (!element || !attribute || attribute->owner_element == element) return;
-    DomStyleRareExt* extension = element->ensure_ext();
+    DomStyleRareExt* extension = element->ensure_rare_ext();
     if (!extension) return;
     dom_attribute_node_detach(attribute);
     attribute->owner_element = lam::up(element);
@@ -3200,7 +3200,7 @@ void dom_attribute_node_attach(DomElement* element, DomAttr* attribute) {
 static DomAttr* dom_element_attribute_node_value(DomElement* element, const char* namespace_uri,
         const char* qualified_name, const char* local_name, const char* value) {
     const char* uri = namespace_uri ? namespace_uri : "";
-    for (DomAttr* attribute = element->ext ? element->ext->attribute_nodes.get() : nullptr;
+    for (DomAttr* attribute = element->rare_ext ? element->rare_ext->attribute_nodes.get() : nullptr;
          attribute; attribute = attribute->attribute_next) {
         if (strcmp(attribute->namespace_uri, uri) == 0 && strcmp(attribute->local_name, local_name) == 0)
             return attribute;
@@ -3230,7 +3230,7 @@ DomAttr* dom_element_attribute_node_ns(DomElement* element,
 
 static void dom_attribute_nodes_did_set(DomElement* element, const char* key, const char* value,
         const char* namespace_uri = nullptr) {
-    for (DomAttr* attribute = element->ext ? element->ext->attribute_nodes.get() : nullptr;
+    for (DomAttr* attribute = element->rare_ext ? element->rare_ext->attribute_nodes.get() : nullptr;
          attribute; attribute = attribute->attribute_next) {
         if (strcmp(attribute->qualified_name, key) == 0 &&
             (!namespace_uri || strcmp(attribute->namespace_uri, namespace_uri) == 0))
@@ -3240,7 +3240,7 @@ static void dom_attribute_nodes_did_set(DomElement* element, const char* key, co
 
 static void dom_attribute_nodes_did_remove(DomElement* element, const char* key,
         const char* namespace_uri = nullptr) {
-    for (DomAttr* attribute = element->ext ? element->ext->attribute_nodes.get() : nullptr; attribute;) {
+    for (DomAttr* attribute = element->rare_ext ? element->rare_ext->attribute_nodes.get() : nullptr; attribute;) {
         DomAttr* next = attribute->attribute_next;
         if (strcmp(attribute->qualified_name, key) == 0 &&
             (!namespace_uri || strcmp(attribute->namespace_uri, namespace_uri) == 0))
@@ -4010,7 +4010,7 @@ static int css_custom_property_index_compare(const void* first, const void* seco
 static CssCustomPropertyIndex* css_custom_property_index(DomElement* element) {
     CssCustomProp* variables = element->css_variables();
     if (!variables || !variables->next || !element->doc) return nullptr;
-    DomStyleRareExt* ext = element->ext;
+    DomStyleRareExt* ext = element->rare_ext;
     CssCustomPropertyIndex* index = ext->custom_property_index;
     if (index && index->source == variables) return index;
     dom_element_invalidate_custom_property_index(element);
@@ -4458,7 +4458,7 @@ static bool share_pseudo_reset(DomElement* element, CssRule* rule, CssSpecificit
         for (const auto& style : group->styles) occupied |= (bool)style;
         if (!occupied) {
             element->release_pseudo_style_group();
-            if (element->style_ext->empty()) element->release_style_ext();
+            if (element->ext->empty()) element->release_ext();
         }
     }
     element->set_shared_pseudo_reset_slot(kind, slot);

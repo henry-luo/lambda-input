@@ -643,7 +643,7 @@ static bool dom_subtree_can_retire(DomDocument* doc, DomNode* node,
     }
     if (bytes) *bytes += record->primary_size;
     if (node->is_element()) {
-        for (DomAttr* attribute = node->as_element()->ext ? node->as_element()->ext->attribute_nodes.get() : nullptr;
+        for (DomAttr* attribute = node->as_element()->rare_ext ? node->as_element()->rare_ext->attribute_nodes.get() : nullptr;
              attribute; attribute = attribute->attribute_next) {
             if (!dom_subtree_can_retire(doc, attribute, blocked, allowed_pins, bytes)) return false;
         }
@@ -722,8 +722,8 @@ static size_t dom_retire_subtree(DomDocument* doc, DomNode* node,
     dom_slot_release_manual_links(node, record->manual_slot_link);
     size_t retired = 0;
     if (node->is_element()) {
-        while (node->as_element()->ext && node->as_element()->ext->attribute_nodes) {
-            DomAttr* attribute = node->as_element()->ext->attribute_nodes;
+        while (node->as_element()->rare_ext && node->as_element()->rare_ext->attribute_nodes) {
+            DomAttr* attribute = node->as_element()->rare_ext->attribute_nodes;
             dom_attribute_node_detach(attribute);
             retired += dom_retire_subtree(doc, attribute, pending);
         }
