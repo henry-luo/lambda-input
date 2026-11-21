@@ -467,7 +467,8 @@ TEST_F(InputRoundtripTest, TomlStringsValidateScalarEscapesAndSourceCharacters) 
         ASSERT_NE(parsed, nullptr);
         EXPECT_FALSE(parsed->parse_failed);
     }
-    Input* parsed = input_from_source("x = \"\"\"one\r\ntwo\"\"\"\n", nullptr, create_lambda_string("toml"), nullptr);
+    char source[] = "x = \"\"\"one\r\ntwo\"\"\"\n";
+    Input* parsed = input_from_source(source, nullptr, create_lambda_string("toml"), nullptr);
     ASSERT_NE(parsed, nullptr);
     ASSERT_FALSE(parsed->parse_failed);
     String* value = MapReader(parsed->root.map).get("x").item().get_safe_string();
