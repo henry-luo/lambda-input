@@ -81,8 +81,9 @@ static void scheduled_task_free(ScheduledTask* task) {
     mem_free(task);
 }
 
-static bool remove_queued_task_locked(NetworkScheduler* scheduler, void* task_data) {
-    if (!scheduler) return false;
+static ScheduledTask* find_queued_task_locked(NetworkScheduler* scheduler, void* task_data,
+        int* found_priority, int* found_index) {
+    if (!scheduler) return NULL;
 
     for (int priority = PRIORITY_CRITICAL; priority <= PRIORITY_LOW; priority++) {
         ArrayList* queue = scheduler->queues[priority];
@@ -91,15 +92,14 @@ static bool remove_queued_task_locked(NetworkScheduler* scheduler, void* task_da
         for (int i = 0; i < queue->length; i++) {
             ScheduledTask* task = (ScheduledTask*)queue->data[i];
             if (task && task->task_data == task_data) {
-                arraylist_remove(queue, i);
-                scheduler->queued_count--;
-                scheduled_task_free(task);
-                return true;
+                *found_priority = priority;
+                *found_index = i;
+                return task;
             }
         }
     }
 
-    return false;
+    return NULL;
 }
 
 static OriginCounter* get_origin_counter_locked(NetworkScheduler* scheduler,
@@ -489,12 +489,38 @@ bool network_scheduler_submit_download(NetworkScheduler* scheduler,
                                   priority, "network-scheduler: submit download failed");
 }
 
+bool network_scheduler_promote(NetworkScheduler* scheduler, void* task_data,
+                               ResourcePriority priority) {
+    if (!scheduler || !task_data || priority < PRIORITY_CRITICAL || priority > PRIORITY_LOW)
+        return false;
+    pthread_mutex_lock(&scheduler->mutex);
+    int previous = 0, index = 0;
+    ScheduledTask* task = find_queued_task_locked(scheduler, task_data, &previous, &index);
+    // append before detaching so allocation failure leaves the old queue and order intact.
+    bool promoted = task && priority < previous &&
+        arraylist_append(scheduler->queues[priority], task) != 0;
+    if (promoted) {
+        arraylist_remove(scheduler->queues[previous], index);
+        task->priority = priority;
+        pthread_cond_broadcast(&scheduler->cond);
+    }
+    pthread_mutex_unlock(&scheduler->mutex);
+    return promoted;
+}
+
 bool network_scheduler_cancel(NetworkScheduler* scheduler, void* task_data) {
     if (!scheduler || !task_data) return false;
 
     pthread_mutex_lock(&scheduler->mutex);
-    bool cancelled = remove_queued_task_locked(scheduler, task_data);
-    if (cancelled) pthread_cond_broadcast(&scheduler->cond);
+    int priority = 0, index = 0;
+    ScheduledTask* task = find_queued_task_locked(scheduler, task_data, &priority, &index);
+    bool cancelled = task != NULL;
+    if (cancelled) {
+        arraylist_remove(scheduler->queues[priority], index);
+        scheduler->queued_count--;
+        scheduled_task_free(task);
+        pthread_cond_broadcast(&scheduler->cond);
+    }
     pthread_mutex_unlock(&scheduler->mutex);
 
     if (cancelled) {

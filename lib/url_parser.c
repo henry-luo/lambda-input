@@ -458,6 +458,12 @@ UrlError url_parse_into(const char* input, Url* url) {
                 long port_num = strtol(port_buf, &endptr, 10);
                 if (*endptr == '\0' && port_num >= 0 && port_num <= 65535) {
                     url->port_number = (uint16_t)port_num;
+                    uint16_t default_port = url_default_port_for_scheme(url->scheme);
+                    // a default port is absent in the parsed record as well as its serialized href.
+                    if (default_port && url->port_number == default_port) {
+                        url_free_string(url->port);
+                        url->port = NULL;
+                    }
                 }
             }
         } else {
