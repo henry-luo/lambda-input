@@ -64,28 +64,27 @@ void dom_lifecycle_release_backing_roots(DomDocument* doc);
 void dom_lifecycle_release_slot_links(DomDocument* doc);
 bool dom_node_registry_register(DomDocument* doc, DomNode* node,
                                 size_t primary_size, bool recyclable);
+bool dom_adopt_detached_subtree(DomDocument* source, DomDocument* destination, DomNode* node);
 bool dom_node_registry_transfer(DomDocument* source, DomDocument* destination,
                                 DomNode* node, uint32_t* destination_id);
-void dom_node_registry_set_backing_source(DomDocument* doc, DomNode* node,
+void dom_node_set_backing_source(DomDocument* doc, DomNode* node,
                                           Element* backing_source);
-void dom_node_registry_set_backing_value(DomDocument* doc, DomNode* node,
+void dom_node_set_backing_value(DomDocument* doc, DomNode* node,
                                          Item backing_value);
-Element* dom_node_registry_backing_source(DomDocument* doc, DomNode* node);
-void dom_node_registry_shared_source_storage(DomDocument* doc, DomNode* node,
+Element* dom_node_backing_source(DomDocument* doc, DomNode* node);
+void dom_node_borrowed_source_storage(DomDocument* doc, DomNode* node,
                                              bool* shared_type, bool* shared_data);
-Pool* dom_node_registry_owned_string_pool(DomDocument* doc, DomNode* node);
-void dom_node_registry_set_owned_string_pool(DomDocument* doc, DomNode* node, Pool* pool);
-void dom_node_registry_refresh_backing(DomDocument* doc, DomNode* node);
+void dom_node_refresh_managed_backing(DomDocument* doc, DomNode* node);
 DomNodeRef dom_node_ref(DomNode* node);
 DomNode* dom_node_ref_validate(DomDocument* doc, DomNodeRef ref);
 bool dom_node_registry_owns(DomDocument* doc, DomNode* node);
 struct DomManualSlotLink;
-DomManualSlotLink** dom_node_manual_slot_binding(DomDocument* doc, DomNode* node);
 bool dom_node_pin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason);
 bool dom_node_unpin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason);
 uint32_t dom_node_pin_count(DomDocument* doc, DomNodeRef ref,
                             DomNodePinReason reason);
-void dom_node_clear_reason_pins(DomDocument* doc, DomNodePinReason reason);
+void dom_node_retain_live(DomNode* node);
+void dom_node_release_live(DomNode* node);
 void dom_node_schedule_detached(DomDocument* doc, DomNode* root);
 void dom_node_cancel_detached(DomDocument* doc, DomNode* root);
 void dom_js_mutation_records_reset(DomDocument* doc);
@@ -103,8 +102,8 @@ bool dom_retire_idle(uint64_t budget_us);
 bool dom_retire_wrapper_collection_due(DomDocument* doc, size_t threshold);
 void dom_retire_wrapper_collection_done(DomDocument* doc);
 void dom_retire_begin_destroy(DomDocument* doc);
-void dom_lifecycle_release_unattached_form_props(DomDocument* doc);
-void dom_lifecycle_release_all_form_props(DomDocument* doc);
+void form_control_adopt_document(DomElement* elem);
+void form_control_release_document(DomDocument* doc, bool include_attached);
 void dom_lifecycle_get_stats(DomDocument* doc, DomLifecycleStats* out);
 
 #endif

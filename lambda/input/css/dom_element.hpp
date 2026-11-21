@@ -72,8 +72,9 @@ DomNode* dom_slot_assigned_adjacent(const DomSlotAssignment& assignment,
                                   DomNode* current = nullptr, bool forward = true);
 bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* inputs,
                                    int count, ArrayList* affected_roots);
-void dom_slot_release_manual_links(DomNode* node, DomManualSlotLink* binding);
-void dom_slot_transfer_manual_link(DomManualSlotLink** source, DomManualSlotLink** destination);
+void dom_slot_release_manual_links(DomNode* node);
+bool dom_slot_prepare_adoption(DomDocument* source, DomDocument* destination, DomNode* node);
+void dom_slot_finish_adoption(DomDocument* source, DomDocument* destination, DomNode* node, bool commit);
 DomElement* dom_find_assigned_slot(DomNode* node);
 bool dom_node_is_slottable(DomNode* node);
 DomElement* dom_flat_tree_parent(DomElement* element);
@@ -343,6 +344,8 @@ struct DomDocumentServices {
     uint32_t element_count;
     uint32_t ext_allocations;
     uint32_t layout_cache_allocations;
+    struct FormControlProp* form_controls = nullptr; // live control payloads owned by this document
+    lam::Own<struct hashmap> manual_slot_endpoints = nullptr; // endpoints participating in manual assignment
     void* node_registry;       // external generations, pins, and detached candidates
     void* style_epoch_manager; // versioned canonical specified-style pools
     void* scene3d_registry;   // document-owned native 3D viewport projections
@@ -1083,6 +1086,13 @@ struct ShadowStyle {
 };
 
 // tier-1: doc-pool, survives relayout
+// a presentation occurrence can borrow Mark storage until its first private edit (D5.5.3).
+struct DomOccurrenceSource {
+    Element* element;
+    void* borrowed_type;
+    void* borrowed_data;
+};
+
 struct DomStyleRareExt {
     // adoption changes ownerDocument, not the pool owning reclaimable metadata (D5.5.1).
     lam::Up<DomDocument> storage_document;
@@ -1190,8 +1200,7 @@ struct DomElement : DomNode {
     // Tree structure (only elements can have children)
     lam::Own<DomNode> first_child;  // First child node (Element, Text, or Comment); owns the sibling chain
     lam::Up<DomNode> last_child;    // Last child node
-    // document reference (provides Arena and Input*)
-    lam::Up<DomDocument> doc;    // Parent document (provides arena and input)
+    lam::Own<DomOccurrenceSource> occurrence_source; // allocated only for a distinct backing
 
     // HTML/CSS style related
     lam::Up<const char> id;      // Element ID attribute (cached)
@@ -1781,7 +1790,7 @@ void dom_option_text_normalized(DomElement* option, StrBuf* out);
 // DomElement* → Element*: returns pointer to the embedded Element within DomElement
 inline Element* dom_element_to_element(DomElement* de) {
     if (de->node_flags & DOM_NODE_FLAG_GC_BACKING) {
-        dom_node_registry_refresh_backing(de->doc, de);
+        dom_node_refresh_managed_backing(de->doc, de);
     }
     return &de->elmt;
 }
@@ -1813,7 +1822,7 @@ inline const DomElement* element_to_dom_element(const Element* e) {
 inline Element* dom_element_render_source(DomElement* de) {
     if (!de || de->is_synthetic()) return nullptr;
     Element* source = de->doc
-        ? dom_node_registry_backing_source(de->doc, static_cast<DomNode*>(de))
+        ? dom_node_backing_source(de->doc, static_cast<DomNode*>(de))
         : nullptr;
     return source ? source : dom_element_to_element(de);
 }

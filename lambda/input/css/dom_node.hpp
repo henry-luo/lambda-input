@@ -39,7 +39,7 @@ typedef struct Arena Arena;
 typedef struct String String;  // Lambda String type
 typedef struct Element Element;  // Lambda Element type
 
-enum DomNodeType {
+enum DomNodeType : uint8_t {
     DOM_NODE_ELEMENT = 1,     // Element node
     DOM_NODE_ATTRIBUTE = 2,   // attribute nodes have an owner, never a tree parent
     DOM_NODE_TEXT = 3,        // Text node
@@ -53,10 +53,12 @@ enum DomNodeFlag : uint8_t {
     DOM_NODE_FLAG_TEXT_OWNS_STRING = 1u << 1,
     DOM_NODE_FLAG_TEXT_REINSERTABLE = 1u << 2,
     DOM_NODE_FLAG_GC_BACKING = 1u << 3,
+    DOM_NODE_FLAG_INLINE_STRING = 1u << 6, // allocation includes its original immutable String
+    DOM_NODE_FLAG_EMBEDDED_SOURCE = 1u << 5, // embedded Mark element is its own source
     DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES = 1u << 4, // elements only: skip cold props on pseudo reads
 };
 
-typedef enum {
+enum ViewType : uint8_t {
     RDT_VIEW_NONE = 0,
     RDT_VIEW_TEXT,
     RDT_VIEW_BR,
@@ -73,7 +75,7 @@ typedef enum {
     RDT_VIEW_TABLE_CELL,
     RDT_VIEW_TABLE_COLUMN_GROUP,  // Column group (colgroup) - CSS 2.1 §17.5.1 table layer
     RDT_VIEW_TABLE_COLUMN,        // Column (col) - CSS 2.1 §17.5.1 table layer
-} ViewType;
+};
 
 typedef struct DomNode DomNode;
 typedef DomNode View;
@@ -87,28 +89,29 @@ typedef struct ViewElement ViewElement;
 // tier-1: doc-pool, survives relayout
 struct DomNode {
     uint32_t id;             // event/state log id, monotonic per document epoch
-    DomNodeType node_type;   // Node type discriminator
+    DomNodeType node_type : 4;
+    bool layout_dirty : 1;
+    bool ruby_annotation_hidden : 1;
+    ViewType view_type;
+    uint8_t node_flags;
+    uint8_t shared_pseudo_reset_slots; // four bits each for ::before and ::after
+    lam::Up<DomDocument> doc; // current document, including detached text and comments
     lam::Up<DomNode> parent;          // Parent node (nullptr at root)
     lam::Own<DomNode> next_sibling;   // Next sibling node (nullptr if last); a child is owned through its parent's chain
     lam::Up<DomNode> prev_sibling;    // Previous sibling (nullptr if first)
 
     // view related fields
-    ViewType view_type;
     // view always has x, y, wd, hg;  otherwise, it is a property group
     float x, y, width, height;  // (x, y) relative to the BORDER box of parent block, and (width, height) forms the BORDER box of current block
     int inline_line_number;     // block-local inline line; text uses -1 until committed in this flow pass
-    // Tier-1 weak reference: state-store teardown clears it before the document epoch advances.
-    ViewState* view_state_ref;  // canonical per-view state owned by DocState
 
     // source line number in the original HTML file (0 = not tracked)
     int source_line;
 
-    // Phase 16: incremental layout support
-    bool layout_dirty;                // marked for relayout in incremental mode
-    uint8_t node_flags;               // compact subtype state; use node accessors
-    bool ruby_annotation_hidden;     // selected-view output; independent of authored visibility
-    uint8_t shared_pseudo_reset_slots; // elements only: four bits each for ::before and ::after
     float layout_height_contribution; // advance_y delta from this node during parent's layout
+
+    uint32_t external_retain_count; // durable holders follow the physical node through adoption
+    ViewState* view_state_ref; // cleared by the state store before the document epoch advances
 
     // node_name() is for all nodes, including text and comment nodes
     // whereas tag_name is only for element nodes
@@ -199,7 +202,6 @@ struct DomNode {
 
 // tier-1: node arena and document-pool strings; detached Attr values survive replacement.
 struct DomAttr : DomNode {
-    lam::Up<DomDocument> doc;
     lam::Up<DomDocument> storage_document;
     Pool* storage_pool;
     lam::Up<DomElement> owner_element;
@@ -211,7 +213,9 @@ struct DomAttr : DomNode {
 
 // CSS Generated Content keeps ::before/::after at the rendered child edges
 // when authored children are inserted dynamically.
-void dom_append_to_sibling_chain(struct DomElement* parent, DomNode* child);
+void dom_unlink_from_sibling_chain(DomNode* child);
+DomNode* dom_previous_linked_sibling(DomElement* parent, DomNode* node);
+bool dom_append_to_sibling_chain(struct DomElement* parent, DomNode* child);
 void dom_move_generated_after_to_end(struct DomElement* parent);
 
 // advance after a subtree while keeping traversal inside its supplied root.
@@ -355,6 +359,7 @@ DomText* dom_text_create_detached(String* native_string, DomDocument* doc);
  * Copy UTF-8 bytes into an individually reclaimable document-pool String.
  * Transfer it to a DomText with dom_text_adopt_document_string().
  */
+Pool* dom_text_owned_string_pool(const DomText* text);
 String* dom_document_create_string(DomDocument* doc, const char* text, size_t len);
 
 /** Transfer a String returned by dom_document_create_string() to a text node. */

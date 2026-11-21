@@ -69,32 +69,28 @@ static DomElement* mark_editor_lookup_ui_element_child(DomElement* parent,
     return nullptr;
 }
 
-static DomNode* mark_editor_take_relinked_ui_child(DomNode* old_first,
-                                                    DomElement* parent,
-                                                    Item child) {
-    if (!parent) return nullptr;
-    TypeId type_id = get_type_id(child);
-    for (DomNode* candidate = old_first; candidate; candidate = candidate->next_sibling) {
-        if (candidate->parent != parent) continue;
-        // comments use Element backing but keep a distinct, stable DOM wrapper.
-        if (type_id == LMD_TYPE_ELEMENT && candidate->is_comment() &&
-            candidate->as_comment()->native_element == child.element) {
-            candidate->parent = nullptr;
-            return candidate;
-        }
-        if (type_id == LMD_TYPE_ELEMENT && child.element && candidate->is_element() &&
-            candidate == static_cast<DomNode*>(
-                mark_editor_lookup_ui_element_child(parent, child.element))) {
-            candidate->parent = nullptr;
-            return candidate;
-        }
-        if (type_id == LMD_TYPE_STRING && candidate->is_text()) {
-            DomText* text = candidate->as_text();
-            if (text && text->native_string == child.get_safe_string()) {
-                candidate->parent = nullptr;
-                return candidate;
-            }
-        }
+static int mark_editor_relinked_node_index(ArrayList* nodes, DomNode* candidate) {
+    if (!nodes || !candidate) return -1;
+    for (int i = 0; i < arraylist_length(nodes); i++) {
+        if ((DomNode*)arraylist_get(nodes, i) == candidate) return i;
+    }
+    return -1;
+}
+
+static DomNode* mark_editor_find_relinked_ui_child(DomNode* old_first,
+                                                    DomElement* parent, Item child,
+                                                    ArrayList* selected) {
+    TypeId type = get_type_id(child);
+    Element* element = type == LMD_TYPE_ELEMENT ? child.element : nullptr;
+    String* string = type == LMD_TYPE_STRING ? child.get_safe_string() : nullptr;
+    DomElement* mapped = element ? mark_editor_lookup_ui_element_child(parent, element) : nullptr;
+    for (DomNode* node = old_first; node; node = node->next_sibling) {
+        if (node->parent != parent) continue;
+        bool matches = node == mapped ||
+            (element && node->is_comment() && node->as_comment()->native_element == element) ||
+            (string && node->is_text() && node->as_text()->native_string == string);
+        // preparation may still fail; keep the published sibling chain intact until commit.
+        if (matches && mark_editor_relinked_node_index(selected, node) < 0) return node;
     }
     return nullptr;
 }
@@ -194,14 +190,6 @@ static DomNode* mark_editor_create_relinked_ui_child(DomElement* parent, Item ch
         return static_cast<DomNode*>(candidate);
     }
     return static_cast<DomNode*>(DomText::create(string_value, parent));
-}
-
-static int mark_editor_relinked_node_index(ArrayList* nodes, DomNode* candidate) {
-    if (!nodes || !candidate) return -1;
-    for (int i = 0; i < arraylist_length(nodes); i++) {
-        if ((DomNode*)arraylist_get(nodes, i) == candidate) return i;
-    }
-    return -1;
 }
 
 //==============================================================================
@@ -313,7 +301,7 @@ void MarkEditor::dom_relink_children(Element* parent_elem) {
         if (node && mark_editor_relinked_node_index(relinked_nodes, node) >= 0) {
             continue;
         }
-        if (!node) node = mark_editor_take_relinked_ui_child(old_first, parent, child);
+        if (!node) node = mark_editor_find_relinked_ui_child(old_first, parent, child, relinked_nodes);
         if (!node) {
             node = mark_editor_create_relinked_ui_child(parent, child);
         }
@@ -368,6 +356,7 @@ void MarkEditor::dom_relink_children(Element* parent_elem) {
     DomNode* prev = nullptr;
     for (int i = 0; i < arraylist_length(relinked_nodes); i++) {
         DomNode* node = (DomNode*)arraylist_get(relinked_nodes, i);
+        if (node->parent && node->parent != parent) dom_unlink_from_sibling_chain(node);
         node->parent = lam::up(parent);
         node->prev_sibling = lam::up(prev);
         node->next_sibling = nullptr;
@@ -779,7 +768,7 @@ Item MarkEditor::container_rebuild_with_new_shape(Map* old_container,
     if (is_element && ui_document_) {
         DomElement* node = element_to_dom_element((Element*)old_container);
         if (dom_node_registry_owns(ui_document_, node)) {
-            dom_node_registry_shared_source_storage(ui_document_, node,
+            dom_node_borrowed_source_storage(ui_document_, node,
                 &source_shares_type, &source_shares_data);
         }
     }

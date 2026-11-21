@@ -442,7 +442,7 @@ bool dom_insert_prepared_backed_text(DomElement* parent, DomText* text,
         text->length = inserted_string->len;
         text->set_owns_native_string(false);
     }
-    dom_node_registry_set_backing_value(parent->doc, text,
+    dom_node_set_backing_value(parent->doc, text,
         Item{.item = s2it(inserted_string)});
     if (relinked && relinked != text) {
         if (!((DomNode*)parent)->insert_before(text, relinked) ||
@@ -554,11 +554,9 @@ DomNode* dom_source_inclusive_ancestor(DomNode* node) {
 }
 
 DomDocument* dom_node_ancestor_document(DomNode* node) {
-    while (node) {
-        if (node->is_element()) return node->as_element()->doc;
-        node = node->parent;
-    }
-    return nullptr;
+    // registered character data keeps its owner while detached; layout-only nodes can borrow a parent's.
+    while (node && !node->doc) node = node->parent;
+    return node ? node->doc.get() : nullptr;
 }
 
 DomNode* dom_source_parent(DomNode* node) {
@@ -1123,10 +1121,54 @@ DomElement* dom_shadow_first_matching_slot(DomNode* root, const char* name) {
 struct DomManualSlotLink {
     lam::Up<DomElement> slot;
     lam::Up<DomNode> node;
-    DomManualSlotLink** binding;
     lam::Up<DomManualSlotLink> previous;
     lam::Own<DomManualSlotLink> next;
 };
+
+// slots own ordered links; this reverse index covers only participants in manual assignment.
+struct DomSlotEndpoint {
+    DomNode* node;
+    DomManualSlotLink* assignment;
+    unsigned reservations;
+};
+using DomSlotEndpoints = TypedHashMap<DomSlotEndpoint,
+    HashMapPointerMemberKeyOps<DomSlotEndpoint, &DomSlotEndpoint::node>>;
+
+static DomSlotEndpoint* dom_slot_endpoint(DomDocument* doc, DomNode* node) {
+    return doc && doc->services.manual_slot_endpoints && node
+        ? DomSlotEndpoints::get(doc->services.manual_slot_endpoints, {node}) : nullptr;
+}
+
+static bool dom_slot_reserve_endpoint(DomDocument* doc, DomNode* node) {
+    DomSlotEndpoint* endpoint = dom_slot_endpoint(doc, node);
+    if (!endpoint) {
+        auto& entries = doc->services.manual_slot_endpoints;
+        if (!entries) entries = lam::own(DomSlotEndpoints::create(0));
+        if (!entries) return false;
+        DomSlotEndpoints::set(entries, {node, nullptr, 1});
+        return !DomSlotEndpoints::oom(entries);
+    }
+    ++endpoint->reservations;
+    return true;
+}
+
+static void dom_slot_prune_endpoint(DomDocument* doc, DomNode* node) {
+    DomSlotEndpoint* endpoint = dom_slot_endpoint(doc, node);
+    if (!endpoint || endpoint->assignment || endpoint->reservations) return;
+    DomElement* slot = node->as_element();
+    if (node->doc == doc && slot && slot->rare_ext && slot->rare_ext->manual_slot_first) return;
+    DomSlotEndpoints::erase(doc->services.manual_slot_endpoints, {node});
+}
+
+static void dom_slot_end_reservation(DomDocument* doc, DomNode* node) {
+    --dom_slot_endpoint(doc, node)->reservations;
+    dom_slot_prune_endpoint(doc, node);
+}
+
+static DomManualSlotLink* dom_manual_slot_link(DomDocument* doc, DomNode* node) {
+    DomSlotEndpoint* endpoint = dom_slot_endpoint(doc, node);
+    return endpoint ? endpoint->assignment : nullptr;
+}
 
 static void dom_manual_slot_unlink(DomManualSlotLink* link) {
     if (!link) return;
@@ -1135,28 +1177,47 @@ static void dom_manual_slot_unlink(DomManualSlotLink* link) {
     else state->manual_slot_first = link->next;
     if (link->next) link->next->previous = link->previous;
     else state->manual_slot_last = link->previous;
-    *link->binding = nullptr;
+    DomNode* node = link->node;
+    dom_slot_endpoint(node->doc, node)->assignment = nullptr;
+    dom_slot_prune_endpoint(node->doc, node);
+    dom_slot_prune_endpoint(link->slot->doc, link->slot);
     mem_free(link);
 }
 
-void dom_slot_release_manual_links(DomNode* node, DomManualSlotLink* binding) {
+void dom_slot_release_manual_links(DomNode* node) {
     // Links are weak on both ends. Retirement and document teardown unlink
     // them before either endpoint can recycle, including across adoption.
-    dom_manual_slot_unlink(binding);
+    dom_manual_slot_unlink(dom_manual_slot_link(node->doc, node));
     DomElement* element = node->as_element();
     while (element && element->rare_ext && element->rare_ext->manual_slot_first)
         dom_manual_slot_unlink(element->rare_ext->manual_slot_first);
 }
 
-void dom_slot_transfer_manual_link(DomManualSlotLink** source, DomManualSlotLink** destination) {
-    *destination = *source;
-    if (*destination) (*destination)->binding = destination;
-    *source = nullptr;
+bool dom_slot_prepare_adoption(DomDocument* source, DomDocument* destination, DomNode* node) {
+    return !dom_slot_endpoint(source, node) || dom_slot_reserve_endpoint(destination, node);
 }
 
-static DomManualSlotLink* dom_manual_slot_link(DomDocument* document, DomNode* node) {
-    DomManualSlotLink** binding = dom_node_manual_slot_binding(document, node);
-    return binding ? *binding : nullptr;
+void dom_slot_finish_adoption(DomDocument* source, DomDocument* destination, DomNode* node, bool commit) {
+    DomSlotEndpoint* old = dom_slot_endpoint(source, node);
+    if (!old) return;
+    if (commit) {
+        dom_slot_endpoint(destination, node)->assignment = old->assignment;
+        DomSlotEndpoints::erase(source->services.manual_slot_endpoints, {node});
+    }
+    dom_slot_end_reservation(destination, node);
+}
+
+void dom_lifecycle_release_slot_links(DomDocument* doc) {
+    if (!doc || !doc->services.manual_slot_endpoints) return;
+    while (hashmap_count(doc->services.manual_slot_endpoints)) {
+        size_t index = 0;
+        void* entry = nullptr;
+        if (!hashmap_iter(doc->services.manual_slot_endpoints, &index, &entry)) break;
+        DomNode* node = ((DomSlotEndpoint*)entry)->node;
+        dom_slot_release_manual_links(node);
+    }
+    hashmap_free(doc->services.manual_slot_endpoints);
+    doc->services.manual_slot_endpoints = nullptr;
 }
 
 DomSlotAssignment dom_slot_assignment(DomElement* slot) {
@@ -1227,15 +1288,15 @@ bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* 
 
     DomManualSlotLink* first = nullptr;
     DomManualSlotLink* last = nullptr;
-    bool prepared = true;
-    for (int i = 0; i < count; i++) {
+    bool slot_reserved = count && dom_slot_reserve_endpoint(slot->doc, slot);
+    bool prepared = !count || slot_reserved;
+    for (int i = 0; prepared && i < count; i++) {
         DomNode* node = inputs[i].node;
         if (seen.get({node})) continue;
         seen.set({node});
         if (seen.oom()) { prepared = false; break; }
-        DomManualSlotLink** binding = dom_node_manual_slot_binding(inputs[i].document, node);
-        if (!binding) { prepared = false; break; }
-        DomManualSlotLink* old = *binding;
+        if (!dom_node_registry_owns(inputs[i].document, node)) { prepared = false; break; }
+        DomManualSlotLink* old = dom_manual_slot_link(node->doc, node);
         if (old && old->slot != slot && dom_find_assigned_slot(node) == old->slot &&
             !dom_slot_add_changed_root(affected_roots, dom_shadow_root(old->slot))) {
             prepared = false;
@@ -1245,7 +1306,11 @@ bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* 
         if (!link) { prepared = false; break; }
         link->slot = lam::up(slot);
         link->node = lam::up(node);
-        link->binding = binding;
+        if (!dom_slot_reserve_endpoint(node->doc, node)) {
+            mem_free(link);
+            prepared = false;
+            break;
+        }
         link->previous = lam::up(last);
         if (last) last->next = lam::own(link);
         else first = link;
@@ -1257,18 +1322,23 @@ bool dom_slot_set_manual_assignment(DomElement* slot, const DomManualSlotInput* 
     if (!prepared || !dom_slot_add_changed_root(affected_roots, dom_shadow_root(slot))) {
         while (first) {
             DomManualSlotLink* next = first->next;
+            dom_slot_end_reservation(first->node->doc, first->node);
             mem_free(first);
             first = next;
         }
+        if (slot_reserved) dom_slot_end_reservation(slot->doc, slot);
         return false;
     }
     while (state->manual_slot_first) dom_manual_slot_unlink(state->manual_slot_first);
     for (DomManualSlotLink* link = first; link; link = link->next) {
-        dom_manual_slot_unlink(*link->binding);
-        *link->binding = link;
+        DomNode* node = link->node;
+        dom_manual_slot_unlink(dom_manual_slot_link(node->doc, node));
+        dom_slot_endpoint(node->doc, node)->assignment = link;
+        dom_slot_end_reservation(node->doc, node);
     }
     state->manual_slot_first = lam::own(first);
     state->manual_slot_last = lam::up(last);
+    if (slot_reserved) dom_slot_end_reservation(slot->doc, slot);
     return true;
 }
 
@@ -1561,7 +1631,7 @@ static DomText* dom_text_from_fat_string(DomDocument* doc, String* string_value)
 
     DomText* candidate = string_to_dom_text(string_value);
     if (!dom_document_owns_node_storage(doc, candidate)) return nullptr;
-    if (candidate->node_type != DOM_NODE_TEXT) return nullptr;
+    if (candidate->node_type != DOM_NODE_TEXT || (candidate->doc && candidate->doc != doc)) return nullptr;
     if (candidate->native_string != string_value) return nullptr;
     // Every adopted fat string needs a lifecycle record, including strings
     // flattened from arrays and text introduced by MarkEditor mutations.
@@ -1872,6 +1942,10 @@ void DomDocument::destroy() {
         behavior_init_controls = nullptr;
     }
 
+    // release journal holds before an adopted document resource can destroy its physical nodes.
+    dom_js_mutation_records_destroy(this);
+    form_control_release_document(this, true);
+
     // adopted-document resources can destroy the arenas still named by slot links.
     dom_lifecycle_release_slot_links(this);
     dom_lifecycle_release_backing_roots(this);
@@ -1884,8 +1958,6 @@ void DomDocument::destroy() {
         mem_free(lambda_runtime);
         lambda_runtime = nullptr;
     }
-
-    dom_js_mutation_records_destroy(this);
 
     // Canonical styles use independent pools and must disappear while the
     // document pool that owns their manager/list is still valid.
@@ -2037,9 +2109,13 @@ DomElement* dom_document_embedding_element(DomDocument* embedded) {
 
 uint32_t dom_document_alloc_node_id(DomDocument* doc) {
     if (!doc) return 0;
-    uint32_t id = doc->next_node_id++;
-    if (id == 0) id = doc->next_node_id++;
-    return id;
+    if (!doc->next_node_id) doc->next_node_id = 1; // C-allocated documents start zeroed
+    if (doc->next_node_id == UINT32_MAX) {
+        // an issued handle can survive a detached node; a document must never repeat an identity.
+        log_error("dom_node_identity: document exhausted its node ids");
+        abort();
+    }
+    return doc->next_node_id++;
 }
 
 static void dom_element_release_cached_id(DomElement* element) {
@@ -2229,9 +2305,12 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
     if (reinitializing) {
         // UI rebuilds reuse fat Lambda-element storage; stale tree links and
         // attribute caches would splice the previous DOM epoch into the new one.
-        element->parent = nullptr;
-        element->next_sibling = nullptr;
-        element->prev_sibling = nullptr;
+        dom_unlink_from_sibling_chain(element);
+        for (DomNode* child = element->first_child; child;) {
+            DomNode* next = child->next_sibling;
+            if (child->parent == element) dom_unlink_from_sibling_chain(child);
+            child = next;
+        }
         element->first_child = nullptr;
         element->last_child = nullptr;
         dom_element_release_cached_id(element);
@@ -2338,9 +2417,7 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
         dom_clear_tag_name_override(element);
         return nullptr;
     }
-    // The reverse-map key belongs to the external generation registry; keeping
-    // it out of DomElement preserves the hot node-size ratchet.
-    dom_node_registry_set_backing_source(doc, element, native_element);
+    dom_node_set_backing_source(doc, element, native_element);
     doc->services.element_count++;
     return element;
 }
@@ -2775,7 +2852,7 @@ void dom_element_release_retired_storage(DomElement* element) {
     // no live Attr wrapper can reach an owner selected for retirement; keep detached values intact.
     while (element->rare_ext && element->rare_ext->attribute_nodes)
         dom_attribute_node_detach(element->rare_ext->attribute_nodes);
-    Element* backing_source = dom_node_registry_backing_source(
+    Element* backing_source = dom_node_backing_source(
         element->doc, static_cast<DomNode*>(element));
     if (element->doc->element_dom_map && backing_source &&
             element_dom_map_lookup(element->doc->element_dom_map, backing_source) == element) {
@@ -2804,6 +2881,7 @@ void dom_element_release_retired_storage(DomElement* element) {
     // retirement releases both the authored pool and its document resource registration (D5.5.1).
     if (element->rare_ext && element->rare_ext->inline_declarations)
         dom_document_release_resource(element->storage_owner(), element->rare_ext->inline_declarations);
+    lam::free_owned(element->storage_pool(), element->occurrence_source);
     // pre-layout image loads can allocate a style before the view teardown can see it
     lam::free_owned(element->storage_pool(), element->embed);
     element->release_ext();
@@ -4847,11 +4925,7 @@ bool DomElement::link_child(DomElement* child) {
         return false;
     }
 
-    // Add to parent's DOM sibling chain
-    dom_append_to_sibling_chain(parent, child);
-
-    log_debug("dom_element_link_child: linked child to DOM chain (Lambda tree unchanged)");
-    return true;
+    return dom_append_to_sibling_chain(parent, child);
 }
 
 /**
@@ -4932,55 +5006,19 @@ bool DomElement::remove_child(DomElement* child) {
 }
 
 bool DomElement::insert_before(DomElement* new_child, DomElement* reference_child) {
-    DomElement* parent = this;
-    if (!new_child) {
-        return false;
-    }
-
-    // If no reference child, append at end
-    if (!reference_child) {
-        return append_child(new_child);
-    }
-
-    // Verify reference child is actually a child of parent
-    if (reference_child->parent != parent) {
-        return false;
-    }
-
-    dom_node_cancel_detached(parent->doc, new_child);
-
-    // Set parent relationship
-    new_child->parent = lam::up(parent);
-
-    // Insert before reference child
-    new_child->next_sibling = lam::own(reference_child);
-    new_child->prev_sibling = reference_child->prev_sibling;
-
-    if (reference_child->prev_sibling) {
-        reference_child->prev_sibling->next_sibling = lam::own(new_child);
-    } else {
-        // Reference child was first child
-        parent->first_child = lam::own(new_child);
-    }
-
-    reference_child->prev_sibling = lam::up(new_child);
-
-    // If inserting before first child, update last_child if needed
-    if (!new_child->next_sibling) {
-        parent->last_child = lam::up(new_child);
-    }
-
-    dom_document_process_metadata_insertion(parent->doc, new_child);
-
-    return true;
+    return reference_child ? DomNode::insert_before(new_child, reference_child) : append_child(new_child);
 }
 
 bool dom_node_replace_in_parent(DomElement* parent, DomNode* old_child, DomNode* new_child) {
     if (!parent || !old_child || !new_child) return false;
     if (old_child->parent != parent) return false;
+    if (old_child == new_child) return true;
+    for (DomNode* ancestor = parent; ancestor; ancestor = ancestor->parent)
+        if (ancestor == new_child) return false;
+    dom_unlink_from_sibling_chain(new_child);
 
     // the documentElement omits its reverse doctype link; retain that forward sibling.
-    DomNode* previous = old_child->prev_sibling;
+    DomNode* previous = dom_previous_linked_sibling(parent, old_child);
     if (!previous && parent->first_child != old_child) {
         for (DomNode* sibling = parent->first_child; sibling; sibling = sibling->next_sibling) {
             if (sibling->next_sibling == old_child) {
@@ -5299,14 +5337,31 @@ DomText* DomText::create_detached(String* native_string, DomDocument* doc) {
     if (!dom_node_registry_register(doc, text_node, sizeof(DomText), true)) {
         return nullptr;
     }
-    dom_node_registry_set_backing_value(doc, text_node, Item{.item = s2it(native_string)});
+    dom_node_set_backing_value(doc, text_node, Item{.item = s2it(native_string)});
 
     return text_node;
 }
 
+// the String remains the start of its pool allocation; the unaligned trailer follows its capacity.
+static void* dom_owned_string_alloc(void* owner, size_t size) {
+    if (size > SIZE_MAX - sizeof(Pool*)) return nullptr;
+    Pool* pool = (Pool*)owner;
+    auto* bytes = (uint8_t*)pool_alloc(pool, size + sizeof(pool));
+    if (bytes) memcpy(bytes + size, &pool, sizeof(pool));
+    return bytes;
+}
+
+Pool* dom_text_owned_string_pool(const DomText* text) {
+    if (!text || !text->owns_native_string()) return nullptr;
+    const String* string = text->native_string;
+    Pool* pool;
+    memcpy(&pool, (const uint8_t*)string + sizeof(String) + string->len + 1, sizeof(pool));
+    return pool;
+}
+
 String* dom_document_create_string(DomDocument* doc, const char* text, size_t len) {
     if (!doc || !doc->document_pool || (!text && len > 0)) return nullptr;
-    return string_from_strview(strview_init(text ? text : "", len), doc->document_pool);
+    return string_from_strview_alloc(strview_init(text ? text : "", len), doc->document_pool, dom_owned_string_alloc);
 }
 
 bool dom_text_adopt_document_string(DomText* text_node, DomDocument* doc,
@@ -5315,23 +5370,20 @@ bool dom_text_adopt_document_string(DomText* text_node, DomDocument* doc,
     if (text_node->owns_native_string() && text_node->native_string != string) {
         // Generated and mutation strings have single-node ownership; replacing
         // one must reclaim it immediately instead of waiting for document exit.
-        pool_free(dom_node_registry_owned_string_pool(doc, text_node), text_node->native_string);
+        pool_free(dom_text_owned_string_pool(text_node), text_node->native_string);
     }
-    if (!text_node->owns_native_string() || text_node->native_string != string)
-        dom_node_registry_set_owned_string_pool(doc, text_node, doc->document_pool);
     text_node->native_string = lam::up(string);
     text_node->text = lam::up(string->chars);
     text_node->length = string->len;
     text_node->set_owns_native_string(true);
-    dom_node_registry_set_backing_value(doc, text_node, Item{.item = s2it(string)});
+    dom_node_set_backing_value(doc, text_node, Item{.item = s2it(string)});
     return true;
 }
 
 void dom_text_release_retired_storage(DomDocument* doc, DomText* text_node) {
     if (!doc || !doc->document_pool || !text_node ||
         !text_node->owns_native_string()) return;
-    pool_free(dom_node_registry_owned_string_pool(doc, text_node), text_node->native_string);
-    dom_node_registry_set_owned_string_pool(doc, text_node, nullptr);
+    pool_free(dom_text_owned_string_pool(text_node), text_node->native_string);
     text_node->native_string = nullptr;
     text_node->text = nullptr;
     text_node->length = 0;
@@ -5389,12 +5441,14 @@ DomText* DomText::create_symbol(const char* name, size_t len,
 }
 
 DomText* DomText::create_in(Arena* arena, size_t inline_string_length) {
-    if (!arena) return nullptr;
+    if (!arena || inline_string_length > UINT32_MAX ||
+        inline_string_length > SIZE_MAX - sizeof(DomText) - sizeof(String) - 1) return nullptr;
     size_t total = sizeof(DomText) + sizeof(String) + inline_string_length + 1;
     // The inline Lambda String shares the same zeroed arena allocation as its node.
     DomText* text_node = (DomText*)arena_calloc(arena, total);
     if (!text_node) return nullptr;
     text_node->node_type = DOM_NODE_TEXT;
+    text_node->node_flags |= DOM_NODE_FLAG_INLINE_STRING;
     String* string = dom_text_to_string(text_node);
     string->len = (uint32_t)inline_string_length;
     text_node->native_string = lam::up(string);
@@ -5735,7 +5789,7 @@ DomComment* DomComment::create_detached(Element* native_element, DomDocument* do
     if (!dom_node_registry_register(doc, comment_node, sizeof(DomComment), true)) {
         return nullptr;
     }
-    dom_node_registry_set_backing_source(doc, comment_node, native_element);
+    dom_node_set_backing_source(doc, comment_node, native_element);
 
     return comment_node;
 }
@@ -5838,7 +5892,7 @@ bool dom_comment_set_content(DomComment* comment_node, const char* new_content,
 
     // Update DomComment to point to new String
     comment_node->native_element = lam::up(result.element);
-    dom_node_registry_set_backing_source(document, comment_node, result.element);
+    dom_node_set_backing_source(document, comment_node, result.element);
     String* new_string = new_string_item.get_string();
     if (!new_string) {
         log_error("dom_comment_set_content: replacement string disappeared");
@@ -6031,7 +6085,7 @@ void dom_rebind_render_element(DomDocument* doc, Element* previous, Element* cur
     DomElement* node = element_dom_map_lookup(doc->element_dom_map, previous);
     if (node && dom_element_render_source(node) == previous) {
         element_dom_map_remove(doc->element_dom_map, previous);
-        dom_node_registry_set_backing_source(doc, node, current);
+        dom_node_set_backing_source(doc, node, current);
         element_dom_map_insert(doc->element_dom_map, current, node);
     }
 }
@@ -6060,7 +6114,7 @@ static bool dom_element_has_embedded_storage(DomDocument* doc, Element* elem) {
     if (!doc || !elem || doc->page_kind != DOM_PAGE_KIND_HTML) return false;
     DomElement* storage = element_to_dom_element(elem);
     return dom_document_owns_node_storage(doc, storage) &&
-        storage->node_type == DOM_NODE_ELEMENT;
+        storage->node_type == DOM_NODE_ELEMENT && (!storage->doc || storage->doc == doc);
 }
 
 DomParsedChildren dom_parsed_children(DomDocument* doc, Element* parent) {
@@ -6249,7 +6303,7 @@ static DomElement* build_dom_tree_from_element_impl(Element* elem, Element* sour
     }
     if (!dom_elem) return nullptr;
     // event dispatch and incremental rebuilds still address the evaluator's result.
-    if (source != elem) dom_node_registry_set_backing_source(doc, dom_elem, source);
+    if (source != elem) dom_node_set_backing_source(doc, dom_elem, source);
 
     // The HTML tree builder creates a direct form child while in table mode
     // solely to retain the form-owner pointer. Chromium keeps that node out of

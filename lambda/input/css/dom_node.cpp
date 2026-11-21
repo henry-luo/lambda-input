@@ -122,8 +122,40 @@ static bool dom_node_is_generated_after(DomNode* node) {
         strcmp(node->node_name(), "::after") == 0;
 }
 
-void dom_append_to_sibling_chain(DomElement* parent, DomNode* child) {
-    if (!parent || !child) return;
+DomNode* dom_previous_linked_sibling(DomElement* parent, DomNode* node) {
+    if (node->prev_sibling) return node->prev_sibling;
+    // the document proxy publishes its doctype's forward edge without a reverse link.
+    DomNode* head = parent->first_child;
+    return head && head->node_type == DOM_NODE_DOCTYPE && head->next_sibling == node ? head : nullptr;
+}
+
+void dom_unlink_from_sibling_chain(DomNode* child) {
+    DomElement* parent = child->parent ? child->parent->as_element() : nullptr;
+    if (!parent) return;
+    // factories can supply a parent before publishing the new node in its child chain.
+    DomNode* previous = dom_previous_linked_sibling(parent, child);
+    if (parent->first_child == child) parent->first_child = child->next_sibling;
+    else if (previous && previous->next_sibling == child) previous->next_sibling = child->next_sibling;
+    if (parent->last_child == child) parent->last_child = lam::up(previous);
+    if (child->next_sibling && child->next_sibling->prev_sibling == child)
+        child->next_sibling->prev_sibling = child->prev_sibling;
+    child->parent = nullptr;
+    child->prev_sibling = nullptr;
+    child->next_sibling = nullptr;
+}
+
+static bool dom_insertion_would_cycle(DomNode* parent, DomNode* child) {
+    if (parent == child) return true;
+    if (child->is_element() && child->as_element()->first_child) {
+        for (DomNode* ancestor = parent->parent; ancestor; ancestor = ancestor->parent)
+            if (ancestor == child) return true;
+    }
+    return false;
+}
+
+bool dom_append_to_sibling_chain(DomElement* parent, DomNode* child) {
+    if (!parent || !child || dom_insertion_would_cycle(parent, child)) return false;
+    dom_unlink_from_sibling_chain(child);
     dom_node_cancel_detached(parent->doc, child);
     child->parent = lam::up(parent);
     child->next_sibling = nullptr;
@@ -131,7 +163,7 @@ void dom_append_to_sibling_chain(DomElement* parent, DomNode* child) {
         parent->first_child = lam::own(child);
         parent->last_child = lam::up(child);
         child->prev_sibling = nullptr;
-        return;
+        return true;
     }
 
     DomNode* last = parent->last_child;
@@ -146,11 +178,12 @@ void dom_append_to_sibling_chain(DomElement* parent, DomNode* child) {
         if (previous) previous->next_sibling = lam::own(child);
         else parent->first_child = lam::own(child);
         last->prev_sibling = lam::up(child);
-        return;
+        return true;
     }
     last->next_sibling = lam::own(child);
     child->prev_sibling = lam::up(last);
     parent->last_child = lam::up(child);
+    return true;
 }
 
 void dom_move_generated_after_to_end(DomElement* parent) {
@@ -190,16 +223,9 @@ bool DomNode::append_child(DomNode* child) {
     }
 
     DomDocument* doc = static_cast<DomElement*>(this)->doc;
-    // Reinsertion wins before linkage becomes visible; leaving the detached
-    // candidate armed could recycle a now-connected subtree at the next sweep.
-    dom_node_cancel_detached(doc, child);
-
-    // Set parent relationship
-    child->parent = lam::up(this);
-
     // Cast to DomElement to access first_child
     DomElement* element = static_cast<DomElement*>(this);
-    dom_append_to_sibling_chain(element, child);
+    if (!dom_append_to_sibling_chain(element, child)) return false;
     dom_document_process_metadata_insertion(doc, child);
     return true;
 }
@@ -221,47 +247,8 @@ bool DomNode::remove_child(DomNode* child) {
         return false;
     }
 
-    bool child_is_in_current_chain = false;
-    for (DomNode* current = static_cast<DomElement*>(this)->first_child;
-         current; current = current->next_sibling) {
-        if (current == child) {
-            child_is_in_current_chain = true;
-            break;
-        }
-    }
-    if (!child_is_in_current_chain) {
-        // MarkEditor can rebuild a parent's live sibling chain before the old
-        // wrapper is unlinked; stale links must not remove a surviving sibling.
-        child->parent = nullptr;
-        child->prev_sibling = nullptr;
-        child->next_sibling = nullptr;
-        dom_node_schedule_detached(static_cast<DomElement*>(this)->doc, child);
-        return true;
-    }
-
-    // Cast to DomElement to access first_child
     DomElement* element = static_cast<DomElement*>(this);
-
-    // Update sibling links
-    if (child->prev_sibling) {
-        child->prev_sibling->next_sibling = child->next_sibling;
-    } else {
-        // Child was first child
-        element->first_child = child->next_sibling;
-    }
-
-    if (child->next_sibling) {
-        child->next_sibling->prev_sibling = child->prev_sibling;
-    } else {
-        // Child was last child
-        element->last_child = child->prev_sibling;
-    }
-
-    // Clear child's relationships
-    child->parent = nullptr;
-    child->prev_sibling = nullptr;
-    child->next_sibling = nullptr;
-
+    dom_unlink_from_sibling_chain(child);
     dom_node_schedule_detached(element->doc, child);
 
     return true;
@@ -292,6 +279,9 @@ bool DomNode::insert_before(DomNode* new_node, DomNode* ref_node) {
     // Cast to DomElement to access first_child
     DomElement* element = static_cast<DomElement*>(this);
 
+    if (new_node == ref_node) return true;
+    if (dom_insertion_would_cycle(this, new_node)) return false;
+    dom_unlink_from_sibling_chain(new_node);
     dom_node_cancel_detached(element->doc, new_node);
 
     // Set parent relationship
@@ -301,8 +291,8 @@ bool DomNode::insert_before(DomNode* new_node, DomNode* ref_node) {
     new_node->next_sibling = lam::own(ref_node);
     new_node->prev_sibling = ref_node->prev_sibling;
 
-    if (ref_node->prev_sibling) {
-        ref_node->prev_sibling->next_sibling = lam::own(new_node);
+    if (DomNode* previous = dom_previous_linked_sibling(element, ref_node)) {
+        previous->next_sibling = lam::own(new_node);
     } else {
         // Reference node was first child
         element->first_child = lam::own(new_node);

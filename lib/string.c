@@ -4,9 +4,7 @@
 #include "str.h"
 #include "string.h"
 
-typedef void* (*StringAllocFn)(void* owner, size_t size);
-
-static String* string_from_strview_alloc(StrView view, void* owner, StringAllocFn allocator) {
+String* string_from_strview_alloc(StrView view, void* owner, StringAllocFn allocator) {
     if (!view.str || !owner || !allocator || view.length > UINT32_MAX ||
         view.length > SIZE_MAX - sizeof(String) - 1) return NULL;
     String* string = (String*)allocator(owner, sizeof(String) + view.length + 1);
