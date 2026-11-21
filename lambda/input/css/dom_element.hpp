@@ -356,7 +356,7 @@ struct DomDocumentServices {
     lam::Own<char> pragma_language;    // document-owned default retained after a meta insertion
     lam::Own<char> protocol_language;  // document-owned single Content-Language response value
     lam::Up<const char> html_namespace_uri, empty_namespace_uri; // Input name-pool bytes
-    lam::Own<struct hashmap> tag_name_overrides; // spellings absent from the backing type and catalog
+    lam::Own<struct hashmap> tag_name_overrides = nullptr; // spellings absent from the backing type and catalog
     lam::Own<DomSharedPseudoResets> shared_pseudo_resets = nullptr; // physical document pool
     bool svg_source_document = false; // standalone SVG source uses DOM serialization on SVG save
     bool svg_image_document; // SVG image processing forbids external subordinate resources
@@ -1093,6 +1093,10 @@ struct DomStyleRareExt {
     bool script_already_started : 1;
     bool script_parser_pending : 1;
     bool selectionchange_event_pending : 1;
+    bool click_in_progress : 1;
+    // parser provenance and the async IDL setter determine force-async.
+    bool script_parser_inserted : 1;
+    bool script_force_async_cleared : 1;
     lam::Own<DomFragmentGeometry> fragment_geometry;
     lam::Own<DomAttributeCache> attributes;
     lam::ViewProp<MultiColumnProp, DomViewSlot::multicol> multicol;
@@ -1815,7 +1819,8 @@ inline const Element* dom_element_render_source(const DomElement* de) {
 // equal template results retain live DOM storage while adopting the new result keys.
 void dom_rebind_equal_render_result(DomDocument* doc, Item previous, Item current);
 void dom_rebind_render_element(DomDocument* doc, Element* previous, Element* current);
-// only for data/ARIA writes proven independent of selectors and CSS attr() values.
+// data/ARIA, or an inert attribute whose boolean presence is unchanged; CSS dependencies remain caller-owned.
+bool dom_element_can_write_metadata(DomElement* element, const char* name);
 bool dom_element_set_non_style_metadata(DomElement* element, const char* name, const char* value);
 DomElement* element_dom_map_lookup(struct hashmap* map, Element* elem);
 

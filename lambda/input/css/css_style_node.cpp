@@ -971,6 +971,8 @@ static CssDeclaration* style_tree_best_property_candidate(
     CssDeclaration* best = css_declaration_cascade_eligible(fallback, ceiling, filters)
         ? fallback : NULL;
     for (size_t source = 0; source < source_count; source++) {
+        // zero marks an absent shorthand, never an authored property's cascade source.
+        if (sources[source] <= 0 || sources[source] >= CSS_PROPERTY_COUNT) continue;
         AvlNode* entry = avl_tree_search(style_tree->tree, sources[source]);
         StyleNode* node = entry ? (StyleNode*)entry->declaration : NULL;
         if (!node) continue;
@@ -979,9 +981,11 @@ static CssDeclaration* style_tree_best_property_candidate(
         while (candidate) {
             bool eligible = css_declaration_cascade_eligible(candidate, ceiling, filters) &&
                 (!authored || !candidate->presentation_value);
-            if (eligible && (!best ||
-                css_declaration_cascade_compare(candidate, best) > 0)) {
-                best = candidate;
+            if (eligible) {
+                if (!best || css_declaration_cascade_compare(candidate, best) > 0)
+                    best = candidate;
+                // each source is sorted by cascade priority; later eligible losers cannot win.
+                break;
             }
             candidate = weak ? weak->declaration : NULL;
             weak = weak ? weak->next : NULL;
@@ -1110,6 +1114,9 @@ static CssDeclaration* style_tree_resolve_declaration(StyleTree* style_tree, Sty
         ? avl_tree_search(style_tree->tree, shorthand) : NULL;
     AvlNode* all_node = avl_tree_search(style_tree->tree, CSS_PROPERTY_ALL);
     if (!authored && !all_node && !shorthand_node && !fallback) return style_node_resolve_cascade(node);
+    // absent properties share all's context-free rollback result and its existing invalidation.
+    if (!authored && !node && !shorthand_node && !fallback)
+        return style_tree_get_declaration(style_tree, CSS_PROPERTY_ALL);
     const CssPropertyCode sources[] = {property_code, CSS_PROPERTY_ALL, shorthand};
     return style_tree_best_property_candidate(style_tree, sources,
         sizeof(sources) / sizeof(sources[0]), NULL, NULL, authored, fallback);

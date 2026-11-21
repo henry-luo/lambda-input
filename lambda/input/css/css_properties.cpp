@@ -2690,6 +2690,11 @@ const CssValue* css_project_shorthand_longhand(Pool* pool, const CssValue* value
     if (!value || shorthand == longhand || css_value_is_global_keyword(value)) return value;
     if (css_grid_property_mask(shorthand))
         return css_grid_shorthand_longhand(pool, value, shorthand, longhand);
+    if (shorthand == CSS_PROPERTY_FONT) {
+        // font's components share the parser used for the original compound declaration.
+        const CssProperty* property = css_property_get_by_code(longhand);
+        return property ? css_font_shorthand_longhand(value, property->name, pool) : nullptr;
+    }
     if (shorthand == CSS_PROPERTY_CONTAINER)
         return css_container_shorthand_longhand(value, longhand, pool);
     if (shorthand == CSS_PROPERTY_GAP) {
@@ -2928,19 +2933,23 @@ bool css_gradient_stop_list_valid(const CssValue* value) {
     if (kind != CSS_IMAGE_LINEAR_GRADIENT && kind != CSS_IMAGE_RADIAL_GRADIENT && kind != CSS_IMAGE_CONIC_GRADIENT) return true;
     if (css_value_contains_pending_substitution(value)) return true;
     const CssFunction* function = value->data.function;
-    if (!function || !function->args || function->arg_count < 2) return false;
+    if (!function || !function->args || function->arg_count < 1) return false;
     bool angular = kind == CSS_IMAGE_CONIC_GRADIENT;
     CssGradientStopParts parts;
     const CssValue* token = css_space_list_item(function->args[0], 0);
     CssComputedColor first_color;
     int first = token && !css_value_is_global_keyword(token) && css_color_compute(token, &first_color) ? 0 : 1;
+    // a leading transition hint is not a geometry prelude.
+    if (first && kind != CSS_IMAGE_RADIAL_GRADIENT &&
+            css_gradient_stop_components(function->args[0], angular, &parts)) return false;
     int colors = 0;
     bool previous_hint = false;
     for (int index = first; index < function->arg_count; index++) {
         if (!css_gradient_stop_components(function->args[index], angular, &parts)) return false;
         bool hint = !parts.color;
         if (hint && (index == first || index == function->arg_count - 1 || previous_hint)) return false;
-        if (!hint) colors++;
+        // a double-position color contributes two stops even without another comma group.
+        if (!hint) colors += parts.position_count ? parts.position_count : 1;
         previous_hint = hint;
     }
     return colors >= 2;
@@ -2963,7 +2972,7 @@ bool css_gradient_position_components(const CssValue* prelude, int at_index, Css
 
 bool css_radial_gradient_components(const CssValue* value, CssRadialGradientParts* parts) {
     if (!parts || css_value_image_kind(value) != CSS_IMAGE_RADIAL_GRADIENT ||
-        !value->data.function || value->data.function->arg_count < 2 || !value->data.function->args) return false;
+        !value->data.function || value->data.function->arg_count < 1 || !value->data.function->args) return false;
     *parts = {};
     parts->shape = RADIAL_SHAPE_ELLIPSE;
     parts->size = RADIAL_SIZE_FARTHEST_CORNER;
@@ -3011,7 +3020,7 @@ bool css_radial_gradient_components(const CssValue* value, CssRadialGradientPart
     }
     parts->prelude = first;
     parts->first_stop = 1;
-    return value->data.function->arg_count > 2;
+    return value->data.function->arg_count > 1;
 }
 
 bool css_background_layer_components(const CssValue* value, bool final_layer, CssBackgroundParts* parts) {

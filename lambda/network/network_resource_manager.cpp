@@ -505,6 +505,16 @@ static bool resource_manager_admits(NetworkResourceManager* mgr, const char* url
 }
 
 // load resource (with deduplication and actual download integration)
+NetworkResource* resource_manager_find(NetworkResourceManager* mgr, const char* url) {
+    if (!mgr || !url) return NULL;
+    pthread_mutex_lock(&mgr->mutex);
+    ResourceEntry key = { .url = (char*)url, .res = NULL };
+    const ResourceEntry* entry = ResourceMap::get((struct hashmap*)mgr->resources, key);
+    NetworkResource* resource = entry ? entry->res : NULL;
+    pthread_mutex_unlock(&mgr->mutex);
+    return resource;
+}
+
 NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
                                       const char* url,
                                       ResourceType type,
