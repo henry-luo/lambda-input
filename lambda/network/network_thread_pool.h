@@ -7,20 +7,11 @@
 
 #include <stdbool.h>
 #include <stdatomic.h>
+#include "network_priority.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// Resource priority (lower value = higher priority)
-// Note: libuv's threadpool uses FIFO; priority is advisory.
-// Tasks should be submitted in priority order by the caller.
-typedef enum {
-    PRIORITY_CRITICAL = 0,  // Main HTML document
-    PRIORITY_HIGH     = 1,  // CSS, fonts (block rendering)
-    PRIORITY_NORMAL   = 2,  // Images, SVG
-    PRIORITY_LOW      = 3   // Prefetch, async scripts
-} ResourcePriority;
 
 // Task function signature
 typedef void (*TaskFunction)(void* task_data);

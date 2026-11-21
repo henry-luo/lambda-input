@@ -62,6 +62,36 @@ TEST_F(CssParserTest, SingleVariableBlockRetainsItsDeclaration) {
     }
 }
 
+TEST_F(CssParserTest, DoublePositionGradientStopCountsAsTwoStops) {
+    const char* valid[] = {
+        "background:linear-gradient(#010a14 0% 100%)",
+        "background-image:linear-gradient(to bottom,#010a14 0px 10px)",
+        "background:repeating-linear-gradient(90deg,currentColor 0% 100%)",
+        "background-image:radial-gradient(#010a14 0% 100%)",
+        "background:radial-gradient(ellipse at center,#010a14 0% 100%)",
+        "background:radial-gradient(20px,#010a14 0% 100%)",
+        "background-image:repeating-radial-gradient(circle,#010a14 0px 10px)",
+        "background:conic-gradient(#010a14 0deg 360deg)",
+        "background-image:conic-gradient(from 90deg at center,#010a14 0% 100%)",
+        "background:repeating-conic-gradient(#010a14 0% 100%)",
+        "border-image-source:linear-gradient(#010a14 0% 100%)",
+        "list-style-image:radial-gradient(#010a14 0% 100%)",
+        "shape-outside:radial-gradient(circle,#010a14 0% 100%)",
+    };
+    for (const char* source : valid)
+        EXPECT_NE(css_parse_declaration_text(source, strlen(source), pool), nullptr) << source;
+    const char* invalid[] = {
+        "background:linear-gradient(red 0% 50% 100%)",
+        "background:radial-gradient(red 0deg 360deg)",
+        "background:conic-gradient(red 0px 100px)",
+        "background:linear-gradient(red 0% 100%,50%)",
+        "background:linear-gradient(50%,red 0% 100%)",
+        "background:radial-gradient(circle 10px 20px,red 0% 100%)",
+    };
+    for (const char* source : invalid)
+        EXPECT_EQ(css_parse_declaration_text(source, strlen(source), pool), nullptr) << source;
+}
+
 TEST_F(CssParserTest, HyphenateCharacterLimitsValidateEveryComponent) {
     const char* valid[] = {
         "hyphenate-limit-chars: auto", "hyphenate-limit-chars: 0",

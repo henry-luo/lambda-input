@@ -148,6 +148,9 @@ NetworkResourceManager* resource_manager_create(struct DomDocument* doc,
                                                 EnhancedFileCache* cache);
 void resource_manager_destroy(NetworkResourceManager* mgr);
 
+// borrow an existing manager-owned request without starting or reprioritizing it.
+NetworkResource* resource_manager_find(NetworkResourceManager* mgr, const char* url);
+
 // Context setup (called after UiContext and CssEngine are initialized)
 void resource_manager_set_css_engine(NetworkResourceManager* mgr, struct CssEngine* engine);
 void resource_manager_set_ui_context(NetworkResourceManager* mgr, void* uicon);

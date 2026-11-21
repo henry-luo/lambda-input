@@ -1093,6 +1093,10 @@ struct DomStyleRareExt {
     bool script_already_started : 1;
     bool script_parser_pending : 1;
     bool selectionchange_event_pending : 1;
+    bool click_in_progress : 1;
+    // parser provenance and the async IDL setter determine force-async.
+    bool script_parser_inserted : 1;
+    bool script_force_async_cleared : 1;
     lam::Own<DomFragmentGeometry> fragment_geometry;
     lam::Own<DomAttributeCache> attributes;
     lam::ViewProp<MultiColumnProp, DomViewSlot::multicol> multicol;
