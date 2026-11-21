@@ -51,7 +51,9 @@ void dom_mark_dirty_ancestors(DomNode* node);
 void dom_layer_note_mutation(DomNode* node, bool moves_only = false);
 extern "C" void dom_invalidate_layout_subtree(void* node);
 extern "C" void dom_svg_invalidate_presentation(void* node);
-extern "C" uint64_t dom_mutation_epoch(DomDocument* doc);
+extern "C" uint32_t dom_mutation_epoch(DomDocument* doc);
+
+constexpr uint32_t DOM_MUTATION_EPOCH_UNSTAMPED = UINT32_MAX;
 
 // shared slot assignment for the DOM, HTML directionality and the renderer.
 struct DomSlotAssignment {
@@ -527,7 +529,7 @@ struct DomDocument : DomDocumentResourceData {
 
     // Keep new editing state at the document tail: native/JIT consumers depend
     // on the offsets of the long-lived DOM/JS members above.
-    uint64_t mutation_epoch;
+    uint32_t mutation_epoch;
 
     // Document provenance, set by the loader that built this tree. Kept here at
     // the tail (rather than beside html_version) so no existing member offset
@@ -594,9 +596,14 @@ struct DomDocument : DomDocumentResourceData {
     // non-inherited properties, which reach neither other elements' computed
     // style nor selector matching. Content caches outside the written subtree
     // (inline SVG layers) key on this instead of every DOM write.
-    uint64_t style_content_epoch;
+    uint32_t style_content_epoch;
     // native attribute/style setters also invalidate computed queries before a DOM commit.
-    uint64_t style_query_epoch;
+    uint32_t style_query_epoch;
+
+    void advance_mutation_epoch() {
+        // keep the unstamped value outside the document's epoch sequence.
+        if (++mutation_epoch == DOM_MUTATION_EPOCH_UNSTAMPED) mutation_epoch = 0;
+    }
 
     // Constructor
     DomDocument() : input(nullptr), document_pool(nullptr), node_arena(nullptr),
@@ -1246,12 +1253,10 @@ struct DomElement : DomNode {
         lam::ViewProp<GridItemProp, DomViewSlot::gi> gi;
     };
     lam::ViewProp<TableCellProp, DomViewSlot::td> td;  // table cell specific properties
-    lam::Own<DomStyleExt> style_ext;
-    lam::Own<DomStyleRareExt> ext; // rare DOM/view state, allocated lazily from doc pool
+    lam::Own<DomStyleExt> ext;
+    lam::Own<DomStyleRareExt> rare_ext; // rare DOM/view state, allocated lazily from doc pool
 
-    // vector path for PDF/SVG curve rendering
     // Layout cache for avoiding redundant layout computations (Taffy-inspired)
-    // Stores up to 9 measurement results + 1 final layout result
     lam::ViewProp<radiant::LayoutCache, DomViewSlot::layout_cache> layout_cache;
 
     // Factories rely on zeroed arena/pool storage and write only semantic non-zero fields.
@@ -1269,14 +1274,14 @@ struct DomElement : DomNode {
         if (doc) doc->style_query_epoch++;
     }
     DomDocument* storage_owner() const {
-        return ext && ext->storage_document ? ext->storage_document.get() : doc.get();
+        return rare_ext && rare_ext->storage_document ? rare_ext->storage_document.get() : doc.get();
     }
     Pool* storage_pool() const {
         DomDocument* owner = storage_owner();
         return owner ? owner->document_pool.get() : nullptr;
     }
     bool preserve_storage_owner() {
-        DomStyleRareExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_rare_ext();
         if (!data) return false;
         if (!data->storage_document) data->storage_document = doc;
         return true;
@@ -1416,21 +1421,21 @@ struct DomElement : DomNode {
     }
     FlexItemProp* flex_item() const { return parent_item_kind() == PARENT_ITEM_FLEX ? fi : nullptr; }
     GridItemProp* grid_item() const { return parent_item_kind() == PARENT_ITEM_GRID ? gi : nullptr; }
-    TableProp* table_storage() const { return style_ext ? style_ext->tb.get() : nullptr; }
+    TableProp* table_storage() const { return ext ? ext->tb.get() : nullptr; }
     TableProp* table_prop() const { return role_kind() == ROLE_TABLE ? table_storage() : nullptr; }
     TableCellProp* cell_prop() const { return role_kind() == ROLE_CELL ? td : nullptr; }
-    FormControlProp* form_storage() const { return style_ext ? style_ext->form.get() : nullptr; }
+    FormControlProp* form_storage() const { return ext ? ext->form.get() : nullptr; }
     FormControlProp* form_control() const {
         RoleKind role = role_kind();
         return (role == ROLE_FORM || role == ROLE_TABLE || role == ROLE_CELL) ? form_storage() : nullptr;
     }
-    TransformProp* transform_prop() const { return style_ext ? style_ext->transform.get() : nullptr; }
-    PseudoContentProp* pseudo_prop() const { return style_ext ? style_ext->pseudo.get() : nullptr; }
+    TransformProp* transform_prop() const { return ext ? ext->transform.get() : nullptr; }
+    PseudoContentProp* pseudo_prop() const { return ext ? ext->pseudo.get() : nullptr; }
 
-    DomStyleExt* ensure_style_ext();
-    void release_style_ext();
+    DomStyleExt* ensure_ext();
+    void release_ext();
     bool set_form_storage(FormControlProp* value) {
-        DomStyleExt* slots = value ? ensure_style_ext() : style_ext.get();
+        DomStyleExt* slots = value ? ensure_ext() : ext.get();
         if (slots) slots->form = lam::view_prop(value);
         return slots || !value;
     }
@@ -1519,33 +1524,33 @@ struct DomElement : DomNode {
     DomText* append_text(const char* text_content);
     DomComment* append_comment(const char* comment_content);
 
-    DomStyleRareExt* ensure_ext() {
-        if (!ext && doc && storage_pool()) {
-            ext = lam::own((DomStyleRareExt*)pool_calloc(storage_pool(), sizeof(DomStyleRareExt)));
-            if (ext) doc->services.ext_allocations++;
+    DomStyleRareExt* ensure_rare_ext() {
+        if (!rare_ext && doc && storage_pool()) {
+            rare_ext = lam::own((DomStyleRareExt*)pool_calloc(storage_pool(), sizeof(DomStyleRareExt)));
+            if (rare_ext) doc->services.ext_allocations++;
         }
-        return ext;
+        return rare_ext;
     }
     template<class T, class Slot>
-    T* ensure_ext_group(Slot DomStyleRareExt::*slot) {
-        DomStyleRareExt* data = ensure_ext();
+    T* ensure_rare_ext_group(Slot DomStyleRareExt::*slot) {
+        DomStyleRareExt* data = ensure_rare_ext();
         if (!data) return nullptr;
         Slot& group = data->*slot;
         if (!group) group = Slot((T*)pool_calloc(storage_pool(), sizeof(T)));
         return group;
     }
-    DomAttributeCache* attribute_cache() const { return ext ? ext->attributes.get() : nullptr; }
-    DomAttributeCache* ensure_attribute_cache() { return ensure_ext_group<DomAttributeCache>(&DomStyleRareExt::attributes); }
+    DomAttributeCache* attribute_cache() const { return rare_ext ? rare_ext->attributes.get() : nullptr; }
+    DomAttributeCache* ensure_attribute_cache() { return ensure_rare_ext_group<DomAttributeCache>(&DomStyleRareExt::attributes); }
     bool has_recorded_attributes() const {
         const DomAttributeCache* cache = attribute_cache();
         return cache && cache->attributes_are_recorded;
     }
-    DomFragmentGeometry* fragment_geometry() const { return ext ? ext->fragment_geometry.get() : nullptr; }
-    DomFragmentGeometry* ensure_fragment_geometry() { return ensure_ext_group<DomFragmentGeometry>(&DomStyleRareExt::fragment_geometry); }
-    PseudoStyle* pseudo_style_group() const { return style_ext ? style_ext->pseudo_styles.get() : nullptr; }
+    DomFragmentGeometry* fragment_geometry() const { return rare_ext ? rare_ext->fragment_geometry.get() : nullptr; }
+    DomFragmentGeometry* ensure_fragment_geometry() { return ensure_rare_ext_group<DomFragmentGeometry>(&DomStyleRareExt::fragment_geometry); }
+    PseudoStyle* pseudo_style_group() const { return ext ? ext->pseudo_styles.get() : nullptr; }
     StyleTree* pseudo_style(PseudoStyleKind kind) const {
         if (node_flags & DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES) {
-            if (StyleTree* style = style_ext->pseudo_styles->styles[kind]) return style;
+            if (StyleTree* style = ext->pseudo_styles->styles[kind]) return style;
         }
         return shared_pseudo_reset_slots && kind <= PSEUDO_STYLE_AFTER
             ? shared_pseudo_style(kind) : nullptr;
@@ -1575,68 +1580,68 @@ struct DomElement : DomNode {
         DomFragmentGeometry* data = ensure_fragment_geometry();
         return data ? &data->frags[kind] : nullptr;
     }
-    MultiColumnProp* multicol_prop() const { return ext ? ext->multicol : nullptr; }
-    MarkerProp* marker_prop() const { return ext ? ext->marker : nullptr; }
-    void set_marker_prop(MarkerProp* value) { if (value || ext) ensure_ext()->marker = lam::view_prop(value); }
-    void set_multicol_prop(MultiColumnProp* value) { if (value || ext) ensure_ext()->multicol = lam::view_prop(value); }
-    VectorPathProp* vector_path() const { return ext ? ext->vpath : nullptr; }
-    void set_vector_path(VectorPathProp* value) { if (value || ext) ensure_ext()->vpath = lam::view_prop(value); }
-    FilterProp* filter_prop() const { return ext ? ext->filter : nullptr; }
-    void set_filter_prop(FilterProp* value) { if (value || ext) ensure_ext()->filter = lam::view_prop(value); }
-    FilterProp* backdrop_filter_prop() const { return ext ? ext->backdrop_filter : nullptr; }
-    void set_backdrop_filter_prop(FilterProp* value) { if (value || ext) ensure_ext()->backdrop_filter = lam::view_prop(value); }
-    CssTransitionElemState* transition_state_prop() const { return ext ? ext->transition_state : nullptr; }
+    MultiColumnProp* multicol_prop() const { return rare_ext ? rare_ext->multicol : nullptr; }
+    MarkerProp* marker_prop() const { return rare_ext ? rare_ext->marker : nullptr; }
+    void set_marker_prop(MarkerProp* value) { if (value || rare_ext) ensure_rare_ext()->marker = lam::view_prop(value); }
+    void set_multicol_prop(MultiColumnProp* value) { if (value || rare_ext) ensure_rare_ext()->multicol = lam::view_prop(value); }
+    VectorPathProp* vector_path() const { return rare_ext ? rare_ext->vpath : nullptr; }
+    void set_vector_path(VectorPathProp* value) { if (value || rare_ext) ensure_rare_ext()->vpath = lam::view_prop(value); }
+    FilterProp* filter_prop() const { return rare_ext ? rare_ext->filter : nullptr; }
+    void set_filter_prop(FilterProp* value) { if (value || rare_ext) ensure_rare_ext()->filter = lam::view_prop(value); }
+    FilterProp* backdrop_filter_prop() const { return rare_ext ? rare_ext->backdrop_filter : nullptr; }
+    void set_backdrop_filter_prop(FilterProp* value) { if (value || rare_ext) ensure_rare_ext()->backdrop_filter = lam::view_prop(value); }
+    CssTransitionElemState* transition_state_prop() const { return rare_ext ? rare_ext->transition_state : nullptr; }
     void set_transition_state_prop(CssTransitionElemState* value) {
-        if (value || ext) ensure_ext()->transition_state = lam::own(value);
+        if (value || rare_ext) ensure_rare_ext()->transition_state = lam::own(value);
     }
-    CustomLayoutPaintState* custom_layout_paint_prop() const { return ext ? ext->custom_layout_paint : nullptr; }
-    void set_custom_layout_paint_prop(CustomLayoutPaintState* value) { if (value || ext) ensure_ext()->custom_layout_paint = lam::up(value); }
-    LayoutFragmentBox* layout_fragment_list() const { return ext ? ext->layout_fragments : nullptr; }
-    void set_layout_fragment_list(LayoutFragmentBox* value) { if (value || ext) ensure_ext()->layout_fragments = lam::view_prop(value); }
-    int layout_fragments_count() const { return ext ? ext->layout_fragment_count : 0; }
-    int& layout_fragments_count_ref() { return ensure_ext()->layout_fragment_count; }
-    bool has_last_remembered_width() const { return ext && ext->has_last_remembered_width; }
-    bool has_last_remembered_height() const { return ext && ext->has_last_remembered_height; }
-    float last_remembered_width() const { return ext ? ext->last_remembered_width : 0.0f; }
-    float last_remembered_height() const { return ext ? ext->last_remembered_height : 0.0f; }
+    CustomLayoutPaintState* custom_layout_paint_prop() const { return rare_ext ? rare_ext->custom_layout_paint : nullptr; }
+    void set_custom_layout_paint_prop(CustomLayoutPaintState* value) { if (value || rare_ext) ensure_rare_ext()->custom_layout_paint = lam::up(value); }
+    LayoutFragmentBox* layout_fragment_list() const { return rare_ext ? rare_ext->layout_fragments : nullptr; }
+    void set_layout_fragment_list(LayoutFragmentBox* value) { if (value || rare_ext) ensure_rare_ext()->layout_fragments = lam::view_prop(value); }
+    int layout_fragments_count() const { return rare_ext ? rare_ext->layout_fragment_count : 0; }
+    int& layout_fragments_count_ref() { return ensure_rare_ext()->layout_fragment_count; }
+    bool has_last_remembered_width() const { return rare_ext && rare_ext->has_last_remembered_width; }
+    bool has_last_remembered_height() const { return rare_ext && rare_ext->has_last_remembered_height; }
+    float last_remembered_width() const { return rare_ext ? rare_ext->last_remembered_width : 0.0f; }
+    float last_remembered_height() const { return rare_ext ? rare_ext->last_remembered_height : 0.0f; }
     void set_last_remembered_width(float value) {
-        DomStyleRareExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_rare_ext();
         if (data) {
             data->last_remembered_width = value;
             data->has_last_remembered_width = true;
         }
     }
     void set_last_remembered_height(float value) {
-        DomStyleRareExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_rare_ext();
         if (data) {
             data->last_remembered_height = value;
             data->has_last_remembered_height = true;
         }
     }
-    CssWebAnimationState* web_animation_state() const { return ext ? ext->web_animation_state : nullptr; }
-    CssCustomProp* css_variables() const { return ext ? ext->css_variables.get() : nullptr; }
+    CssWebAnimationState* web_animation_state() const { return rare_ext ? rare_ext->web_animation_state : nullptr; }
+    CssCustomProp* css_variables() const { return rare_ext ? rare_ext->css_variables.get() : nullptr; }
     CssCustomProp* prepend_css_variable(const char* name);
     bool display_list_item() const { return display.inner.list_item(); }
     void set_display_list_item(bool value) { display.inner.set_list_item(value); }
     void set_web_animation_state(CssWebAnimationState* value) {
-        if (value || ext) ensure_ext()->web_animation_state = lam::own(value);
+        if (value || rare_ext) ensure_rare_ext()->web_animation_state = lam::own(value);
     }
-    bool has_animated_display() const { return ext && ext->has_animated_display; }
+    bool has_animated_display() const { return rare_ext && rare_ext->has_animated_display; }
     DisplayValue animated_display() const {
-        return ext ? ext->animated_display : DisplayValue{CSS_VALUE__UNDEF, CSS_VALUE__UNDEF};
+        return rare_ext ? rare_ext->animated_display : DisplayValue{CSS_VALUE__UNDEF, CSS_VALUE__UNDEF};
     }
     void set_animated_display(DisplayValue value) {
-        DomStyleRareExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_rare_ext();
         if (data) {
             data->animated_display = value;
             data->has_animated_display = true;
         }
     }
     void clear_animated_display() {
-        if (ext) ext->has_animated_display = false;
+        if (rare_ext) rare_ext->has_animated_display = false;
     }
-    ShadowStyle* shadow_style() const { return ext ? ext->shadow.get() : nullptr; }
-    ShadowStyle* ensure_shadow_style() { return ensure_ext_group<ShadowStyle>(&DomStyleRareExt::shadow); }
+    ShadowStyle* shadow_style() const { return rare_ext ? rare_ext->shadow.get() : nullptr; }
+    ShadowStyle* ensure_shadow_style() { return ensure_rare_ext_group<ShadowStyle>(&DomStyleRareExt::shadow); }
     DomElement* shadow_host_element() const {
         const ShadowStyle* state = shadow_style();
         return state ? state->host.get() : nullptr;
@@ -1657,44 +1662,44 @@ struct DomElement : DomNode {
         ShadowStyle* state = value ? ensure_shadow_style() : shadow_style();
         if (state) state->root = lam::own(value);
     }
-    float pending_scroll_x() const { return ext ? ext->pending_element_scroll_x : 0.0f; }
-    void set_pending_scroll_x(float value) { ensure_ext()->pending_element_scroll_x = value; }
-    float pending_scroll_y() const { return ext ? ext->pending_element_scroll_y : 0.0f; }
-    void set_pending_scroll_y(float value) { ensure_ext()->pending_element_scroll_y = value; }
+    float pending_scroll_x() const { return rare_ext ? rare_ext->pending_element_scroll_x : 0.0f; }
+    void set_pending_scroll_x(float value) { ensure_rare_ext()->pending_element_scroll_x = value; }
+    float pending_scroll_y() const { return rare_ext ? rare_ext->pending_element_scroll_y : 0.0f; }
+    void set_pending_scroll_y(float value) { ensure_rare_ext()->pending_element_scroll_y = value; }
     const char* tag_name() const {
         if (flag(ELMT_FLAG_TAG_NAME_NONCANONICAL)) return noncanonical_tag_name();
         return tag_id == NAME_ID_NONE ? nullptr : well_known_name_view(tag_id).str;
     }
     const char* noncanonical_tag_name() const;
     NameId tag_name_id() const {
-        if (ext && ext->name_id != NAME_ID_NONE) return ext->name_id;
+        if (rare_ext && rare_ext->name_id != NAME_ID_NONE) return rare_ext->name_id;
         if (flag(ELMT_FLAG_TAG_NAME_NONCANONICAL)) {
             const char* name = noncanonical_tag_name();
             return name ? well_known_name_id({name, strlen(name)}) : NAME_ID_NONE;
         }
         return tag_id;
     }
-    PopoverStyle* popover_style() const { return ext ? ext->popover.get() : nullptr; }
-    PopoverStyle* ensure_popover_style() { return ensure_ext_group<PopoverStyle>(&DomStyleRareExt::popover); }
+    PopoverStyle* popover_style() const { return rare_ext ? rare_ext->popover.get() : nullptr; }
+    PopoverStyle* ensure_popover_style() { return ensure_rare_ext_group<PopoverStyle>(&DomStyleRareExt::popover); }
     bool is_popover_open() const { const auto* data = popover_style(); return data && data->open; }
     bool is_in_top_layer() const { const auto* data = popover_style(); return data && data->in_top_layer; }
     void set_popover_open(bool value) {
         PopoverStyle* data = value ? ensure_popover_style() : popover_style();
         if (data) data->open = value;
     }
-    bool is_dialog_modal() const { return ext && ext->dialog_modal; }
+    bool is_dialog_modal() const { return rare_ext && rare_ext->dialog_modal; }
     void set_dialog_modal(bool value) {
-        DomStyleRareExt* data = ensure_ext();
+        DomStyleRareExt* data = ensure_rare_ext();
         if (data) data->dialog_modal = value;
     }
-    void reset_view_ext() {
-        if (!ext) return;
+    void reset_rare_view_slots() {
+        if (!rare_ext) return;
         // Doc-pooled storage outlives view results, so every relayout must drop
         // geometry and paint produced by the previous view-pool epoch.
-        if (ext->fragment_geometry) *ext->fragment_geometry.get() = {};
-        ext->layout_fragments = nullptr;
-        ext->layout_fragment_count = 0;
-        ext->custom_layout_paint = nullptr;
+        if (rare_ext->fragment_geometry) *rare_ext->fragment_geometry.get() = {};
+        rare_ext->layout_fragments = nullptr;
+        rare_ext->layout_fragment_count = 0;
+        rare_ext->custom_layout_paint = nullptr;
     }
 
 };
