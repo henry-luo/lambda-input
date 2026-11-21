@@ -8,7 +8,7 @@
 #include "lib/time_util.h"
 #include "lib/mem_grow.hpp"
 #include "lib/memtrack.h"
-#include "lib/hashmap_helpers.h"
+#include "lib/hashmap_typed.hpp"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -64,6 +64,7 @@ typedef struct DomNodeRegistry {
     DomNode* inline_roots[8];
     uint32_t lifetime_stamp;
     DomNode* recent[32]; // bounded weak lookup cache, evicted before storage is released
+    DomNodeValidationScope* validation_scope;
 
     DomDetachedRoot* candidates;
     DomDetachedRoot* next_candidate; // cancellations may advance the active traversal
@@ -211,22 +212,38 @@ static void dom_disown_root(DomNodeRegistry* registry, DomNode* node) {
     }
 }
 
-// Untrusted addresses (including guessed Mark prefixes) are only compared until
-// an owning tree edge proves the target is accessible. Attr and shadow trees
-// are independent ownership edges, even though neither is a DOM child.
-static bool dom_owned_tree_contains(DomNode* root, DomNode* target) {
-    if (root == target) return true;
+// Attribute and shadow ownership edges are independent of the DOM child chain.
+template <typename Inspect>
+static bool dom_visit_owned_tree(DomNode* root, const Inspect& inspect) {
+    if (inspect(root)) return true;
     DomElement* element = root->as_element();
     if (!element) return false;
     if (element->rare_ext) {
         for (DomAttr* attr = element->rare_ext->attribute_nodes; attr; attr = attr->attribute_next)
-            if (attr == target) return true;
+            if (inspect(attr)) return true;
         DomElement* shadow = element->shadow_root_element();
-        if (shadow && dom_owned_tree_contains(shadow, target)) return true;
+        if (shadow && dom_visit_owned_tree(shadow, inspect)) return true;
     }
     for (DomNode* child = element->first_child; child; child = child->next_sibling)
-        if (dom_owned_tree_contains(child, target)) return true;
+        if (dom_visit_owned_tree(child, inspect)) return true;
     return false;
+}
+
+template <typename Inspect>
+static bool dom_visit_owned_nodes(DomNodeRegistry* registry, const Inspect& inspect) {
+    DomNode* published = registry->document->root;
+    if (published && dom_visit_owned_tree(published, inspect)) return true;
+    for (size_t i = registry->root_count; i; --i) {
+        DomNode* root = registry->roots[i - 1];
+        if (root != published && dom_visit_owned_tree(root, inspect)) return true;
+    }
+    return false;
+}
+
+static bool dom_probe_owned_address(DomNodeRegistry* registry, DomNode* node) {
+    // compare a weak address only against known live storage before reading it.
+    bool found = dom_visit_owned_nodes(registry, [node](DomNode* member) { return member == node; });
+    return found && node->lifecycle_live && node->doc == registry->document;
 }
 
 bool dom_node_registry_owns(DomDocument* doc, DomNode* node) {
@@ -234,14 +251,55 @@ bool dom_node_registry_owns(DomDocument* doc, DomNode* node) {
     if (!registry || !node || registry->destroying) return false;
     DomNode*& cached = dom_cached_address(registry, node);
     if (cached == node) return true;
-    bool found = doc->root && dom_owned_tree_contains(doc->root, node);
-    for (size_t i = registry->root_count; !found && i; --i) {
-        DomNode* root = registry->roots[i - 1];
-        if (root != doc->root) found = dom_owned_tree_contains(root, node);
+    bool found = registry->validation_scope ? registry->validation_scope->owns_address(node)
+                                            : dom_probe_owned_address(registry, node);
+    if (found) cached = node;
+    return found;
+}
+
+struct DomValidationAddress { DomNode* node; };
+using DomValidationSet = TypedHashMap<DomValidationAddress,
+    HashMapPointerMemberKeyOps<DomValidationAddress, &DomValidationAddress::node>>;
+
+DomNodeValidationScope::DomNodeValidationScope(DomDocument* doc) {
+    if (auto* registry = dom_registry(doc); registry && !registry->validation_scope) {
+        registry->validation_scope = this;
+        document = doc;
     }
-    if (!found || !node->lifecycle_live || node->doc != doc) return false;
-    cached = node;
-    return true;
+}
+
+DomNodeValidationScope::~DomNodeValidationScope() {
+    if (auto* registry = dom_registry(document)) registry->validation_scope = nullptr;
+    DomValidationSet::destroy(addresses);
+}
+
+bool DomNodeValidationScope::owns_address(DomNode* address) {
+    auto* registry = dom_registry(document);
+    // a retirement or transfer in progress cannot lend a stable snapshot.
+    if (!registry->lifetime_stamp) return dom_probe_owned_address(registry, address);
+
+    if (stamp != registry->lifetime_stamp || registrations != registry->stats.registered_nodes) {
+        // the first cold check needs only one walk. Further checks share a snapshot.
+        DomValidationSet::destroy(addresses);
+        addresses = nullptr;
+        indexed = false;
+        stamp = registry->lifetime_stamp;
+        registrations = registry->stats.registered_nodes;
+        return dom_probe_owned_address(registry, address);
+    }
+    if (!indexed) {
+        indexed = true;
+        addresses = DomValidationSet::create(0);
+        if (addresses && dom_visit_owned_nodes(registry, [this](DomNode* node) {
+            if (node->lifecycle_live && node->doc == document) DomValidationSet::set(addresses, {node});
+            return DomValidationSet::oom(addresses);
+        })) {
+            DomValidationSet::destroy(addresses);
+            addresses = nullptr;
+        }
+    }
+    return addresses ? DomValidationSet::get(addresses, {address}) != nullptr
+                     : dom_probe_owned_address(registry, address);
 }
 
 static DomDetachedRoot* dom_find_candidate(DomNodeRegistry* registry, DomNode* node) {
@@ -374,7 +432,10 @@ void dom_lifecycle_destroy(DomDocument* doc) {
     dom_retire_begin_destroy(doc);
     dom_lifecycle_release_backing_roots(doc);
     DomNodeRegistry* registry = dom_registry(doc);
-    if (registry) dom_retire_dequeue(registry);
+    if (registry) {
+        dom_retire_dequeue(registry);
+        if (registry->validation_scope) registry->validation_scope->document = nullptr;
+    }
     auto** observed = dom_observer_slot(doc);
     if (*observed) *observed = (*observed)->next_observed;
     // the pool owns remaining detached roots and document-scoped work.
@@ -597,14 +658,24 @@ DomNodeRef dom_node_ref(DomNode* node) {
     return ref;
 }
 
-DomNode* dom_node_ref_validate(DomDocument* doc, DomNodeRef ref) {
-    DomNodeRegistry* registry = dom_registry(doc);
+static DomNode* dom_validate_weak_ref(DomNodeRegistry* registry, DomNodeRef ref) {
     if (!registry || !ref.address || !ref.expected_id) return nullptr;
     bool accessible = ref.lifetime_stamp && ref.lifetime_stamp == registry->lifetime_stamp;
-    if ((accessible || dom_node_registry_owns(doc, ref.address)) && ref.address->id == ref.expected_id)
+    if ((accessible || dom_node_registry_owns(registry->document, ref.address)) && ref.address->id == ref.expected_id)
         return ref.address;
     ++registry->stats.stale_ref_rejections;
     return nullptr;
+}
+
+DomNode* dom_node_ref_validate(DomDocument* doc, DomNodeRef ref) {
+    return dom_validate_weak_ref(dom_registry(doc), ref);
+}
+
+DomNode* dom_node_ref_refresh(DomDocument* doc, DomNodeRef& ref) {
+    DomNodeRegistry* registry = dom_registry(doc);
+    DomNode* node = dom_validate_weak_ref(registry, ref);
+    if (node && ref.lifetime_stamp != registry->lifetime_stamp) ref.lifetime_stamp = registry->lifetime_stamp;
+    return node;
 }
 
 // callers already own a live reference when transferring a hold (D5.5.1).
