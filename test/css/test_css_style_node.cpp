@@ -577,6 +577,89 @@ TEST_F(CssStyleNodeTest, BorrowedHtmlHintsRespectOriginsLayersAndAllRollback) {
     }
 }
 
+TEST_F(CssStyleNodeTest, ComponentCascadePreservesChainedRollbackAndAuthoredFilters) {
+    struct Sample { CssPropertyCode property; CssOrigin origin; CssEnum keyword; uint32_t layer; };
+    const Sample samples[] = {
+        {CSS_PROPERTY_COLOR, CSS_ORIGIN_USER, CSS_VALUE_INHERIT, 0},
+        {CSS_PROPERTY_COLOR, CSS_ORIGIN_AUTHOR, CSS_VALUE_INHERIT, 1},
+        {CSS_PROPERTY_COLOR, CSS_ORIGIN_AUTHOR, CSS_VALUE_INITIAL, 1},
+        {CSS_PROPERTY_COLOR, CSS_ORIGIN_AUTHOR, CSS_VALUE_REVERT_LAYER, 2},
+        {CSS_PROPERTY_COLOR, CSS_ORIGIN_AUTHOR, CSS_VALUE_INITIAL, 3},
+        {CSS_PROPERTY_ALL, CSS_ORIGIN_AUTHOR, CSS_VALUE_REVERT_LAYER, 3},
+    };
+    CssValue values[6] = {};
+    CssDeclaration* declarations[6] = {};
+    for (size_t i = 0; i < 6; i++) {
+        values[i].type = CSS_VALUE_TYPE_KEYWORD;
+        values[i].data.keyword = samples[i].keyword;
+        declarations[i] = css_declaration_create(samples[i].property, &values[i],
+            create_specificity(0, 0, 1), samples[i].origin, pool);
+        ASSERT_NE(declarations[i], nullptr);
+        declarations[i]->layer_order = samples[i].layer;
+        declarations[i]->presentation_value = i == 2;
+        ASSERT_NE(style_tree_apply_declaration(style_tree, declarations[i]), nullptr);
+    }
+    // all rolls back layer 3 across both sources; the next rollback also excludes layer 2.
+    const CssPropertyCode sources[] = {CSS_PROPERTY_COLOR, CSS_PROPERTY_ALL};
+    EXPECT_EQ(style_tree_get_component_declaration(style_tree, sources, 2), declarations[2]);
+    EXPECT_EQ(style_tree_get_authored_declaration(style_tree, CSS_PROPERTY_COLOR), declarations[1]);
+    EXPECT_EQ(style_tree_get_declaration_with_fallback(style_tree,
+        CSS_PROPERTY_COLOR, declarations[0]), declarations[2]);
+}
+
+TEST_F(CssStyleNodeTest, AbsentPropertiesFollowAllRollbackAfterCascadeChanges) {
+    CssValue values[6] = {};
+    const CssPropertyCode properties[] = {CSS_PROPERTY_ALL, CSS_PROPERTY_ALL,
+        CSS_PROPERTY_ALL, CSS_PROPERTY_ALL, CSS_PROPERTY_WIDTH, CSS_PROPERTY_FLEX};
+    const CssEnum keywords[] = {CSS_VALUE_INITIAL, CSS_VALUE_REVERT_LAYER,
+        CSS_VALUE_REVERT, CSS_VALUE_INHERIT, CSS_VALUE_INHERIT, CSS_VALUE_INHERIT};
+    CssDeclaration* declarations[6] = {};
+    for (size_t i = 0; i < 6; i++) {
+        values[i].type = CSS_VALUE_TYPE_KEYWORD;
+        values[i].data.keyword = keywords[i];
+        declarations[i] = css_declaration_create(properties[i], &values[i],
+            create_specificity(0, i >= 4 ? 1 : 0, 1),
+            i == 3 ? CSS_ORIGIN_USER : CSS_ORIGIN_AUTHOR, pool);
+        ASSERT_NE(declarations[i], nullptr);
+        declarations[i]->layer_order = i < 2 ? i + 1 : 0;
+        ASSERT_NE(style_tree_apply_declaration(style_tree, declarations[i]), nullptr);
+        CssDeclaration* expected = i < 2 ? declarations[0] : i == 2 ? nullptr
+            : i == 3 ? declarations[3] : declarations[4];
+        EXPECT_EQ(style_tree_get_declaration(style_tree, CSS_PROPERTY_WIDTH), expected);
+        EXPECT_EQ(style_tree_get_declaration_with_fallback(style_tree, CSS_PROPERTY_WIDTH, nullptr), expected);
+    }
+    EXPECT_EQ(style_tree_get_declaration(style_tree, CSS_PROPERTY_FLEX_GROW), declarations[5]);
+    ASSERT_TRUE(style_tree_remove_property(style_tree, CSS_PROPERTY_WIDTH));
+    EXPECT_EQ(style_tree_get_declaration(style_tree, CSS_PROPERTY_WIDTH), declarations[3]);
+    ASSERT_TRUE(style_tree_remove_declaration(style_tree, declarations[2]));
+    EXPECT_EQ(style_tree_get_declaration(style_tree, CSS_PROPERTY_WIDTH), declarations[0]);
+    style_tree_clear(style_tree);
+    EXPECT_EQ(style_tree_get_declaration(style_tree, CSS_PROPERTY_WIDTH), nullptr);
+}
+
+TEST_F(CssStyleNodeTest, EmptyShorthandMarkerCannotSelectAnUnknownDeclaration) {
+    CssValue reset = {}, length = {}, unsupported = {};
+    reset.type = unsupported.type = CSS_VALUE_TYPE_KEYWORD;
+    reset.data.keyword = CSS_VALUE_REVERT;
+    unsupported.data.keyword = CSS_VALUE_NONE;
+    length.type = CSS_VALUE_TYPE_LENGTH;
+    length.data.length = {200.0, CSS_UNIT_PX};
+    CssDeclaration* all = css_declaration_create(CSS_PROPERTY_ALL, &reset,
+        create_specificity(0, 1), CSS_ORIGIN_AUTHOR, pool);
+    CssDeclaration* width = css_declaration_create(CSS_PROPERTY_WIDTH, &length,
+        create_specificity(0, 1, 1), CSS_ORIGIN_AUTHOR, pool);
+    CssDeclaration* unknown = css_declaration_create((CssPropertyCode)0, &unsupported,
+        create_specificity(0, 1, 1), CSS_ORIGIN_AUTHOR, pool);
+    ASSERT_NE(style_tree_apply_declaration(style_tree, all), nullptr);
+    ASSERT_NE(style_tree_apply_declaration(style_tree, width), nullptr);
+    ASSERT_NE(style_tree_apply_declaration(style_tree, unknown), nullptr);
+    EXPECT_EQ(style_tree_get_declaration(style_tree, CSS_PROPERTY_WIDTH), width);
+    EXPECT_EQ(style_tree_get_authored_declaration(style_tree, CSS_PROPERTY_WIDTH), width);
+    EXPECT_EQ(style_tree_get_declaration_with_fallback(style_tree, CSS_PROPERTY_WIDTH, nullptr), width);
+    const CssPropertyCode sources[] = {(CssPropertyCode)0, CSS_PROPERTY_WIDTH, CSS_PROPERTY_ALL};
+    EXPECT_EQ(style_tree_get_component_declaration(style_tree, sources, 3), width);
+}
+
 TEST_F(CssStyleNodeTest, FrozenCascadeCachePreservesWinnersAndBorrowedFallbacks) {
     CssValue values[5] = {};
     const CssPropertyCode properties[] = {CSS_PROPERTY_COLOR, CSS_PROPERTY_COLOR,

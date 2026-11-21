@@ -812,20 +812,26 @@ static const char* dom_element_namespace_binding(DomElement* element, const char
 }
 
 const char* dom_element_lookup_namespace_uri(DomElement* element, const char* prefix) {
-    if (element && element->doc && !element->doc->xml_document &&
-        element->doc->page_kind == DOM_PAGE_KIND_HTML &&
-        (!prefix || (strcmp(prefix, "xml") && strcmp(prefix, "xmlns")))) {
-        // literal xmlns aliases in HTML do not bind QNames; only actual XMLNS attributes do.
-        for (DomNode* node = element; node; node = node->parent) {
-            if (!node->is_element()) continue;
-            const char* uri = dom_element_attribute_value_ns(node->as_element(),
-                "http://www.w3.org/2000/xmlns/", prefix && *prefix ? prefix : "xmlns");
-            if (uri) return *uri ? dom_resolved_namespace_uri(element, uri) : nullptr;
-        }
-        return nullptr;
+    if (!element) return nullptr;
+    size_t prefix_length = prefix ? strlen(prefix) : 0;
+    if (!prefix_length) prefix = nullptr;
+    if (prefix && (!strcmp(prefix, "xml") || !strcmp(prefix, "xmlns")))
+        return dom_element_namespace_binding(element, prefix, prefix_length);
+    for (DomElement* current = element; current; current = dom_parent_element(current)) {
+        // native fragments use element storage but are not a DOM parentElement.
+        if (!current->tag_name || current->tag_name[0] == '#') return nullptr;
+        const char* colon = strchr(current->tag_name, ':');
+        bool has_prefix = colon && !strcmp(current->local_name(), colon + 1);
+        bool matches = prefix ? has_prefix && (size_t)(colon - current->tag_name.get()) == prefix_length &&
+            !memcmp(current->tag_name, prefix, prefix_length) : !has_prefix;
+        const char* uri = dom_element_namespace_uri(current);
+        // an element's expanded name precedes declarations, including names created without xmlns attributes.
+        if (matches && uri && *uri) return uri;
+        uri = dom_element_attribute_value_ns(current, "http://www.w3.org/2000/xmlns/",
+            prefix ? prefix : "xmlns");
+        if (uri) return *uri ? dom_resolved_namespace_uri(element, uri) : nullptr;
     }
-    const char* uri = dom_element_namespace_binding(element, prefix, prefix ? strlen(prefix) : 0);
-    return uri && *uri ? uri : nullptr;
+    return nullptr;
 }
 
 const char* dom_element_namespace_uri(DomElement* element) {
@@ -3278,8 +3284,13 @@ bool DomElement::set_attribute(const char* name, const char* value, bool preserv
     return dom_element_set_attribute_value(this, name, value, preserve_case, true);
 }
 
+bool dom_element_can_write_metadata(DomElement* element, const char* name) {
+    return element && name && (!strncmp(name, "data-", 5) || !strncmp(name, "aria-", 5) ||
+        (!strcmp(name, "inert") && element->has_attribute(name)));
+}
+
 bool dom_element_set_non_style_metadata(DomElement* element, const char* name, const char* value) {
-    if (!element || !name || (strncmp(name, "data-", 5) && strncmp(name, "aria-", 5))) return false;
+    if (!dom_element_can_write_metadata(element, name)) return false;
     return dom_element_set_attribute_value(element, name, value, false, false);
 }
 

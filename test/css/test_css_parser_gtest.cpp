@@ -2444,6 +2444,58 @@ TEST_F(CssEngineParserTest, RelativeRgbAndHslUseOriginChannelsAndMath) {
         EXPECT_EQ(css_parse_property_declaration("color", 5, source, strlen(source), pool), nullptr) << source;
 }
 
+TEST_F(CssEngineParserTest, RelativeOklabAndOklchUseOriginChannelsWithoutSrgbClipping) {
+    const struct {const char* source; CssColorType type; double l, a, b, alpha; uint8_t missing = 0;} cases[] = {
+        {"oklch(from oklch(.6 .1 120 / .5) calc(l + .02) c h)", CSS_COLOR_OKLCH, .62, .1, 120, .5},
+        {"oklab(from oklab(.6 .1 .05) l calc(a * -1) calc(b + .05))", CSS_COLOR_OKLAB, .6, -.1, .1, 1},
+        {"oklab(from oklch(.6 .1 90) l a b)", CSS_COLOR_OKLAB, .6, 0, .1, 1},
+        {"oklch(from oklab(.6 .1 .1) l c h)", CSS_COLOR_OKLCH, .6, sqrt(.02), 45, 1},
+        {"oklch(from oklch(.6 .5 90) l c h)", CSS_COLOR_OKLCH, .6, .5, 90, 1},
+        {"oklab(from oklch(from oklab(.6 .3 .4) l c h) l a b)", CSS_COLOR_OKLAB, .6, .3, .4, 1},
+        {"oklch(from oklch(.6 .1 30) 200% -.1 h / 200%)", CSS_COLOR_OKLCH, 2, -.1, 30, 1},
+        {"oklch(from oklch(.6 none 30) l calc(c + .1) h)", CSS_COLOR_OKLCH, .6, .1, 30, 1},
+        {"oklab(from oklab(.6 .1 none) l a b)", CSS_COLOR_OKLAB, .6, .1, 0, 1, 4},
+        {"oklch(from oklch(.6 none 30) l c h)", CSS_COLOR_OKLCH, .6, 0, 30, 1, 2},
+        {"oklch(from black l c h)", CSS_COLOR_OKLCH, 0, 0, 0, 1},
+    };
+    for (const auto& entry : cases) {
+        CssDeclaration* declaration = css_parse_property_declaration("color", 5,
+            entry.source, strlen(entry.source), pool);
+        ASSERT_NE(declaration, nullptr) << entry.source;
+        CssComputedColor color;
+        ASSERT_TRUE(css_color_compute(declaration->value, &color));
+        EXPECT_EQ(color.type, entry.type);
+        EXPECT_EQ(color.missing, entry.missing);
+        EXPECT_NEAR(color.components[0], entry.l, 1e-6) << entry.source;
+        EXPECT_NEAR(color.components[1], entry.a, 1e-6) << entry.source;
+        EXPECT_NEAR(color.components[2], entry.b, 1e-6) << entry.source;
+        EXPECT_NEAR(color.components[3], entry.alpha, 1e-6) << entry.source;
+    }
+    for (const char* source : {"oklch(from red l c)", "oklch(from red l a h)",
+            "oklab(from red l c b)", "oklch(from red calc(l + 1px) c h)",
+            "oklch(from red l c h, .5)", "oklab(from red l a b / 1deg)"})
+        EXPECT_EQ(css_parse_property_declaration("color", 5, source, strlen(source), pool), nullptr) << source;
+}
+
+TEST_F(CssEngineParserTest, RelativeOklchKeepsDeferredCurrentColorUntilUsed) {
+    const char* source = "oklch(from currentColor calc(l + .02) c h / calc(alpha * .5))";
+    CssDeclaration* declaration = css_parse_property_declaration("color", 5, source, strlen(source), pool);
+    ASSERT_NE(declaration, nullptr);
+    CssComputedColor deferred;
+    ASSERT_TRUE(css_color_compute(declaration->value, &deferred));
+    ASSERT_NE(deferred.unresolved, nullptr);
+    CssValue* retained = css_value_create_computed_color(pool, &deferred);
+    ASSERT_NE(retained, nullptr);
+    CssComputedColor current = {CSS_COLOR_OKLCH, {.6, .1, 120, .8}}, result;
+    ASSERT_TRUE(css_color_compute(retained, &result, &current));
+    EXPECT_EQ(result.unresolved, nullptr);
+    EXPECT_EQ(result.type, CSS_COLOR_OKLCH);
+    EXPECT_NEAR(result.components[0], .62, 1e-9);
+    EXPECT_NEAR(result.components[1], .1, 1e-9);
+    EXPECT_NEAR(result.components[2], 120, 1e-9);
+    EXPECT_NEAR(result.components[3], .4, 1e-9);
+}
+
 TEST_F(CssEngineParserTest, LightDarkRetainsBothBranchesUntilTheUsedSchemeIsKnown) {
     Pool* source_pool = pool_create();
     ASSERT_NE(source_pool, nullptr);
@@ -2544,7 +2596,7 @@ TEST_F(CssEngineParserTest, InvalidPerceptualColorsCannotReplaceAnEarlierDeclara
     const char* invalid[] = {"oklab(.6 .1)", "oklab(.6 .1 .05 .5)", "oklab(.6,.1,.05)",
         "oklab(.6 1px .05)", "oklab(.6 .1 30deg)", "oklch(.6 .1 30%)", "oklch(1px .1 30)",
         "oklch(.6 .1 30 / 1s)", "oklab(.6 .1 .05 / .5 .2)", "oklab(invalid .1 .05)",
-        "oklab(from red l a b)", "oklch(.6 inherit 30)"};
+        "oklab(from red l a c)", "oklch(.6 inherit 30)"};
     for (const char* source : invalid) {
         SCOPED_TRACE(source);
         EXPECT_EQ(css_parse_property_declaration("color", 5, source, strlen(source), pool), nullptr);

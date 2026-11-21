@@ -187,15 +187,87 @@ static bool css_color_mix_compute(const CssValue* expression, CssComputedColor* 
 struct CssRelativeColorChannels {
     const char* names[4];
     double values[4];
+    uint8_t missing;
 };
+
+static int css_relative_color_channel_index(const CssRelativeColorChannels* channels, const CssValue* value) {
+    const char* name = css_value_identifier_name(value);
+    for (int i = 0; name && i < 4; i++) {
+        if (str_ieq_cstr(name, channels->names[i])) return i;
+    }
+    return -1;
+}
 
 static bool css_relative_color_channel(void* context, const CssValue* value, double* result) {
     auto* channels = (CssRelativeColorChannels*)context;
-    const char* name = css_value_identifier_name(value);
-    for (int i = 0; name && i < 4; i++) {
-        if (str_ieq_cstr(name, channels->names[i])) {*result = channels->values[i]; return true;}
+    int index = css_relative_color_channel_index(channels, value);
+    if (index < 0) return false;
+    *result = channels->values[index];
+    return true;
+}
+
+static bool css_color_oklab_components(const CssComputedColor* color, double* l, double* a, double* b) {
+    if (color->type == CSS_COLOR_OKLAB || color->type == CSS_COLOR_OKLCH) {
+        *l = color->components[0]; *a = color->components[1]; *b = color->components[2];
+        if (color->type == CSS_COLOR_OKLCH) {
+            double hue = *b * M_PI / 180.0;
+            *b = *a * sin(hue); *a *= cos(hue);
+        }
+        return true;
     }
-    return false;
+    double red, green, blue;
+    if (!css_color_rgb_components(color, &red, &green, &blue)) return false;
+    color_rgb_to_oklab(red, green, blue, l, a, b);
+    return true;
+}
+
+static bool css_relative_color_channels(const CssComputedColor* origin, CssColorType target,
+        CssRelativeColorChannels* references) {
+    struct Model { CssColorType type; const char* names[4]; const char* analogous[4]; };
+    static const Model models[] = {
+        {CSS_COLOR_RGB, {"r", "g", "b", "alpha"}, {"R", "G", "B", "alpha"}},
+        {CSS_COLOR_HSL, {"h", "s", "l", "alpha"}, {"H", "C", "L", "alpha"}},
+        {CSS_COLOR_OKLAB, {"l", "a", "b", "alpha"}, {"L", "a", "b", "alpha"}},
+        {CSS_COLOR_OKLCH, {"l", "c", "h", "alpha"}, {"L", "C", "H", "alpha"}},
+        {CSS_COLOR_LAB, {"l", "a", "b", "alpha"}, {"L", "a", "b", "alpha"}},
+        {CSS_COLOR_HWB, {"h", "w", "b", "alpha"}, {"H", "W", "black", "alpha"}},
+    };
+    const Model* input = nullptr;
+    const Model* output = nullptr;
+    for (const auto& model : models) {
+        if (model.type == target) output = &model;
+        if (model.type == origin->type) input = &model;
+    }
+    if (origin->type == CSS_COLOR_COLOR && origin->color_space && !strcmp(origin->color_space, "srgb"))
+        input = &models[0];
+    if (!output) return false;
+    memcpy(references->names, output->names, sizeof(output->names));
+    // analogous missing channels survive conversion; channel math consumes their zero value.
+    if (input) for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++)
+        if ((origin->missing & (1u << j)) && !strcmp(output->analogous[i], input->analogous[j]))
+            references->missing |= (uint8_t)(1u << i);
+    double* values = references->values;
+    values[3] = origin->components[3];
+    if (target == CSS_COLOR_OKLAB || target == CSS_COLOR_OKLCH) {
+        // preserve source-model channels, including colors outside sRGB, before channel math.
+        if (origin->type == target) memcpy(values, origin->components, 3 * sizeof(double));
+        else {
+            if (!css_color_oklab_components(origin, &values[0], &values[1], &values[2])) return false;
+            if (target == CSS_COLOR_OKLCH) {
+                double chroma = hypot(values[1], values[2]);
+                double hue = atan2(values[2], values[1]) * 180.0 / M_PI;
+                values[1] = chroma; values[2] = hue < 0.0 ? hue + 360.0 : hue;
+            }
+        }
+    } else {
+        if (!css_color_rgb_components(origin, &values[0], &values[1], &values[2])) return false;
+        if (target == CSS_COLOR_HSL) {
+            color_rgb_to_hsl(values[0], values[1], values[2], &values[0], &values[1], &values[2]);
+            values[1] *= 100.0; values[2] *= 100.0;
+        } else for (int i = 0; i < 3; i++) values[i] *= 255.0;
+    }
+    for (int i = 0; i < 4; i++) if (references->missing & (1u << i)) values[i] = 0.0;
+    return true;
 }
 
 static bool css_color_function_compute(const CssValue* expression, CssComputedColor* result,
@@ -238,19 +310,14 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
         int offset = predefined ? 1 : 0;
         relative = count > 0 && css_value_identifier_is(list->data.list.values[0], "from");
         if (relative) {
-            if ((!rgb && !hsl) || count < 2 ||
+            if (count < 2 ||
                 !css_color_compute(list->data.list.values[1], &origin, current_color, dark_scheme)) return false;
             bool deferred = origin.unresolved || origin.type == CSS_COLOR_CURRENTCOLOR && !current_color;
             if (origin.type == CSS_COLOR_CURRENTCOLOR)
                 origin = current_color ? *current_color : CssComputedColor{CSS_COLOR_RGB, {0, 0, 0, 1}};
-            double r, g, b;
-            if (!css_color_rgb_components(&origin, &r, &g, &b)) return false;
-            references = {{rgb ? "r" : "h", rgb ? "g" : "s", rgb ? "b" : "l", "alpha"},
-                {r * 255.0, g * 255.0, b * 255.0, origin.components[3]}};
-            if (hsl) {
-                color_rgb_to_hsl(r, g, b, &references.values[0], &references.values[1], &references.values[2]);
-                references.values[1] *= 100.0; references.values[2] *= 100.0;
-            }
+            CssColorType target = rgb ? CSS_COLOR_RGB : hsl ? CSS_COLOR_HSL
+                : oklab ? CSS_COLOR_OKLAB : oklch ? CSS_COLOR_OKLCH : CSS_COLOR_KEYWORD;
+            if (!css_relative_color_channels(&origin, target, &references)) return false;
             if (deferred) result->unresolved = expression;
             offset = 2;
             count -= offset;
@@ -276,20 +343,26 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
     result->type = predefined ? CSS_COLOR_COLOR : rgb ? CSS_COLOR_RGB : hsl ? CSS_COLOR_HSL
         : hwb ? CSS_COLOR_HWB : lab ? CSS_COLOR_LAB : oklab ? CSS_COLOR_OKLAB : CSS_COLOR_OKLCH;
     result->components[3] = relative ? origin.components[3] : 1.0;
+    if (relative && !channels[3]) result->missing |= references.missing & 8u;
     CssMathType first_type = CSS_MATH_INVALID;
     for (int i = 0; i < 4; i++) {
         if (i == 3 && !channels[i]) continue;
         bool missing = false;
         CssMathType type;
         bool hue = ((hsl || hwb) && i == 0) || (oklch && i == 2);
-        if (!css_color_component(channels[i], hue, !modern && !rgb && i > 0 && i < 3,
+        int reference = relative && (oklab || oklch)
+            ? css_relative_color_channel_index(&references, channels[i]) : -1;
+        if (reference >= 0 && (references.missing & (1u << reference))) {
+            result->components[i] = 0.0;
+            missing = true; type = CSS_MATH_NUMBER;
+        } else if (!css_color_component(channels[i], hue, !modern && !rgb && i > 0 && i < 3,
             // modern color syntax preserves missing channels; used-color conversion treats them as zero.
-            modern, relative && rgb ? i == 3 : perceptual ? (!lab && i == 0) || i == 3 : !predefined || i == 3,
+            modern, relative && (rgb || oklab || oklch) ? i == 3 : perceptual ? (!lab && i == 0) || i == 3 : !predefined || i == 3,
             lab && i < 3 ? i == 0 ? 1.0 : 1.25 : perceptual && i > 0 && i < 3 ? 0.004 : 0.01,
             rgb && i < 3 ? 1.0 / 255.0 : (hsl || hwb) && i > 0 && i < 3 ? 0.01 : 1.0,
             &result->components[i], &missing, &type, relative ? &relative_context : nullptr)) return false;
         if (lab && i == 0) result->components[i] = fmax(0.0, fmin(100.0, result->components[i]));
-        if (oklch && i == 1) result->components[i] = fmax(0.0, result->components[i]);
+        if (oklch && !relative && i == 1) result->components[i] = fmax(0.0, result->components[i]);
         if (missing) result->missing |= (uint8_t)(1u << i);
         if (rgb && !modern && i < 3) {
             if (i == 0) first_type = type;
@@ -306,7 +379,7 @@ static bool css_color_function_compute(const CssValue* expression, CssComputedCo
         result->type = CSS_COLOR_RGB;
         result->components[0] = red; result->components[1] = green; result->components[2] = blue;
     }
-    if (relative) {result->type = CSS_COLOR_COLOR; result->color_space = "srgb";}
+    if (relative && (rgb || hsl)) {result->type = CSS_COLOR_COLOR; result->color_space = "srgb";}
     return true;
 }
 
@@ -383,10 +456,7 @@ static bool css_color_rgb_components(const CssComputedColor* color, double* r, d
     else if (color->type == CSS_COLOR_HSL) color_hsl_to_rgb(red, green, blue, &red, &green, &blue);
     else if (color->type == CSS_COLOR_HWB) color_hwb_to_rgb(red, green, blue, &red, &green, &blue);
     else if (color->type == CSS_COLOR_OKLAB || color->type == CSS_COLOR_OKLCH) {
-        if (color->type == CSS_COLOR_OKLCH) {
-            double hue = blue * M_PI / 180.0;
-            blue = green * sin(hue); green *= cos(hue);
-        }
+        if (!css_color_oklab_components(color, &red, &green, &blue)) return false;
         color_oklab_to_rgb(red, green, blue, &red, &green, &blue);
     }
     else if (color->type != CSS_COLOR_RGB && !(color->type == CSS_COLOR_COLOR &&

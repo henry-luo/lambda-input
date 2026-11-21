@@ -2694,6 +2694,11 @@ const CssValue* css_project_shorthand_longhand(Pool* pool, const CssValue* value
     if (!value || shorthand == longhand || css_value_is_global_keyword(value)) return value;
     if (css_grid_property_mask(shorthand))
         return css_grid_shorthand_longhand(pool, value, shorthand, longhand);
+    if (shorthand == CSS_PROPERTY_FONT) {
+        // font's components share the parser used for the original compound declaration.
+        const CssProperty* property = css_property_get_by_code(longhand);
+        return property ? css_font_shorthand_longhand(value, property->name, pool) : nullptr;
+    }
     if (shorthand == CSS_PROPERTY_CONTAINER)
         return css_container_shorthand_longhand(value, longhand, pool);
     if (shorthand == CSS_PROPERTY_GAP) {

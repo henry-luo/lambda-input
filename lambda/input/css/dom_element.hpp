@@ -1021,6 +1021,7 @@ struct DomFragmentGeometry {
     bool has_ruby_column_geometry;
     bool has_empty_ruby_base;
     bool has_ruby_parallel_fragments; // selected text rectangles own each line's allocation
+};
 
 // task generations suppress stale toggle events after state changes.
 struct DomToggleTaskTracker {
@@ -1749,7 +1750,8 @@ inline const Element* dom_element_render_source(const DomElement* de) {
 // equal template results retain live DOM storage while adopting the new result keys.
 void dom_rebind_equal_render_result(DomDocument* doc, Item previous, Item current);
 void dom_rebind_render_element(DomDocument* doc, Element* previous, Element* current);
-// only for data/ARIA writes proven independent of selectors and CSS attr() values.
+// data/ARIA, or an inert attribute whose boolean presence is unchanged; CSS dependencies remain caller-owned.
+bool dom_element_can_write_metadata(DomElement* element, const char* name);
 bool dom_element_set_non_style_metadata(DomElement* element, const char* name, const char* value);
 DomElement* element_dom_map_lookup(struct hashmap* map, Element* elem);
 
