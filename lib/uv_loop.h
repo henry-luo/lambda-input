@@ -40,6 +40,7 @@ uv_loop_t* lambda_uv_loop(void);
 int  lambda_uv_init(void);       // create loop, return 0 on success
 int  lambda_uv_run(void);        // run until no active handles/requests
 int  lambda_uv_run_loop(uv_loop_t* loop, uv_run_mode mode);
+bool lambda_uv_wait_for_event(uv_loop_t* loop, int max_wait_ms);
 bool lambda_uv_is_running(void);
 void lambda_uv_stop(void);       // stop loop (from signal handler etc.)
 void lambda_uv_cleanup(void);    // close all handles, free loop

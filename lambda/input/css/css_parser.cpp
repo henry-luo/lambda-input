@@ -2627,6 +2627,76 @@ static bool css_value_is_single_var_block(const CssToken* tokens, int start, int
     return depth == 0 && has_var;
 }
 
+static CssEnum css_webkit_box_display(const CssValue* value) {
+    if (value && value->type == CSS_VALUE_TYPE_CUSTOM) {
+        if (css_value_identifier_is(value, "-webkit-box")) return CSS_VALUE_FLEX;
+        if (css_value_identifier_is(value, "-webkit-inline-box")) return CSS_VALUE_INLINE_FLEX;
+    }
+    return CSS_VALUE__UNDEF;
+}
+
+static CssEnum css_webkit_box_direction(const CssValue* value) {
+    if (css_value_identifier_is(value, "vertical") || css_value_identifier_is(value, "block-axis"))
+        return CSS_VALUE_COLUMN;
+    if (css_value_identifier_is(value, "horizontal") || css_value_identifier_is(value, "inline-axis"))
+        return CSS_VALUE_ROW;
+    return CSS_VALUE__UNDEF;
+}
+
+static void css_replace_parsed_keyword(CssDeclaration* declaration, CssEnum keyword) {
+    const CssEnumInfo* info = css_enum_info(keyword);
+    *declaration->value = {};
+    declaration->value->type = CSS_VALUE_TYPE_KEYWORD;
+    declaration->value->data.keyword = keyword;
+    declaration->value_text = info->name;
+    declaration->value_text_len = info->length;
+}
+
+static void css_normalize_webkit_box(CssDeclaration** declarations, size_t count) {
+    bool legacy_display = false;
+    bool has_alias = false;
+    const CssDeclaration* orientation = nullptr;
+    const CssDeclaration* clamp = nullptr;
+    for (size_t i = 0; i < count; i++) {
+        const CssDeclaration* declaration = declarations[i];
+        CssPropertyCode code = declaration->property_code;
+        if (code == CSS_PROPERTY_WEBKIT_BOX_ORIENT || code == CSS_PROPERTY_WEBKIT_LINE_CLAMP) has_alias = true;
+        if (code == CSS_PROPERTY_DISPLAY &&
+            css_webkit_box_display(declaration->value) != CSS_VALUE__UNDEF) legacy_display = true;
+        if ((code == CSS_PROPERTY_WEBKIT_BOX_ORIENT || code == CSS_PROPERTY_ALL) &&
+            (!orientation || !orientation->important || declaration->important)) orientation = declaration;
+        if ((code == CSS_PROPERTY_LINE_CLAMP || code == CSS_PROPERTY_WEBKIT_LINE_CLAMP || code == CSS_PROPERTY_ALL) &&
+            (!clamp || !clamp->important || declaration->important)) clamp = declaration;
+    }
+    if (!legacy_display && !has_alias) return;
+    // a complete vertical clamp block uses an independent flow box. Select its
+    // local winners before replacing the legacy declarations with standard ones.
+    bool clamped_box = legacy_display && orientation && clamp &&
+        css_webkit_box_direction(orientation->value) == CSS_VALUE_COLUMN &&
+        clamp->value && clamp->value->type != CSS_VALUE_TYPE_KEYWORD &&
+        !css_value_contains_pending_substitution(clamp->value);
+    for (size_t i = 0; i < count; i++) {
+        CssDeclaration* declaration = declarations[i];
+        CssPropertyCode canonical = css_property_canonical_code(declaration->property_code);
+        if (canonical != declaration->property_code) {
+            if (canonical == CSS_PROPERTY_FLEX_DIRECTION) {
+                CssEnum direction = css_webkit_box_direction(declaration->value);
+                if (direction != CSS_VALUE__UNDEF) css_replace_parsed_keyword(declaration, direction);
+            }
+            declaration->property_code = canonical;
+            declaration->name_id = css_property_name_id(canonical);
+            StrView name = well_known_name_view(declaration->name_id);
+            declaration->property_name = name.str;
+            declaration->property_name_length = name.length;
+        } else if (legacy_display && canonical == CSS_PROPERTY_DISPLAY) {
+            CssEnum display = css_webkit_box_display(declaration->value);
+            if (display == CSS_VALUE__UNDEF) continue;
+            if (clamped_box) display = display == CSS_VALUE_FLEX ? CSS_VALUE_FLOW_ROOT : CSS_VALUE_INLINE_BLOCK;
+            css_replace_parsed_keyword(declaration, display);
+        }
+    }
+}
+
 // CSS source and CSSOM share value parsing; CSSOM already supplies a decoded name.
 static CssDeclaration* css_parse_named_declaration_value(const CssToken* tokens,
     int* pos, int token_count, Pool* pool, bool quirks_mode, StrView property) {
@@ -2959,7 +3029,9 @@ static CssDeclaration* css_parse_named_declaration_value(const CssToken* tokens,
             }
         }
 
-        if (decl->property_code > 0 && decl->property_code < CSS_PROPERTY_CUSTOM &&
+        bool legacy_display = decl->property_code == CSS_PROPERTY_DISPLAY &&
+            css_webkit_box_display(decl->value) != CSS_VALUE__UNDEF;
+        if (!legacy_display && decl->property_code > 0 && decl->property_code < CSS_PROPERTY_CUSTOM &&
             !css_property_validate_value_mode(decl->property_code, decl->value,
                                               quirks_mode)) {
             // A parse-time invalid value must never displace an earlier valid
@@ -3029,7 +3101,7 @@ static CssDeclaration* css_parse_named_declaration_value(const CssToken* tokens,
 }
 
 // source declaration names are decoded by the tokenizer before value parsing
-CssDeclaration* css_parse_declaration_from_tokens_mode(const CssToken* tokens,
+static CssDeclaration* css_parse_source_declaration(const CssToken* tokens,
     int* pos, int token_count, Pool* pool, bool quirks_mode) {
     if (!tokens || !pos || *pos >= token_count || !pool) return NULL;
 
@@ -3062,6 +3134,13 @@ CssDeclaration* css_parse_declaration_from_tokens_mode(const CssToken* tokens,
 
     return css_parse_named_declaration_value(tokens, pos, token_count, pool,
         quirks_mode, property);
+}
+
+CssDeclaration* css_parse_declaration_from_tokens_mode(const CssToken* tokens,
+    int* pos, int token_count, Pool* pool, bool quirks_mode) {
+    CssDeclaration* declaration = css_parse_source_declaration(tokens, pos, token_count, pool, quirks_mode);
+    if (declaration) css_normalize_webkit_box(&declaration, 1);
+    return declaration;
 }
 
 CssDeclaration* css_parse_declaration_from_tokens(const CssToken* tokens,
@@ -3291,6 +3370,7 @@ static bool css_nesting_flush_declarations(Pool* pool, CssRule*** nested_rules,
     if (!pending_count || *pending_count == 0) return true;
     CssRule* rule = css_parser_allocate_rule(pool);
     if (!rule) return false;
+    css_normalize_webkit_box(*pending, *pending_count);
     rule->type = CSS_RULE_NESTED_DECLARATIONS;
     rule->data.style_rule.declarations = *pending;
     rule->data.style_rule.declaration_count = *pending_count;
@@ -3526,7 +3606,7 @@ static int css_parse_rule_from_tokens_with_context(const CssToken* tokens,
                             !css_nested_item_starts_rule(tokens, pos, token_count);
                         if (declaration_start) {
                             int before = pos;
-                            CssDeclaration* decl = css_parse_declaration_from_tokens_mode(
+                            CssDeclaration* decl = css_parse_source_declaration(
                                 tokens, &pos, token_count, pool, quirks_mode);
                             if (decl) {
                                 if (pending_count >= pending_capacity &&
@@ -4129,7 +4209,7 @@ static int css_parse_rule_from_tokens_with_context(const CssToken* tokens,
         }
 
         // Parse declaration
-        CssDeclaration* decl = css_parse_declaration_from_tokens_mode(
+        CssDeclaration* decl = css_parse_source_declaration(
             tokens, &pos, token_count, pool, quirks_mode);
         log_debug(" After parsing: decl=%p", (void*)decl);
         if (decl) {
@@ -4185,6 +4265,7 @@ static int css_parse_rule_from_tokens_with_context(const CssToken* tokens,
     rule->data.style_rule.selector_group = selector_group;
     // For backward compatibility, store the first selector in the single selector field
     rule->data.style_rule.selector = (selector_group->selector_count > 0) ? selector_group->selectors[0] : NULL;
+    css_normalize_webkit_box(declarations, decl_count);
     rule->data.style_rule.declarations = declarations;
     rule->data.style_rule.declaration_count = decl_count;
     rule->data.style_rule.nested_rules = nested_rules;
@@ -4570,14 +4651,13 @@ CssDeclaration** css_parse_declaration_list_text_mode(const char* text, size_t l
         }
 
         int before = pos;
-        CssDeclaration* declaration = css_parse_declaration_from_tokens_mode(
+        CssDeclaration* declaration = css_parse_source_declaration(
             tokens, &pos, (int)token_count, pool, quirks_mode);
         if (declaration) {
             if (*declaration_count >= capacity) {
                 if (!lam::pool_copy_grow_array(pool, &declarations, &capacity,
                                                 *declaration_count, *declaration_count + 1, 8, true)) {
-                    css_token_array_release(pool, tokens, token_count);
-                    return declarations;
+                    break;
                 }
             }
             declarations[(*declaration_count)++] = declaration;
@@ -4589,6 +4669,7 @@ CssDeclaration** css_parse_declaration_list_text_mode(const char* text, size_t l
 
     css_token_array_release(pool, tokens, token_count);
     if (*declaration_count == 0) return NULL;
+    css_normalize_webkit_box(declarations, *declaration_count);
     return declarations;
 }
 
@@ -4674,6 +4755,7 @@ static CssDeclaration* css_parse_value_text_fragment(const char* property, size_
         ? css_parse_named_declaration_value(tokens, &pos, (int)count, pool,
             false, strview_init(property, property_length)) : nullptr;
     css_token_array_release(pool, tokens, count);
+    if (declaration) css_normalize_webkit_box(&declaration, 1);
     return declaration;
 }
 

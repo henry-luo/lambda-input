@@ -3140,8 +3140,10 @@ static bool css_keyword_set_valid(const CssValue* value, size_t first, size_t co
     uint32_t seen = 0;
     for (size_t i = first; i < first + count; i++) {
         const CssValue* item = css_space_list_item(value, i);
+        if (!item || (item->type != CSS_VALUE_TYPE_KEYWORD && item->type != CSS_VALUE_TYPE_CUSTOM))
+            return false;
         const char* name = css_value_identifier_name(item);
-        if (!name || item->type == CSS_VALUE_TYPE_STRING) return false;
+        if (!name) return false;
         const CssKeywordSetItem* option = nullptr;
         for (size_t j = 0; j < option_count; j++)
             if (str_ieq_cstr(name, options[j].name)) { option = &options[j]; break; }
@@ -3563,6 +3565,13 @@ bool css_property_validate_value_mode(CssPropertyCode id,
     if (id == CSS_PROPERTY_FLEX) {
         const CssValue* members[3];
         return css_value_contains_pending_substitution(value) || css_flex_components(value, members);
+    }
+    if (id == CSS_PROPERTY_FLEX_DIRECTION) {
+        if (css_value_contains_pending_substitution(value)) return true;
+        if (value->type != CSS_VALUE_TYPE_KEYWORD) return false;
+        const CssEnumInfo* info = css_enum_info(value->data.keyword);
+        return info && (info->group == CSS_VALUE_GROUP_GLOBAL ||
+                        info->group == CSS_VALUE_GROUP_FLEX_DIRECTION);
     }
     if (id == CSS_PROPERTY_FLEX_BASIS) {
         return css_value_is_global_keyword(value) || css_value_contains_pending_substitution(value) ||
@@ -4705,6 +4714,23 @@ CssPropertyCode css_property_code_from_name(const char* name) {
 CssPropertyCode css_property_code_from_name_id(NameId name_id) {
     if (name_id == NAME_ID_NONE) return static_cast<CssPropertyCode>(0);
     return css_standard_code_from_name_id(name_id);
+}
+
+CssPropertyCode css_property_canonical_code(CssPropertyCode property_code) {
+    // the source IDs still select the legacy grammar before declarations are normalized.
+    switch (property_code) {
+        case CSS_PROPERTY_WEBKIT_BOX_ORIENT: return CSS_PROPERTY_FLEX_DIRECTION;
+        case CSS_PROPERTY_WEBKIT_LINE_CLAMP: return CSS_PROPERTY_LINE_CLAMP;
+        default: return property_code;
+    }
+}
+
+const char* css_webkit_box_orientation_name(const char* flex_direction) {
+    if (str_ieq_cstr(flex_direction, "column") || str_ieq_cstr(flex_direction, "column-reverse"))
+        return "vertical";
+    if (str_ieq_cstr(flex_direction, "row") || str_ieq_cstr(flex_direction, "row-reverse"))
+        return "horizontal";
+    return flex_direction;
 }
 
 NameId css_property_name_id(CssPropertyCode property_code) {

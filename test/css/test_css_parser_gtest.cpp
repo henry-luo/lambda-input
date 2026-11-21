@@ -53,6 +53,64 @@ TEST_F(CssParserTest, WhiteSpaceRejectsInvalidDeclarationsBeforeTheCascade) {
         EXPECT_EQ(css_parse_declaration_text(source, strlen(source), pool), nullptr) << source;
 }
 
+TEST_F(CssParserTest, WebKitBoxDeclarationsSerializeAsStandardCss) {
+    CssEngine* engine = css_engine_create(pool);
+    ASSERT_NE(engine, nullptr);
+    const struct {
+        const char* legacy;
+        const char* standard;
+    } cases[] = {
+        {"display:-WEBKIT-BOX;-webkit-box-orient:inline-axis",
+         "display:flex;flex-direction:row"},
+        {"display:-webkit-inline-box;-webkit-box-orient:block-axis",
+         "display:inline-flex;flex-direction:column"},
+        {"-webkit-line-clamp:2;display:-webkit-box;-webkit-box-orient:vertical",
+         "line-clamp:2;display:flow-root;flex-direction:column"},
+        {"display:-webkit-inline-box;-webkit-box-orient:vertical !important;"
+         "-webkit-box-orient:horizontal;-webkit-line-clamp:2 !important;line-clamp:none",
+         "display:inline-block;flex-direction:column !important;flex-direction:row;"
+         "line-clamp:2 !important;line-clamp:none"},
+        {"display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:none",
+         "display:flex;flex-direction:column;line-clamp:2;line-clamp:none"},
+        {"display:grid;display:-webkit-boxes;-webkit-box-orient:row;-webkit-line-clamp:2.5",
+         "display:grid"},
+        {"display:block;display:'-webkit-box';-webkit-box-orient:url(vertical);"
+         "flex-direction:column;flex-direction:invalid",
+         "display:block;flex-direction:column"},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.legacy);
+        size_t count = 0, expected_count = 0;
+        CssDeclaration** declarations = css_parse_declaration_list_text(
+            item.legacy, strlen(item.legacy), pool, &count);
+        CssDeclaration** expected = css_parse_declaration_list_text(
+            item.standard, strlen(item.standard), pool, &expected_count);
+        ASSERT_NE(declarations, nullptr);
+        ASSERT_EQ(count, expected_count);
+
+        const char* source = pool_join3(pool, ".box{", 5, item.legacy, strlen(item.legacy), "}", 1);
+        CssStylesheet* stylesheet = css_parse_stylesheet(engine, source, nullptr);
+        ASSERT_NE(stylesheet, nullptr);
+        ASSERT_EQ(stylesheet->rule_count, 1u);
+        const auto& rule = stylesheet->rules[0]->data.style_rule;
+        ASSERT_EQ(rule.declaration_count, count);
+
+        CssFormatter* formatter = css_formatter_create(pool, CSS_FORMAT_COMPACT);
+        ASSERT_NE(formatter, nullptr);
+        for (size_t i = 0; i < count; i++) {
+            const char* canonical = css_format_declaration_full(formatter, expected[i]);
+            stringbuf_reset(formatter->output);
+            EXPECT_STREQ(css_format_declaration_full(formatter, declarations[i]), canonical);
+            stringbuf_reset(formatter->output);
+            EXPECT_STREQ(css_format_declaration_full(formatter, rule.declarations[i]), canonical);
+            stringbuf_reset(formatter->output);
+            EXPECT_EQ(declarations[i]->important, expected[i]->important);
+            EXPECT_EQ(rule.declarations[i]->important, expected[i]->important);
+        }
+    }
+    css_engine_destroy(engine);
+}
+
 TEST_F(CssParserTest, SingleVariableBlockRetainsItsDeclaration) {
     for (const char* text : {"width:{var(--size)}", "color:{var(--color)}"}) {
         EXPECT_NE(css_parse_declaration_text(text, strlen(text), pool), nullptr) << text;

@@ -235,13 +235,17 @@ bool raster_buffer_blend(RasterBuffer* destination, const RasterBuffer* source,
             sx-=0.5; sy-=0.5;
             int64_t ix=(int64_t)floor(sx),iy=(int64_t)floor(sy);
             double fx=sx-ix,fy=sy-iy,alpha=0,colors[3]={};
+            // Two samples share each clamped coordinate at the edge of the image.
+            uint32_t columns[] = {(uint32_t)image_edge_index(ix,source->width),
+                (uint32_t)image_edge_index(ix+1,source->width)};
+            uint32_t rows[] = {(uint32_t)image_edge_index(iy,source->height),
+                (uint32_t)image_edge_index(iy+1,source->height)};
             // interpolate premultiplied samples so hidden RGB cannot bleed across transparent edges.
             for (int j=0;j<4;j++) {
                 double weight=((j&1)?fx:1-fx)*((j&2)?fy:1-fy);
                 if (weight==0) continue;
                 uint8_t pixel[4];
-                raster_rgba_pixel(source,(uint32_t)image_edge_index(ix+(j&1),source->width),
-                    (uint32_t)image_edge_index(iy+((j>>1)&1),source->height),pixel);
+                raster_rgba_pixel(source,columns[j&1],rows[j>>1],pixel);
                 double a=pixel[3]/255.0; alpha+=weight*a;
                 for (int c=0;c<3;c++) colors[c]+=weight*a*pixel[c];
             }

@@ -3112,16 +3112,19 @@ static const char* dom_element_stored_attribute(DomElement* element, const char*
 
 static const char* dom_element_attr_key(DomElement* element, const char* name,
                                         char* lower, size_t lower_size) {
-    lowercase_attr_name(name, lower, lower_size);
-    // an unchanged name needs no namespace walk; layout queries these keys
-    // repeatedly on every descendant of large HTML and foreign-content trees.
-    if (strcmp(lower, name) == 0) return name;
+    // Layout and scene sampling repeatedly request canonical keys. Those
+    // keys can use the caller's bytes without a lowercase copy or comparison.
+    for (size_t i = 0; i + 1 < lower_size; i++) {
+        char c = name[i];
+        if (!c) return name;
+        if (c >= 'A' && c <= 'Z') break;
+    }
     if ((element->doc && element->doc->xml_document) ||
         strcmp(dom_element_namespace_uri(element), "http://www.w3.org/1999/xhtml") != 0) return name;
     bool stored_exact = element->is_synthetic()
         ? dom_element_find_synthetic_attribute(element, name) >= 0
         : markup_attribute_field((TypeMap*)dom_element_to_element(element)->type, name) != nullptr;
-    return stored_exact ? name : lower;
+    return stored_exact ? name : lowercase_attr_name(name, lower, lower_size);
 }
 
 static DomNamespacedAttribute* dom_first_recorded_attribute(DomElement* element, const char* name) {
@@ -3473,8 +3476,7 @@ bool dom_element_can_write_metadata(DomElement* element, const char* name) {
         (!strcmp(name, "inert") && element->has_attribute(name)));
 }
 
-bool dom_element_set_non_style_metadata(DomElement* element, const char* name, const char* value) {
-    if (!dom_element_can_write_metadata(element, name)) return false;
+bool dom_element_write_attribute_without_cascade(DomElement* element, const char* name, const char* value) {
     return dom_element_set_attribute_value(element, name, value, false, false);
 }
 
@@ -3931,7 +3933,7 @@ bool dom_element_set_presentation_style(DomElement* element, const char* propert
     return false;
 #else
     if (!element || !element->doc || !property || !value) return false;
-    CssPropertyCode code = css_property_code_from_name(property);
+    CssPropertyCode code = css_property_canonical_code(css_property_code_from_name(property));
     bool custom = property[0] == '-' && property[1] == '-' && property[2];
     if (!custom && (code <= 0 || code >= CSS_PROPERTY_CUSTOM)) return false;
     CssDeclaration* old = nullptr;
