@@ -265,6 +265,25 @@ int lambda_uv_run_loop(uv_loop_t* loop, uv_run_mode mode) {
     return result;
 }
 
+static void wait_cap_fired(uv_timer_t* timer) {
+    *(bool*)timer->data = true;
+}
+
+bool lambda_uv_wait_for_event(uv_loop_t* loop, int max_wait_ms) {
+    if (!loop || max_wait_ms <= 0 || (loop == g_loop && g_shared_loop_depth)) return false;
+    uv_timer_t cap;
+    if (uv_timer_init(loop, &cap) != 0) return false;
+    bool expired = false;
+    cap.data = &expired;
+    // refresh cached time after synchronous host work, then wake on I/O or the cap.
+    uv_update_time(loop);
+    int started = uv_timer_start(&cap, wait_cap_fired, (uint64_t)max_wait_ms, 0);
+    if (started == 0) lambda_uv_run_loop(loop, UV_RUN_ONCE);
+    uv_close((uv_handle_t*)&cap, NULL);
+    lambda_uv_run_loop(loop, UV_RUN_NOWAIT);
+    return started == 0 && !expired;
+}
+
 bool lambda_uv_is_running(void) {
     return g_shared_loop_depth != 0;
 }

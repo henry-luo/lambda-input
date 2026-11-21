@@ -1826,7 +1826,8 @@ void dom_rebind_equal_render_result(DomDocument* doc, Item previous, Item curren
 void dom_rebind_render_element(DomDocument* doc, Element* previous, Element* current);
 // data/ARIA, or an inert attribute whose boolean presence is unchanged; CSS dependencies remain caller-owned.
 bool dom_element_can_write_metadata(DomElement* element, const char* name);
-bool dom_element_set_non_style_metadata(DomElement* element, const char* name, const char* value);
+// The caller has ruled out CSS and native attribute dependencies on layout.
+bool dom_element_write_attribute_without_cascade(DomElement* element, const char* name, const char* value);
 DomElement* element_dom_map_lookup(struct hashmap* map, Element* elem);
 
 // Resolve a parsed/template Element to its live DOM wrapper. The lifecycle
