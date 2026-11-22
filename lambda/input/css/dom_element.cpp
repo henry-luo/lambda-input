@@ -2847,6 +2847,32 @@ void DomElement::set_pseudo_style(PseudoStyleKind kind, StyleTree* style) {
     set_shared_pseudo_reset_slot(kind, 0);
 }
 
+static void dom_numeric_attribute_arena_destroy(DomDocumentResourceData* resource) {
+    arena_destroy(reinterpret_cast<Arena*>(resource));
+}
+
+Arena* dom_element_numeric_attribute_arena(DomDocument* document, DomElement* occurrence) {
+    if (!occurrence->occurrence_source) {
+        occurrence->occurrence_source = lam::own((DomOccurrenceSource*)pool_calloc(
+            document->document_pool, sizeof(DomOccurrenceSource)));
+        if (!occurrence->occurrence_source) return nullptr;
+    }
+    auto* storage = occurrence->occurrence_source.get();
+    if (storage->numeric_attributes) return storage->numeric_attributes;
+
+    // Numeric buffers can dwarf the node itself. Release their entire region
+    // with this occurrence, with document teardown as the fallback (D5.5.1).
+    Arena* arena = arena_create_default();
+    if (!arena) return nullptr;
+    if (!dom_document_add_resource(document, reinterpret_cast<DomDocumentResourceData*>(arena),
+            dom_numeric_attribute_arena_destroy)) {
+        arena_destroy(arena);
+        return nullptr;
+    }
+    storage->numeric_attributes = arena;
+    return arena;
+}
+
 void dom_element_release_retired_storage(DomElement* element) {
     if (!element || !element->doc) return;
     // no live Attr wrapper can reach an owner selected for retirement; keep detached values intact.
@@ -2881,6 +2907,9 @@ void dom_element_release_retired_storage(DomElement* element) {
     // retirement releases both the authored pool and its document resource registration (D5.5.1).
     if (element->rare_ext && element->rare_ext->inline_declarations)
         dom_document_release_resource(element->storage_owner(), element->rare_ext->inline_declarations);
+    if (element->occurrence_source && element->occurrence_source->numeric_attributes)
+        dom_document_release_resource(element->storage_owner(),
+            reinterpret_cast<DomDocumentResourceData*>(element->occurrence_source->numeric_attributes));
     lam::free_owned(element->storage_pool(), element->occurrence_source);
     // pre-layout image loads can allocate a style before the view teardown can see it
     lam::free_owned(element->storage_pool(), element->embed);
@@ -6242,7 +6271,7 @@ static DomElement* build_dom_tree_with_parent(Element* elem, DomDocument* doc,
             !(doc->page_kind == DOM_PAGE_KIND_HTML && dom_element_has_embedded_storage(doc, elem))) {
         // copy each occurrence's content while retaining its source mapping (D5.5.2/D5.5.3).
         MarkBuilder builder(doc->input);
-        Item copied = builder.deep_copy_for_dom({.element = elem});
+        Item copied = builder.deep_copy_for_dom({.element = elem}, doc);
         if (get_type_id(copied) != LMD_TYPE_ELEMENT) return nullptr;
         elem = copied.element;
         copied_for_view = true;

@@ -1091,6 +1091,7 @@ struct DomOccurrenceSource {
     Element* element;
     void* borrowed_type;
     void* borrowed_data;
+    Arena* numeric_attributes;
 };
 
 struct DomStyleRareExt {
@@ -1200,7 +1201,7 @@ struct DomElement : DomNode {
     // Tree structure (only elements can have children)
     lam::Own<DomNode> first_child;  // First child node (Element, Text, or Comment); owns the sibling chain
     lam::Up<DomNode> last_child;    // Last child node
-    lam::Own<DomOccurrenceSource> occurrence_source; // allocated only for a distinct backing
+    lam::Own<DomOccurrenceSource> occurrence_source; // separate render source or owned numeric attributes
 
     // HTML/CSS style related
     lam::Up<const char> id;      // Element ID attribute (cached)
@@ -1989,6 +1990,7 @@ DomElement* build_dom_tree_from_element(Element* element, DomDocument* document,
  */
 void dom_element_destroy(DomElement* element);
 void dom_element_release_retired_storage(DomElement* element);
+Arena* dom_element_numeric_attribute_arena(DomDocument* document, DomElement* occurrence);
 
 /**
  * Clear all data from a DomElement (without freeing the structure)
