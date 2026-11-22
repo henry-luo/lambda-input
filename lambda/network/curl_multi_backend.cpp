@@ -11,6 +11,7 @@
 #include "lib/log.h"
 #include "lib/mem.h"
 #include "lib/str.h"
+#include "lib/url.h"
 #include "lib/byte_builder.h"
 #include "lib/curl_runtime.h"
 #include <curl/curl.h>
@@ -256,7 +257,18 @@ static bool configure_transfer(CurlMultiTransfer* transfer) {
         set_resource_error(res, "Failed to configure resource request headers");
         return false;
     }
-    curl_easy_setopt(easy, CURLOPT_URL, res->url);
+    // css resource strings need URL serialization before curl sees path spaces or UTF-8.
+    Url* parsed_url = url_parse(res->url);
+    if (!parsed_url) {
+        set_resource_error(res, "Invalid resource URL");
+        return false;
+    }
+    CURLcode url_result = curl_easy_setopt(easy, CURLOPT_URL, url_get_href(parsed_url));
+    url_destroy(parsed_url);  // curl retains its own copy of CURLOPT_URL.
+    if (url_result != CURLE_OK) {
+        set_curl_error(res, url_result);
+        return false;
+    }
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_response_callback);
     curl_easy_setopt(easy, CURLOPT_WRITEDATA, transfer);
     curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L);

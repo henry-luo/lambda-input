@@ -2028,9 +2028,11 @@ bool dom_document_set_resource_pending_work(DomDocument* document, DomDocumentRe
 
 bool dom_document_has_pending_work(DomDocument* document) {
     if (!document) return false;
+    bool pending = false;
     for (DomDocumentResource* resource=document->resources;resource;resource=resource->next)
-        if (resource->pending_work && resource->pending_work(resource->data)) return true;
-    return false;
+        // polling also delivers completions; one slow resource must not starve its siblings.
+        if (resource->pending_work && resource->pending_work(resource->data)) pending = true;
+    return pending;
 }
 
 bool dom_document_release_resource(DomDocument* document, DomDocumentResourceData* data) {

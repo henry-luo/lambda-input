@@ -362,6 +362,43 @@ TEST_F(HtmlParserTest, SelectContextFragmentsIgnoreInputAndNestedSelect) {
     EXPECT_EQ(findElementByTag(Item{.element = fragment}, "select"), nullptr);
 }
 
+TEST_F(HtmlParserTest, BodyModeIgnoresStrayTableTags) {
+    const char* source = "<caption>a</caption><col><colgroup></colgroup><tbody>"
+        "<tr><td>x</td><th>y</th></tr></tbody><tfoot>z</tfoot><thead>w</thead><p>end</p>";
+    Item document = parseHtml5Document(source);
+    Element* body = findElementByTag(document, "body");
+    ASSERT_NE(body, nullptr);
+    ASSERT_EQ(body->length, 2);
+    ASSERT_EQ(get_type_id(body->items[0]), LMD_TYPE_STRING);
+    EXPECT_STREQ(body->items[0].get_string()->chars, "axyzw");
+    EXPECT_STREQ(ElementReader(body->items[1]).tagName(), "p");
+}
+
+TEST_F(HtmlParserTest, TableFragmentsUseContextWithoutPoppingIt) {
+    struct Case { const char* context; const char* markup; const char* first; int64_t count; } cases[] = {
+        {"table", "</table><tr><td>cell</td></tr>", "tbody", 1},
+        {"tbody", "</tbody><tr><td>a</td></tr><tr><td>b</td></tr>", "tr", 2},
+        {"thead", "<td>cell</td>", "tr", 1},
+        {"tfoot", "<tr><td>cell</td></tr>", "tr", 1},
+        {"tr", "</tr><td>a</td><td>b</td>", "td", 2},
+        {"colgroup", "</colgroup><col><col>", "col", 2},
+        {"caption", "<b>cell</b>", "b", 1}
+    };
+    Input* input = Input::create(pool);
+    ASSERT_NE(input, nullptr);
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.context);
+        Html5Parser* parser = html5_fragment_parser_create(input->pool, input->arena, input, c.context);
+        ASSERT_NE(parser, nullptr);
+        Html5ParserScope scope(parser);
+        ASSERT_TRUE(html5_fragment_parse(parser, c.markup));
+        Element* fragment = html5_fragment_get_body(parser);
+        ASSERT_NE(fragment, nullptr);
+        ASSERT_EQ(fragment->length, c.count);
+        EXPECT_STREQ(ElementReader(fragment->items[0]).tagName(), c.first);
+    }
+}
+
 TEST_F(HtmlParserTest, RubyStartTagsCloseImpliedBasesAndPreserveAnnotationContainers) {
     struct Case {
         const char* source;

@@ -447,20 +447,19 @@ Html5Parser* html5_fragment_parser_create(Pool* pool, Arena* arena, Input* input
 
     MarkBuilder builder(input);
 
-    // create a minimal document structure for fragment parsing
-    // #document -> html -> body
+    // HTML fragments use a synthetic html root; the context supplies the insertion mode.
     parser->document = builder.element("#document").final().element;
     parser->html_element = builder.element("html").final().element;
 
     // Add html to document
     array_append(parser->document, Item{.element = parser->html_element}, pool, arena);
 
-    if (!svg_namespace && context_tag && strcmp(context_tag, "html") == 0) {
-        // html's fragment context starts before head; an artificial body would
-        // discard its head/body tokens and leave documentElement.innerHTML empty.
+    if (!svg_namespace) {
+        // the context selects the insertion mode but is not an open element:
+        // closing context tags must not pop the fragment's synthetic root.
         html5_push_element(parser, parser->html_element);
         parser->fragment_root = parser->html_element;
-        parser->mode = HTML5_MODE_BEFORE_HEAD;
+        html5_reset_insertion_mode(parser);
         return parser;
     }
 
@@ -509,7 +508,7 @@ bool html5_fragment_parse(Html5Parser* parser, const char* html) {
     if (!parser || !html) return false;
 
     size_t html_len = strlen(html);
-    if (html_len == 0 && parser->fragment_root != parser->html_element) return true;
+    if (html_len == 0 && parser->fragment_context_tag != MARKUP_NAME_HTML) return true;
 
     // Store the current position (we may be continuing from previous parse)
     size_t old_pos = parser->pos;
@@ -538,7 +537,7 @@ bool html5_fragment_parse(Html5Parser* parser, const char* html) {
         // ordinary fragments retain their insertion state for continuation.
         if (token->type == HTML5_TOKEN_EOF) {
             // this context must finish implicit head/body creation even for empty markup.
-            if (parser->fragment_root == parser->html_element) html5_process_token(parser, token);
+            if (parser->fragment_context_tag == MARKUP_NAME_HTML) html5_process_token(parser, token);
             break;
         }
 
@@ -1183,10 +1182,13 @@ static void html5_process_in_body_mode(Html5Parser* parser, Html5Token* token) {
             return;
         }
 
-        // Elements that are invalid in body mode - ignore per HTML5 spec 12.2.6.4.7
-        // frame: only valid in frameset mode
-        // head: already processed, ignore stray <head> tags
-        if (html5_token_is(token, MARKUP_NAME_FRAME) || html5_token_is(token, MARKUP_NAME_HEAD)) {
+        // table-only start tags are errors in body mode, not generic elements.
+        if (html5_token_is(token, MARKUP_NAME_CAPTION) || html5_token_is(token, MARKUP_NAME_COL) ||
+            html5_token_is(token, MARKUP_NAME_COLGROUP) || html5_token_is(token, MARKUP_NAME_FRAME) ||
+            html5_token_is(token, MARKUP_NAME_HEAD) || html5_token_is(token, MARKUP_NAME_TBODY) ||
+            html5_token_is(token, MARKUP_NAME_TD) || html5_token_is(token, MARKUP_NAME_TFOOT) ||
+            html5_token_is(token, MARKUP_NAME_TH) || html5_token_is(token, MARKUP_NAME_THEAD) ||
+            html5_token_is(token, MARKUP_NAME_TR)) {
             log_error("html5: ignoring <%s> in body mode", tag);
             return;
         }
@@ -1584,13 +1586,6 @@ static void html5_process_in_body_mode(Html5Parser* parser, Html5Token* token) {
             html5_reconstruct_active_formatting_elements(parser);
             html5_insert_html_element(parser, token);
             html5_pop_element(parser);  // immediately pop void elements
-            return;
-        }
-
-        // <col> and <colgroup> outside table context - parse error, ignore
-        // Per WHATWG: col/colgroup are only valid inside table
-        if (html5_token_is(token, MARKUP_NAME_COL) || html5_token_is(token, MARKUP_NAME_COLGROUP)) {
-            log_error("html5: <%s> outside table context, ignoring", tag);
             return;
         }
 
@@ -2419,6 +2414,13 @@ void html5_reset_insertion_mode(Html5Parser* parser) {
         Element* node = (Element*)parser->open_elements->items[i].element;
         const char* tag = ((TypeElmt*)node->type)->name.str;
         bool last = (i == 0);
+        bool context = last && parser->fragment_root == parser->html_element &&
+            parser->fragment_context_tag != MARKUP_NAME_HTML;
+        if (context) {
+            // substitute the fragment context only at the bottom of the stack.
+            tag = well_known_name_view(parser->fragment_context_tag).str;
+            if (!tag) tag = "";
+        }
 
         if (strcmp(tag, "td") == 0 || strcmp(tag, "th") == 0) {
             if (!last) {
@@ -2434,11 +2436,19 @@ void html5_reset_insertion_mode(Html5Parser* parser) {
             parser->mode = HTML5_MODE_IN_TABLE_BODY;
             return;
         }
+        if (strcmp(tag, "caption") == 0) {
+            parser->mode = HTML5_MODE_IN_CAPTION;
+            return;
+        }
+        if (strcmp(tag, "colgroup") == 0) {
+            parser->mode = HTML5_MODE_IN_COLUMN_GROUP;
+            return;
+        }
         if (strcmp(tag, "table") == 0) {
             parser->mode = HTML5_MODE_IN_TABLE;
             return;
         }
-        if (strcmp(tag, "head") == 0) {
+        if (!last && strcmp(tag, "head") == 0) {
             parser->mode = HTML5_MODE_IN_HEAD;
             return;
         }
