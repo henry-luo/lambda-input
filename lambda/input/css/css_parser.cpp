@@ -2652,7 +2652,7 @@ static void css_replace_parsed_keyword(CssDeclaration* declaration, CssEnum keyw
     declaration->value_text_len = info->length;
 }
 
-static void css_normalize_webkit_box(CssDeclaration** declarations, size_t count) {
+static void css_normalize_property_aliases(CssDeclaration** declarations, size_t count) {
     bool legacy_display = false;
     bool has_alias = false;
     const CssDeclaration* orientation = nullptr;
@@ -2660,7 +2660,8 @@ static void css_normalize_webkit_box(CssDeclaration** declarations, size_t count
     for (size_t i = 0; i < count; i++) {
         const CssDeclaration* declaration = declarations[i];
         CssPropertyCode code = declaration->property_code;
-        if (code == CSS_PROPERTY_WEBKIT_BOX_ORIENT || code == CSS_PROPERTY_WEBKIT_LINE_CLAMP) has_alias = true;
+        // aliases enter one cascade identity before intrinsic and used-value consumers diverge.
+        if (css_property_canonical_code(code) != code) has_alias = true;
         if (code == CSS_PROPERTY_DISPLAY &&
             css_webkit_box_display(declaration->value) != CSS_VALUE__UNDEF) legacy_display = true;
         if ((code == CSS_PROPERTY_WEBKIT_BOX_ORIENT || code == CSS_PROPERTY_ALL) &&
@@ -3139,7 +3140,7 @@ static CssDeclaration* css_parse_source_declaration(const CssToken* tokens,
 CssDeclaration* css_parse_declaration_from_tokens_mode(const CssToken* tokens,
     int* pos, int token_count, Pool* pool, bool quirks_mode) {
     CssDeclaration* declaration = css_parse_source_declaration(tokens, pos, token_count, pool, quirks_mode);
-    if (declaration) css_normalize_webkit_box(&declaration, 1);
+    if (declaration) css_normalize_property_aliases(&declaration, 1);
     return declaration;
 }
 
@@ -3370,7 +3371,7 @@ static bool css_nesting_flush_declarations(Pool* pool, CssRule*** nested_rules,
     if (!pending_count || *pending_count == 0) return true;
     CssRule* rule = css_parser_allocate_rule(pool);
     if (!rule) return false;
-    css_normalize_webkit_box(*pending, *pending_count);
+    css_normalize_property_aliases(*pending, *pending_count);
     rule->type = CSS_RULE_NESTED_DECLARATIONS;
     rule->data.style_rule.declarations = *pending;
     rule->data.style_rule.declaration_count = *pending_count;
@@ -4265,7 +4266,7 @@ static int css_parse_rule_from_tokens_with_context(const CssToken* tokens,
     rule->data.style_rule.selector_group = selector_group;
     // For backward compatibility, store the first selector in the single selector field
     rule->data.style_rule.selector = (selector_group->selector_count > 0) ? selector_group->selectors[0] : NULL;
-    css_normalize_webkit_box(declarations, decl_count);
+    css_normalize_property_aliases(declarations, decl_count);
     rule->data.style_rule.declarations = declarations;
     rule->data.style_rule.declaration_count = decl_count;
     rule->data.style_rule.nested_rules = nested_rules;
@@ -4669,7 +4670,7 @@ CssDeclaration** css_parse_declaration_list_text_mode(const char* text, size_t l
 
     css_token_array_release(pool, tokens, token_count);
     if (*declaration_count == 0) return NULL;
-    css_normalize_webkit_box(declarations, *declaration_count);
+    css_normalize_property_aliases(declarations, *declaration_count);
     return declarations;
 }
 
@@ -4755,7 +4756,7 @@ static CssDeclaration* css_parse_value_text_fragment(const char* property, size_
         ? css_parse_named_declaration_value(tokens, &pos, (int)count, pool,
             false, strview_init(property, property_length)) : nullptr;
     css_token_array_release(pool, tokens, count);
-    if (declaration) css_normalize_webkit_box(&declaration, 1);
+    if (declaration) css_normalize_property_aliases(&declaration, 1);
     return declaration;
 }
 

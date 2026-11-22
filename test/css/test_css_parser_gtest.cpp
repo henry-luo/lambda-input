@@ -53,13 +53,17 @@ TEST_F(CssParserTest, WhiteSpaceRejectsInvalidDeclarationsBeforeTheCascade) {
         EXPECT_EQ(css_parse_declaration_text(source, strlen(source), pool), nullptr) << source;
 }
 
-TEST_F(CssParserTest, WebKitBoxDeclarationsSerializeAsStandardCss) {
+TEST_F(CssParserTest, LegacyPropertyAliasesSerializeAsStandardCss) {
     CssEngine* engine = css_engine_create(pool);
     ASSERT_NE(engine, nullptr);
     const struct {
         const char* legacy;
         const char* standard;
     } cases[] = {
+        {"grid-column-gap:4px;grid-row-gap:8px", "column-gap:4px;row-gap:8px"},
+        {"grid-gap:8px 4px", "gap:8px 4px"},
+        {"grid-column-gap:var(--space);column-gap:8px !important;grid-gap:normal",
+         "column-gap:var(--space);column-gap:8px !important;gap:normal"},
         {"display:-WEBKIT-BOX;-webkit-box-orient:inline-axis",
          "display:flex;flex-direction:row"},
         {"display:-webkit-inline-box;-webkit-box-orient:block-axis",
