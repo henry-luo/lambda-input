@@ -422,94 +422,55 @@ static void record_source_position(MarkupParser* parser, Item block, int start, 
  * then parses all block elements into the body.
  * If HTML content was encountered, includes the HTML DOM.
  */
-Item parse_document(MarkupParser* parser, size_t batch_size,
-        MarkupDocumentBatch visit, void* context) {
-    if (!parser) {
-        return Item{.item = ITEM_ERROR};
-    }
-
-    // Create root document element
+Element* markup_document_open(MarkupParser* parser, Element** body) {
     Element* doc = create_element(parser, "doc");
-    if (!doc) {
-        log_error("parse_document: failed to create doc element");
-        return Item{.item = ITEM_ERROR};
-    }
-
-    // Add version attribute
+    *body = create_element(parser, "body");
+    if (!doc || !*body) return nullptr;
     add_attribute_to_element(parser, doc, "version", "1.0");
+    return doc;
+}
 
-    // Create body element for content
-    Element* body = create_element(parser, "body");
-    if (!body) {
-        log_error("parse_document: failed to create body element");
-        return Item{.item = ITEM_ERROR};
+Item markup_document_next_block(MarkupParser* parser) {
+    int line_before = parser->current_line;
+    Item block = parse_block_element(parser);
+    if (block.item != ITEM_UNDEFINED && block.item != ITEM_ERROR) {
+        if (parser->input() && parser->input()->source_positions)
+            record_source_position(parser, block, line_before, parser->current_line);
+        highlight_note_item(parser, block.item, line_before);
     }
+    if (parser->current_line == line_before) parser->current_line++;
+    return block;
+}
 
-    if (visit) {
-        if (parser->document_metadata_) list_push((List*)doc, Item{.element = parser->document_metadata_});
-        list_push((List*)doc, Item{.element = body});
-    }
-    size_t next_batch = batch_size;
-    bool stopped = false;
+bool markup_document_finish(MarkupParser* parser, Element* doc, Element* body) {
+    parser->resolveFootnotes(body);
+    // Preserve the alternate HTML projection for callers of the full parser.
+    Element* html_body = parser->getHtmlBody();
+    if (!html_body || !html_body->length) return true;
+    Element* html_dom = create_element(parser, "html-dom");
+    if (!html_dom) return false;
+    for (int64_t i = 0; i < html_body->length; i++)
+        list_push((List*)html_dom, html_body->items[i]);
+    list_push((List*)doc, Item{.element = html_dom});
+    return true;
+}
 
-    // Parse all blocks into body
-    bool source_positions = parser->input() && parser->input()->source_positions;
+Item parse_document(MarkupParser* parser) {
+    if (!parser) return ItemError;
+    Element* body = nullptr;
+    Element* doc = markup_document_open(parser, &body);
+    if (!doc) return ItemError;
     if (parser->span_sink) parser->span_sink->root_lines = parser->lines;
     while (parser->hasLine(parser->current_line)) {
-        int line_before = parser->current_line;
-
-        Item block = parse_block_element(parser);
-
-        if (block.item != ITEM_UNDEFINED && block.item != ITEM_ERROR) {
-            if (source_positions) {
-                record_source_position(parser, block, line_before, parser->current_line);
-            }
-            highlight_note_item(parser, block.item, line_before);
+        Item block = markup_document_next_block(parser);
+        if (block.item != ITEM_UNDEFINED && block.item != ITEM_ERROR)
             list_push((List*)body, block);
-        }
-
-        // Safety: ensure progress to prevent infinite loops
-        if (parser->current_line == line_before) {
-            parser->current_line++;
-        }
-
-        if (visit) {
-            size_t bytes = parser->streamBytesConsumed();
-            if (parser->preview_requires_definitions) return ItemError;
-            if (bytes >= next_batch && body->length) {
-                if (visit(context, doc, bytes, false)) { stopped = true; break; }
-                next_batch = bytes + batch_size;
-            }
-        }
     }
-
-    parser->resolveFootnotes(body);
-
-    if (!visit) {
-        if (parser->document_metadata_) list_push((List*)doc, Item{.element = parser->document_metadata_});
-        list_push((List*)doc, Item{.element = body});
-    }
-
-    // If any HTML content was parsed, add the HTML DOM to the document
-    // The HTML DOM contains all HTML fragments accumulated during parsing
-    Element* html_body = parser->getHtmlBody();
-    if (html_body && html_body->length > 0) {
-        // Create an html-dom wrapper element containing the parsed HTML structure
-        Element* html_dom = create_element(parser, "html-dom");
-        if (html_dom) {
-            // Copy all children from the HTML5 body to our html-dom element
-            for (size_t i = 0; i < (size_t)html_body->length; i++) {
-                list_push((List*)html_dom, html_body->items[i]);
-            }
-            // Add html-dom to the document
-            list_push((List*)doc, Item{.item = (uint64_t)html_dom});
-
-            log_debug("parse_document: added html-dom with %zu children", html_body->length);
-        }
-    }
-
-    if (visit && !stopped) visit(context, doc, parser->streamBytesConsumed(), true);
-    return Item{.item = (uint64_t)doc};
+    if (parser->document_metadata_)
+        list_push((List*)doc, Item{.element = parser->document_metadata_});
+    list_push((List*)doc, Item{.element = body});
+    if (!markup_document_finish(parser, doc, body)) return ItemError;
+    return Item{.element = doc};
 }
 
 } // namespace markup

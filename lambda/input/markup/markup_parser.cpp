@@ -202,57 +202,95 @@ size_t MarkupParser::streamBytesConsumed() const {
     return file_lines ? file_lines->bytes - file_lines->count + file_lines->cursor : 0;
 }
 
-struct MarkupBatchContext {
-    MarkupDocumentBatch visit;
-    void* context;
-    InputAllocationContext* outer_owner;
+struct MarkupFileSession {
+    FileLines lines;
+    MarkupParser* parser;
+    Element* document;
+    Element* body;
+    MarkupFileStatus status;
 };
 
-static bool visit_markup_batch(void* ptr, Element* document, size_t consumed, bool eof) {
-    auto* batch = (MarkupBatchContext*)ptr;
-    // layout runs outside the parser's collection allocation scope.
-    InputAllocationContext* parser_owner = input_allocation_context;
-    input_allocation_context = batch->outer_owner;
-    bool stop = batch->visit(batch->context, document, consumed, eof);
-    input_allocation_context = parser_owner;
-    return stop;
-}
+struct MarkupAllocationScope {
+    InputAllocationContext owner;
+    InputAllocationContext* previous;
+    explicit MarkupAllocationScope(Input* input)
+        : owner{input->pool, input->arena, input->ui_mode, input},
+          previous(input_allocation_context) {
+        input_allocation_context = &owner;
+    }
+    ~MarkupAllocationScope() { input_allocation_context = previous; }
+};
 
-Item parse_markup_file_batches(Input* input, FILE* file, Format format, Flavor flavor, size_t batch_size,
-        size_t byte_limit, MarkupDocumentBatch visit, void* context) {
-    if (!input || !file || !visit || !batch_size || batch_size > byte_limit) return ItemError;
+MarkupFileSession* markup_file_open(Input* input, FILE* file, Format format,
+        Flavor flavor, size_t byte_limit) {
+    if (!input || !file || !byte_limit) return nullptr;
+    auto* session = (MarkupFileSession*)mem_calloc(1, sizeof(MarkupFileSession), MEM_CAT_INPUT_MARKUP);
+    if (!session) return nullptr;
     ParseConfig config;
     config.format = format;
     config.flavor = flavor;
-    MarkupParser* parser = markup_parser_create(input, config);
-    if (!parser) return ItemError;
-    FileLines source = {};
-    source.file = file;
-    source.limit = byte_limit;
-    source.line = strbuf_new();
-    if (!source.line) {
-        markup_parser_destroy(parser);
-        return ItemError;
+    session->parser = markup_parser_create(input, config);
+    session->lines.file = file;
+    session->lines.limit = byte_limit;
+    session->lines.line = strbuf_new();
+    if (!session->parser || !session->lines.line) {
+        markup_file_close(session);
+        return nullptr;
     }
-    parser->file_lines = &source;
+    MarkupParser* parser = session->parser;
+    parser->file_lines = &session->lines;
     parser->preview_stream = true;
-    // block parsers append through the same Input-owned collection provider as normal markup.
-    InputAllocationContext owner = {input->pool, input->arena, input->ui_mode, input};
-    InputAllocationContext* previous = input_allocation_context;
-    input_allocation_context = &owner;
-    MarkupBatchContext batch = {visit, context, previous};
+    MarkupAllocationScope scope(input);
     parse_document_metadata(parser);
-    Item result = parse_document(parser, batch_size, visit_markup_batch, &batch);
-    input_allocation_context = previous;
-    bool failed = source.failed || parser->preview_requires_definitions;
-    markup_parser_destroy(parser);
-    strbuf_free(source.line);
-    if (failed) {
-        log_info("PREVIEW_MARKUP: source error or whole-document definitions required");
-        return ItemError;
+    session->document = markup_document_open(parser, &session->body);
+    if (!session->document || session->lines.failed || input->parse_failed) {
+        markup_file_close(session);
+        return nullptr;
     }
-    return result;
+    session->status = MarkupFileStatus::MORE;
+    return session;
 }
+
+void markup_file_close(MarkupFileSession* session) {
+    if (!session) return;
+    markup_parser_destroy(session->parser);
+    if (session->lines.line) strbuf_free(session->lines.line);
+    mem_free(session);
+}
+
+MarkupFileStatus markup_file_advance(MarkupFileSession* session, size_t batch_bytes) {
+    if (!session || !batch_bytes) return MarkupFileStatus::ERROR;
+    if (session->status != MarkupFileStatus::MORE) return session->status;
+    MarkupParser* parser = session->parser;
+    MarkupAllocationScope scope(parser->input());
+    size_t start = parser->streamBytesConsumed();
+    bool eof = false;
+    do {
+        if (!parser->hasLine(parser->current_line)) { eof = true; break; }
+        Item block = markup_document_next_block(parser);
+        if (block.item == ITEM_ERROR || parser->preview_requires_definitions) {
+            session->status = MarkupFileStatus::ERROR;
+            break;
+        }
+        if (block.item != ITEM_UNDEFINED) list_push((List*)session->body, block);
+    } while (parser->streamBytesConsumed() - start < batch_bytes);
+
+    if (!session->document->length) {
+        if (parser->document_metadata_)
+            list_push((List*)session->document, Item{.element = parser->document_metadata_});
+        list_push((List*)session->document, Item{.element = session->body});
+    }
+    if (session->lines.failed || parser->input()->parse_failed) session->status = MarkupFileStatus::ERROR;
+    if (eof && session->status == MarkupFileStatus::MORE) {
+        session->status = markup_document_finish(parser, session->document, session->body)
+            ? MarkupFileStatus::END : MarkupFileStatus::ERROR;
+    }
+    return session->status;
+}
+
+Element* markup_file_document(MarkupFileSession* session) { return session->document; }
+Element* markup_file_body(MarkupFileSession* session) { return session->body; }
+size_t markup_file_consumed(MarkupFileSession* session) { return session->parser->streamBytesConsumed(); }
 
 void MarkupParser::splitLines(const char* content) {
     freeLines();

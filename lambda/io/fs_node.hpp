@@ -14,6 +14,7 @@ bool fs_node_is(Item item);
 Item fs_node_content(Item node);
 Item fs_node_input(Item node, String* type, String* flavor);
 Archive* fs_node_archive(Item node);
+ZipMemberReader* fs_node_open_zip_member(Item node, ZipError* error);
 bool fs_zip_encode(Item tree, const ZipWriteOptions* options,
     StrBuf* bytes, ZipError* error);
 bool fs_zip_options(Item options, ZipLimits* limits, ZipWriteOptions* write,

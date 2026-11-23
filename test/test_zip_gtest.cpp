@@ -3,6 +3,8 @@
 #include "lambda/io/fs_node.hpp"
 #include "lambda/core/print.h"
 #include "lambda/input/input.hpp"
+#include "lambda/input/input-parsers.h"
+#include "lambda/core/mark_reader.hpp"
 #include "lib/file.h"
 #include "lib/endian.h"
 #include "lib/memtrack.h"
@@ -44,6 +46,49 @@ TEST_F(ZipTest, CapturesIndexesAndLazilyDecodesOneMember) {
     ASSERT_TRUE(zip_entry_bytes(archive, file, &bytes, &error));
     EXPECT_EQ(archive->decompressions, 1u);
     zip_archive_release(archive);
+}
+
+TEST_F(ZipTest, StrictXmlBodyAdvancesWithoutMaterializingTheZipMember) {
+    const char xml[] = "<?xml version=\"1.0\"?><w:document xmlns:w=\"urn:word\"><w:body>"
+        "<w:p>first</w:p><w:p><!-- > --><![CDATA[second < ]]></w:p></w:body></w:document>";
+    ZipOutputEntry part = {};
+    part.path = "word/document.xml";
+    part.bytes = (const uint8_t*)xml;
+    part.length = sizeof(xml) - 1;
+    ArrayList* entries = arraylist_new(1);
+    ASSERT_NE(entries, nullptr);
+    arraylist_append(entries, &part);
+    StrBuf* bytes = strbuf_new();
+    ASSERT_TRUE(zip_write_entries(entries, nullptr, bytes, &error)) << error.message;
+    ZipArchive* archive = zip_archive_open(bytes->str, bytes->length, nullptr, nullptr, 0, &error);
+    strbuf_free(bytes);
+    arraylist_free(entries);
+    ASSERT_NE(archive, nullptr) << error.message;
+    uint32_t index = find(archive, part.path);
+    XmlBodyReader* reader = xml_body_open(zip_member_open(archive, index, &error));
+    ASSERT_NE(reader, nullptr) << error.message;
+    Pool* pool = pool_create();
+    Input* input = Input::create(pool, nullptr);
+    ASSERT_NE(input, nullptr);
+    const char* expected[] = {"first", "second < "};
+    for (const char* text : expected) {
+        ASSERT_EQ(xml_body_advance(reader, input, 1, 1), XmlBodyStatus::MORE);
+        ElementReader body = ElementReader(input->root.element)
+            .findChildElement("document").findChildElement("body");
+        ASSERT_TRUE(body.isValid());
+        EXPECT_EQ(body.childCount(), 1);
+        ElementReader paragraph = body.findChildElement("p");
+        String* content = paragraph.childAt(paragraph.childCount() - 1).asString();
+        ASSERT_NE(content, nullptr);
+        EXPECT_STREQ(content->chars, text);
+        EXPECT_FALSE(zip_archive_entry(archive, index)->decoded);
+    }
+    EXPECT_EQ(xml_body_advance(reader, input, 1, 1), XmlBodyStatus::END);
+    EXPECT_EQ(xml_body_consumed(reader), sizeof(xml) - 1);
+    EXPECT_EQ(archive->decompressions, 1u);
+    xml_body_close(reader);
+    zip_archive_release(archive);
+    pool_destroy(pool);
 }
 
 TEST_F(ZipTest, JavaJarKeepsClassAndManifestReadsLazy) {

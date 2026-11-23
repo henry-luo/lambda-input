@@ -451,11 +451,21 @@ void markup_parser_destroy(MarkupParser* parser);
 /**
  * Parse entire document, returns root element
  */
-using MarkupDocumentBatch = bool (*)(void* context, Element* document, size_t consumed, bool eof);
-Item parse_document(MarkupParser* parser, size_t batch_size = 0,
-    MarkupDocumentBatch visit = nullptr, void* context = nullptr);
-Item parse_markup_file_batches(Input* input, FILE* file, Format format, Flavor flavor, size_t batch_size,
-    size_t byte_limit, MarkupDocumentBatch visit, void* context);
+Item parse_document(MarkupParser* parser);
+Element* markup_document_open(MarkupParser* parser, Element** body);
+Item markup_document_next_block(MarkupParser* parser);
+bool markup_document_finish(MarkupParser* parser, Element* doc, Element* body);
+
+struct MarkupFileSession;
+// The caller retains the file and Input throughout the session.
+MarkupFileSession* markup_file_open(Input* input, FILE* file, Format format,
+    Flavor flavor, size_t byte_limit);
+void markup_file_close(MarkupFileSession* session);
+enum class MarkupFileStatus { MORE, END, ERROR };
+MarkupFileStatus markup_file_advance(MarkupFileSession* session, size_t batch_bytes);
+Element* markup_file_document(MarkupFileSession* session);
+Element* markup_file_body(MarkupFileSession* session);
+size_t markup_file_consumed(MarkupFileSession* session);
 void parse_document_metadata(MarkupParser* parser);
 
 /**

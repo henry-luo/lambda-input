@@ -74,6 +74,11 @@ Archive* fs_node_archive(Item node) {
     return fs ? fs->tree->archive : nullptr;
 }
 
+ZipMemberReader* fs_node_open_zip_member(Item node, ZipError* error) {
+    FsNode* fs = fs_node_data(node);
+    return fs ? zip_member_open(fs->tree->archive, fs->index, error) : nullptr;
+}
+
 static Item fs_parse_uncached(FsNode* node, String* type, String* flavor) {
     FsTree* tree = node->tree;
     ArchiveEntry* entry = archive_entry(tree->archive, node->index);
