@@ -178,6 +178,9 @@ typedef struct Html5Parser {
     const char* html;
     size_t pos;
     size_t length;
+    // a source callback extends the available bytes without changing the tokenizer position.
+    bool (*refill)(struct Html5Parser* parser, size_t through, void* context);
+    void* refill_context;
 
     // Tokenizer state
     int tokenizer_state;
@@ -273,6 +276,10 @@ public:
 Element* html5_parse(Input* input, const char* html);
 Element* html5_parse_n(Input* input, const char* html, size_t length,
                         Html5ParseOptions* opts);
+// Called between tokens with a borrowed tree. Return true to stop after this batch.
+typedef bool (*Html5DocumentBatch)(void* context, Element* document, size_t consumed, bool eof);
+Element* html5_parse_file_batches(Input* input, FILE* file, Html5ParseOptions* opts,
+    size_t batch_size, size_t byte_limit, Html5DocumentBatch visit, void* context);
 
 // WHATWG initial-insertion-mode doctype classification:
 // 0 = no quirks, 1 = quirks, 2 = limited quirks.

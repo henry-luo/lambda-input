@@ -63,13 +63,13 @@ static Item wiki_code_block(MarkupParser* parser, const CodeFenceInfo& fence) {
         !strcmp(str_skip_line_space(parser->lines[parser->current_line]), "<nowiki>");
     parser->current_line++;
     bool first = true;
-    while (parser->current_line < parser->line_count &&
+    while (parser->hasLine(parser->current_line) &&
         !parser->adapter()->isCodeFenceClose(parser->lines[parser->current_line], fence)) {
         if (!first) strbuf_append_char(body, '\n');
         first = false;
         strbuf_append_str(body, parser->lines[parser->current_line++]);
     }
-    if (parser->current_line < parser->line_count) parser->current_line++;
+    if (parser->hasLine(parser->current_line)) parser->current_line++;
     else parser->addWarning("wiki input: unterminated code block");
     Element* code = create_element(parser, "code");
     add_attribute_to_element(parser, code, "type", "block");
@@ -94,7 +94,7 @@ static Item wiki_list(MarkupParser* parser) {
     }
     Element* root = nullptr;
     int current_depth = 0;
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* line = parser->lines[parser->current_line];
         ListItemInfo info = parser->adapter()->detectListItem(line);
         if (!info.valid) {
@@ -221,7 +221,7 @@ static Item wiki_pipe_table(MarkupParser* parser) {
     bool pending_header = false;
     bool tiki = flavor == Flavor::TIKIWIKI;
     bool first = true;
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* line = str_skip_line_space(parser->lines[parser->current_line]);
         if (is_empty_line(line) || (!tiki && !parser->adapter()->detectTable(line, nullptr))) break;
         if (separator_row(line)) {
@@ -270,7 +270,7 @@ static Item wiki_pipe_table(MarkupParser* parser) {
 static Item wiki_definition_list(MarkupParser* parser) {
     Element* list = create_element(parser, "dl");
     Flavor flavor = wiki_syntax(parser->config.flavor)->flavor;
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* line = str_skip_line_space(parser->lines[parser->current_line]);
         const char* definition = nullptr;
         const char* term = nullptr;
@@ -340,7 +340,7 @@ static Item wiki_parameters_block(MarkupParser* parser, const char* line, const 
         Element* wrapper = create_element(parser, "div");
         wiki_append_fragment(parser, wrapper, remaining, strlen(remaining), true);
         block = wrapper->length == 1 ? wrapper->items[0] : Item{.element = wrapper};
-    } else if (parser->current_line < parser->line_count &&
+    } else if (parser->hasLine(parser->current_line) &&
         !is_empty_line(parser->lines[parser->current_line]) &&
         strncmp(str_skip_line_space(parser->lines[parser->current_line]), "(%", 2)) {
         block = parse_wiki_block(parser);
@@ -398,7 +398,7 @@ Item parse_wiki_block(MarkupParser* parser) {
     if (quote.valid) {
         Element* block = create_element(parser, "blockquote");
         StrBuf* contents = strbuf_new();
-        while (parser->current_line < parser->line_count) {
+        while (parser->hasLine(parser->current_line)) {
             quote = adapter->detectBlockquote(parser->lines[parser->current_line]);
             if (!quote.valid) break;
             if (contents->length) strbuf_append_char(contents, '\n');
@@ -410,7 +410,7 @@ Item parse_wiki_block(MarkupParser* parser) {
     WikiMacro macro;
     if (wiki_macro_header(parser, p, &macro)) {
         StrBuf* source = strbuf_new();
-        for (int i = parser->current_line; i < parser->line_count; i++) {
+        for (int i = parser->current_line; parser->hasLine(i); i++) {
             if (i != parser->current_line) strbuf_append_char(source, '\n');
             strbuf_append_str(source, parser->lines[i]);
         }
@@ -437,7 +437,7 @@ Item parse_wiki_block(MarkupParser* parser) {
         strbuf_free(source); return block;
     }
     StrBuf* text = strbuf_new();
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* next = parser->lines[parser->current_line];
         if (is_empty_line(next) || (text->length && wiki_block_start(parser, next))) break;
         // Keep MediaWiki line boundaries until opaque templates and nowiki are parsed.

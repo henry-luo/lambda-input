@@ -369,12 +369,12 @@ static Item parse_rst_grid_table(MarkupParser* parser, const char* line) {
         return Item{.item = ITEM_ERROR};
     }
     parser->current_line++;
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         int first = parser->current_line;
-        while (parser->current_line < parser->line_count &&
+        while (parser->hasLine(parser->current_line) &&
                parser->lines[parser->current_line][0] == '|') parser->current_line++;
         if (parser->current_line == first) break;
-        if (parser->current_line >= parser->line_count ||
+        if (!parser->hasLine(parser->current_line) ||
             !is_rst_grid_table_border(parser->lines[parser->current_line])) break;
         const char* border = parser->lines[parser->current_line];
         const char* cell_tag = strchr(border, '=') ? "th" : "td";
@@ -496,7 +496,7 @@ static Item parse_rst_simple_table(MarkupParser* parser, const char* line) {
     const char* border = line;
     parser->current_line++; // Skip first border line
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Empty line or another border ends table section
@@ -648,7 +648,7 @@ Item parse_mediawiki_table(MarkupParser* parser, const char* line) {
     Element* body = create_element(parser, "tbody");
     Element* row = nullptr;
     Element* last_cell = nullptr;
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = str_skip_line_space(parser->lines[parser->current_line]);
         if (strncmp(current, "|}", 2) == 0) {
             parser->current_line++;
@@ -738,7 +738,7 @@ Item parse_table(MarkupParser* parser, const char* line) {
     bool has_gfm_header = false;
     
     // Check if this is a GFM table with header
-    if (!is_asciidoc_delimited && parser->current_line + 1 < parser->line_count) {
+    if (!is_asciidoc_delimited && parser->hasLine(parser->current_line + 1)) {
         const char* next_line = parser->lines[parser->current_line + 1];
         if (is_separator_row(next_line, parser->config.format == Format::ORG)) {
             has_gfm_header = true;
@@ -761,7 +761,7 @@ Item parse_table(MarkupParser* parser, const char* line) {
         }
         
         // Skip separator row
-        if (parser->current_line < parser->line_count && 
+        if (parser->hasLine(parser->current_line) &&
             is_separator_row(parser->lines[parser->current_line], parser->config.format == Format::ORG)) {
             parser->current_line++;
         }
@@ -769,7 +769,7 @@ Item parse_table(MarkupParser* parser, const char* line) {
         // Create tbody element for remaining rows
         Element* tbody = create_element(parser, "tbody");
         if (tbody) {
-            while (parser->current_line < parser->line_count) {
+            while (parser->hasLine(parser->current_line)) {
                 const char* current = parser->lines[parser->current_line];
                 
                 // Empty line ends table
@@ -799,7 +799,7 @@ Item parse_table(MarkupParser* parser, const char* line) {
     } else {
         // Non-GFM table (AsciiDoc or simple table without header)
         // Fall back to original behavior
-        while (parser->current_line < parser->line_count) {
+        while (parser->hasLine(parser->current_line)) {
             const char* current = parser->lines[parser->current_line];
 
             // For AsciiDoc: |=== ends the table

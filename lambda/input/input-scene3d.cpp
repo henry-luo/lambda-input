@@ -3,6 +3,8 @@
 #include "lib/base64.h"
 #include "lib/mime-detect.h"
 #include "lib/image.h"
+#include "lib/file.h"
+#include "lib/log.h"
 
 namespace lambda {
 const char* SceneAsset::absolute(const char* source, Url* base) {
@@ -10,6 +12,11 @@ const char* SceneAsset::absolute(const char* source, Url* base) {
     if (is_data_uri(source)) return ctx.builder.createString(source)->chars;
     Url* resolved = url_parse_with_base(source, base ? base : (Url*)ctx.input()->url);
     if (!resolved) { fail("invalid dependency URI"); return nullptr; }
+    if (presentation != SceneAssetPresentation::Full && resolved->scheme != URL_SCHEME_FILE) {
+        url_destroy(resolved);
+        fail("model preview requires local dependencies");
+        return nullptr;
+    }
     const char* result = ctx.builder.createString(url_get_href(resolved))->chars;
     url_destroy(resolved); return result;
 }
@@ -27,7 +34,8 @@ Input* SceneAsset::dependency(const char* source, const char* type, Url* base) {
 }
 Item SceneAsset::texture(const char* source, Url* base, Item* node) {
     const char* resolved = absolute(source,base); if (!resolved) return ItemNull;
-    if(!dependency(resolved,"binary")) return ItemNull;
+    // the preview renderer decodes the image on demand and reports invalid resources there.
+    if(presentation == SceneAssetPresentation::Full && !dependency(resolved,"binary")) return ItemNull;
     Item value = element("texture"), key = id("texture",serial++);
     attr(value,"id",key); attr(value,"src",text(resolved)); append(resources,value); if(node) *node=value; return key;
 }
@@ -48,6 +56,23 @@ Item asset_color(SceneAsset& asset, const double* color) {
     return asset.text(hex);
 }
 void asset_geometry_columns(SceneAsset& a,Item geometry,AssetColumn* columns,const lam::ArrayList<unsigned>* vertices) {
+    if (a.presentation == SceneAssetPresentation::Thumbnail && columns[0].width == 3) {
+        const auto& positions = columns[0].values;
+        size_t count = vertices ? vertices->size() : positions.size() / 3;
+        if (count) {
+            // use the same vertex subset and float precision as the uploaded geometry.
+            double bounds[6] = {INFINITY, INFINITY, INFINITY, -INFINITY, -INFINITY, -INFINITY};
+            for (size_t i = 0; i < count; i++) {
+                size_t vertex = vertices ? (*vertices)[i] : i;
+                for (unsigned axis = 0; axis < 3; axis++) {
+                    float value = (float)positions[vertex * 3 + axis];
+                    bounds[axis] = fmin(bounds[axis], value);
+                    bounds[axis + 3] = fmax(bounds[axis + 3], value);
+                }
+            }
+            a.attr(geometry, "__lambda_thumbnail_bounds", a.array(bounds, 6));
+        }
+    }
     for(unsigned k=0;k<ASSET_COLUMN_COUNT;k++) if(columns[k].name) {
         auto& column=columns[k];
         if(!vertices) a.attr(geometry,column.name,a.array(column.values.data(),column.values.size()));
@@ -496,4 +521,22 @@ void input_scene3d_asset(Input* input,const char* source,size_t length,const cha
     if(input->parse_failed&&!asset.ctx.hasErrors()) asset.ctx.addError("scene3d asset: source model parsing failed: %s",
         input->parse_error_message?input->parse_error_message:"invalid syntax");
     asset.finish();
+}
+
+bool input_scene3d_glb_preview(Input* input, const char* path, bool animate) {
+    using namespace lambda;
+    char* data = nullptr;
+    size_t length = 0;
+    // the BIN buffer has its own 64 MiB quota. Allow room for the GLB JSON chunk.
+    constexpr size_t glb_limit = SCENE_ASSET_BUFFER_LIMIT + 8 * 1024 * 1024;
+    if (!file_read_all_limit(path, MEM_CAT_INPUT_OTHER, glb_limit, &data, &length)) {
+        log_error("GLB preview: could not read %s within the model size limit", path);
+        return false;
+    }
+    SceneAsset asset(input);
+    asset.presentation = animate ? SceneAssetPresentation::Snapshot : SceneAssetPresentation::Thumbnail;
+    bool imported = asset_import_glb(asset, data, length);
+    mem_free(data);
+    asset.finish();
+    return imported && !asset.ctx.hasErrors();
 }

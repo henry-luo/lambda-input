@@ -618,6 +618,7 @@ struct Gltf {
         a.append(clip,track);tracks++;return true;
     }
     bool load_animations() {
+        if(a.presentation == SceneAssetPresentation::Thumbnail) return true;
         if(asset_count(field("animations"))>256) return fail("animation clip quota exceeded");
         for(unsigned ai=0;ai<asset_count(field("animations"));ai++) {
             auto animation=object("animations",ai),samplers=asset_field(animation,"samplers"),channels=asset_field(animation,"channels");
@@ -660,7 +661,12 @@ struct Gltf {
                 }
                 duration=fmax(duration,times.back());
             }
-            if(tracks) {a.attr(clip,"duration",a.number(duration));a.append(a.root,clip);}
+            if(tracks) {
+                a.attr(clip,"duration",a.number(duration));
+                if(a.presentation == SceneAssetPresentation::Snapshot) a.attr(clip,"autoplay",a.ctx.builder.createBool(true));
+                a.append(a.root,clip);
+                if(a.presentation == SceneAssetPresentation::Snapshot) return true;
+            }
         }
         return true;
     }

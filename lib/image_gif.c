@@ -324,7 +324,9 @@ static GifFrames* gif_decode_all_frames(GifFileType* gif) {
 
 GifFrames* image_gif_load_from_memory(const unsigned char* data, size_t length) {
     size_t peak_bytes = 0;
-    if (!gif_preflight(data, length, NULL, &peak_bytes)) return NULL;
+    int frame_count = 0;
+    // preflight already counted the frames. A still GIF uses the ordinary image decoder.
+    if (!gif_preflight(data, length, &frame_count, &peak_bytes) || frame_count < 2) return NULL;
     // multiple valid animations must share the same process budget as still-image decoding.
     if (!memtrack_allow_allocation(NULL, peak_bytes)) {
         log_warn("image: GIF animation exceeds process memory budget; still-frame decoding remains available");

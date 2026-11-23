@@ -27,7 +27,7 @@ void rst_heading_id(int line_index, char* out, size_t out_size) {
 
 bool is_rst_overline_header(MarkupParser* parser, int overline_index) {
     if (!parser || parser->config.format != Format::RST || overline_index < 0 ||
-        overline_index + 2 >= parser->line_count) return false;
+        !parser->hasLine(overline_index + 2)) return false;
     const char* overline = parser->lines[overline_index];
     const char* title = parser->lines[overline_index + 1];
     const char* underline = parser->lines[overline_index + 2];
@@ -40,7 +40,7 @@ int rst_heading_level_at(MarkupParser* parser, int line_index) {
     char markers[32] = {};
     bool overlines[32] = {};
     int style_count = 0;
-    for (int i = 0; i <= line_index && i + 1 < parser->line_count; i++) {
+    for (int i = 0; i <= line_index && parser->hasLine(i + 1); i++) {
         HeaderInfo info = parser->adapter()->detectHeader(
             parser->lines[i], parser->lines[i + 1]);
         if (!info.valid) continue;
@@ -73,7 +73,7 @@ int get_header_level(MarkupParser* parser, const char* line) {
     const char* next_line = nullptr;
 
     // Get next line for Setext/RST underline detection
-    if (parser->current_line + 1 < parser->line_count) {
+    if (parser->hasLine(parser->current_line + 1)) {
         next_line = parser->lines[parser->current_line + 1];
     }
 
@@ -106,7 +106,7 @@ Item parse_header(MarkupParser* parser, const char* line) {
 
     // Get next line for Setext detection
     const char* next_line = nullptr;
-    if (parser->current_line + 1 < parser->line_count) {
+    if (parser->hasLine(parser->current_line + 1)) {
         next_line = parser->lines[parser->current_line + 1];
     }
 
@@ -197,7 +197,7 @@ Item parse_header(MarkupParser* parser, const char* line) {
     parser->current_line++;
 
     // For Setext/RST underlined headers, also skip the underline
-    if (info.uses_underline && parser->current_line < parser->line_count) {
+    if (info.uses_underline && parser->hasLine(parser->current_line)) {
         parser->current_line++;
     }
 

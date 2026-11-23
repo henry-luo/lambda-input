@@ -857,9 +857,10 @@ static bool xml_text_is_space(const char* chars, size_t len) {
 static String* xml_decode_text(XmlInputContext& ctx, const char* start, const char* end) {
     if (end <= start) return nullptr;
     if (ctx.strict()) {
-        const char* forbidden = strstr(start, "]]>");
-        if (forbidden && forbidden < end) {
-            xml_error(ctx, forbidden, "XML_CHARACTER_DATA", "']]>' is forbidden in XML character data"); return nullptr;
+        // scan this text span only. Searching the document tail for every run is quadratic.
+        size_t forbidden = str_find(start, (size_t)(end - start), "]]>", 3);
+        if (forbidden != STR_NPOS) {
+            xml_error(ctx, start + forbidden, "XML_CHARACTER_DATA", "']]>' is forbidden in XML character data"); return nullptr;
         }
     }
     StringBuf* sb = ctx.sb;

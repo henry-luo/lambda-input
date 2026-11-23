@@ -22,7 +22,9 @@
 #include "lib/url.h"
 #include "../markup-format.h"
 #include "../../core/utf_string.h"
+#include "../../io/input-allocation-context.h"
 #include "lib/log.h"
+#include "lib/strbuf.h"
 #include <cstring>
 #include <new>
 #include "lib/mem.h"
@@ -134,6 +136,123 @@ Element* MarkupParser::getHtmlBody() {
 // ============================================================================
 // Line Management
 // ============================================================================
+
+struct FileLines {
+    FILE* file;
+    size_t limit, bytes, cursor, count, slots;
+    StrBuf* line;
+    bool failed;
+    char buffer[4096];
+};
+
+static bool markup_file_line(FileLines* source) {
+    strbuf_reset(source->line);
+    for (;;) {
+        if (source->cursor == source->count) {
+            size_t remain = source->limit - source->bytes;
+            if (!remain) {
+                source->failed = fgetc(source->file) != EOF || ferror(source->file);
+                return !source->failed && source->line->length;
+            }
+            size_t request = remain < sizeof(source->buffer) ? remain : sizeof(source->buffer);
+            source->count = fread(source->buffer, 1, request, source->file);
+            source->cursor = 0;
+            source->bytes += source->count;
+            if (ferror(source->file)) source->failed = true;
+            if (!source->count || source->failed)
+                return !source->failed && source->line->length;
+        }
+        const char* start = source->buffer + source->cursor;
+        size_t available = source->count - source->cursor;
+        const char* ending = (const char*)memchr(start, '\n', available);
+        size_t length = ending ? (size_t)(ending - start) : available;
+        size_t before = source->line->length;
+        strbuf_append_str_n(source->line, start, length);
+        if (source->line->length != before + length || memchr(start, 0, length)) {
+            source->failed = true;
+            return false;
+        }
+        source->cursor += length + (ending != nullptr);
+        if (ending) return true;
+    }
+}
+
+bool MarkupParser::hasLine(size_t index) const {
+    if (index < (size_t)line_count) return true;
+    FileLines* source = file_lines;
+    if (!source || index >= INT32_MAX) return false;
+    while (index >= (size_t)line_count && !source->failed && markup_file_line(source)) {
+        if ((size_t)line_count == source->slots) {
+            size_t slots = source->slots ? source->slots * 2 : 64;
+            char** grown = (char**)mem_realloc(lines, slots * sizeof(char*), MEM_CAT_INPUT_MARKUP);
+            if (!grown) { source->failed = true; break; }
+            lines = grown;
+            source->slots = slots;
+        }
+        size_t length = source->line->length;
+        if (length && source->line->str[length - 1] == '\r') length--;
+        char* line = mem_dup_n(source->line->str, length, MEM_CAT_INPUT_MARKUP);
+        if (!line) { source->failed = true; break; }
+        lines[line_count++] = line;
+    }
+    return index < (size_t)line_count;
+}
+
+size_t MarkupParser::streamBytesConsumed() const {
+    return file_lines ? file_lines->bytes - file_lines->count + file_lines->cursor : 0;
+}
+
+struct MarkupBatchContext {
+    MarkupDocumentBatch visit;
+    void* context;
+    InputAllocationContext* outer_owner;
+};
+
+static bool visit_markup_batch(void* ptr, Element* document, size_t consumed, bool eof) {
+    auto* batch = (MarkupBatchContext*)ptr;
+    // layout runs outside the parser's collection allocation scope.
+    InputAllocationContext* parser_owner = input_allocation_context;
+    input_allocation_context = batch->outer_owner;
+    bool stop = batch->visit(batch->context, document, consumed, eof);
+    input_allocation_context = parser_owner;
+    return stop;
+}
+
+Item parse_markup_file_batches(Input* input, FILE* file, Format format, Flavor flavor, size_t batch_size,
+        size_t byte_limit, MarkupDocumentBatch visit, void* context) {
+    if (!input || !file || !visit || !batch_size || batch_size > byte_limit) return ItemError;
+    ParseConfig config;
+    config.format = format;
+    config.flavor = flavor;
+    MarkupParser* parser = markup_parser_create(input, config);
+    if (!parser) return ItemError;
+    FileLines source = {};
+    source.file = file;
+    source.limit = byte_limit;
+    source.line = strbuf_new();
+    if (!source.line) {
+        markup_parser_destroy(parser);
+        return ItemError;
+    }
+    parser->file_lines = &source;
+    parser->preview_stream = true;
+    // block parsers append through the same Input-owned collection provider as normal markup.
+    InputAllocationContext owner = {input->pool, input->arena, input->ui_mode, input};
+    InputAllocationContext* previous = input_allocation_context;
+    input_allocation_context = &owner;
+    MarkupBatchContext batch = {visit, context, previous};
+    parse_document_metadata(parser);
+    Item result = parse_document(parser, batch_size, visit_markup_batch, &batch);
+    input_allocation_context = previous;
+    bool failed = source.failed || parser->preview_requires_definitions;
+    markup_parser_destroy(parser);
+    strbuf_free(source.line);
+    if (failed) {
+        log_info("PREVIEW_MARKUP: source error or whole-document definitions required");
+        return ItemError;
+    }
+    return result;
+}
 
 void MarkupParser::splitLines(const char* content) {
     freeLines();
@@ -637,12 +756,9 @@ static bool label_contains_unescaped_brackets(const char* label, size_t label_le
 }
 
 const LinkDefinition* MarkupParser::getLinkDefinition(const char* label, size_t label_len) const {
-    if (!label || label_len == 0 || !link_defs_) {
-        return nullptr;
-    }
-
-    // CommonMark: Link labels cannot contain unescaped brackets
-    if (label_contains_unescaped_brackets(label, label_len)) {
+    if (!label || label_len == 0 || label_contains_unescaped_brackets(label, label_len)) return nullptr;
+    if (!link_defs_) {
+        if (preview_stream) preview_requires_definitions = true;
         return nullptr;
     }
 
@@ -652,6 +768,7 @@ const LinkDefinition* MarkupParser::getLinkDefinition(const char* label, size_t 
     LinkDefinition probe = { normalized, "", "", false };
     const LinkDefinition* found = LinkDefinitionMap::get(link_defs_, probe);
     mem_free(normalized);
+    if (!found && preview_stream) preview_requires_definitions = true;
     return found;
 }
 

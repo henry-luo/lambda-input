@@ -3,6 +3,7 @@
 #include "lib/log.h"
 #include "lib/memtrack.h"
 #include "lib/str.h"
+#include "lib/strbuf.h"
 #include "../../io/mark_builder.hpp"
 #include "../../core/mark_reader.hpp"
 #include "../../io/mark_editor.hpp"
@@ -349,66 +350,111 @@ Element* html5_parse_ex(Input* input, const char* html, Html5ParseOptions* opts)
     return html5_parse_n(input, html, html ? strlen(html) : 0, opts);
 }
 
-Element* html5_parse_n(Input* input, const char* html, size_t length, Html5ParseOptions* opts) {
-    if (!html) {
-        return nullptr;
-    }
-
-    Pool* pool = input->pool;
-    Arena* arena = input->arena;
-
-    Html5Parser* parser = html5_parser_create(pool, arena, input);
-    Html5ParserScope parser_scope(parser);
-    if (!parser) return nullptr;
-    parser->html = html;
-    parser->length = length;
-    parser->pos = 0;
-    parser->tokenizer_state = HTML5_TOK_DATA;
+static Element* html5_parse_document(Html5Parser* parser, Html5ParseOptions* opts,
+        size_t batch_size, Html5DocumentBatch visit, void* context) {
     html5_begin_token_scratch(parser);
-
-    // apply options
     if (opts) {
         parser->track_source_lines = opts->track_source_lines;
         parser->scripting_enabled = !opts->scripting_disabled;
         parser->allow_declarative_shadow_roots = opts->allow_declarative_shadow_roots;
     }
-    // also sync line_scan_pos with pos (in case BOM is skipped below)
-    parser->line_scan_pos = 0;
-
-    // HTML5 §13.2.3.1: Skip leading UTF-8 BOM (U+FEFF = EF BB BF)
-    if (parser->length >= 3 &&
-        (unsigned char)html[0] == 0xEF &&
-        (unsigned char)html[1] == 0xBB &&
-        (unsigned char)html[2] == 0xBF) {
+    const unsigned char* bytes = (const unsigned char*)parser->html;
+    if (parser->length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
         parser->pos = 3;
         parser->line_scan_pos = 3;
     }
 
-    // create document root
-    MarkBuilder builder(input);
+    MarkBuilder builder(parser->input);
     parser->document = builder.element("#document").final().element;
+    if (!parser->document) {
+        html5_end_token_scratch(parser);
+        return nullptr;
+    }
 
-    log_debug("html5: starting parse_ex of %zu bytes (track_source_lines=%d)",
-              parser->length, parser->track_source_lines);
-
-    // tokenize and process
+    size_t next_batch = batch_size;
     while (true) {
         Html5Token* token = html5_tokenize_next(parser);
         html5_process_token(parser, token);
         if (token->type == HTML5_TOKEN_EOF) {
+            html5_flush_pending_text(parser);
+            html5_flush_foster_text(parser);
+            if (visit) visit(context, parser->document, parser->pos, true);
             break;
         }
+        // only publish between tokens in normal body mode, outside table repair and raw text.
+        bool publish = visit && parser->pos >= next_batch &&
+            parser->mode == HTML5_MODE_IN_BODY && token->type == HTML5_TOKEN_END_TAG;
         html5_recycle_token_scratch(parser);
+        if (publish) {
+            if (visit(context, parser->document, parser->pos, false)) break;
+            next_batch = parser->pos + batch_size;
+        }
     }
 
-    html5_flush_pending_text(parser);
-    html5_flush_foster_text(parser);
     html5_end_token_scratch(parser);
-
-    log_debug("html5: parse_ex complete, mode=%d, open_elements=%zu",
-              parser->mode, parser->open_elements->length);
-
     return parser->document;
+}
+
+Element* html5_parse_n(Input* input, const char* html, size_t length, Html5ParseOptions* opts) {
+    if (!input || !html) return nullptr;
+    Html5Parser* parser = html5_parser_create(input->pool, input->arena, input);
+    Html5ParserScope parser_scope(parser);
+    if (!parser) return nullptr;
+    parser->html = html;
+    parser->length = length;
+    return html5_parse_document(parser, opts, 0, nullptr, nullptr);
+}
+
+struct Html5FileSource {
+    FILE* file;
+    StrBuf* bytes;
+    size_t chunk;
+    size_t limit;
+    bool failed;
+};
+
+static bool html5_refill_file(Html5Parser* parser, size_t through, void* context) {
+    Html5FileSource* source = (Html5FileSource*)context;
+    while (parser->length <= through) {
+        if (source->failed || feof(source->file)) return false;
+        size_t remain = source->limit - parser->length;
+        if (!remain) {
+            // distinguish a file exactly at the limit from an exhausted preview budget.
+            source->failed = fgetc(source->file) != EOF || ferror(source->file);
+            return false;
+        }
+        size_t count = remain < source->chunk ? remain : source->chunk;
+        if (!strbuf_ensure_cap(source->bytes, parser->length + count + 1)) {
+            source->failed = true;
+            return false;
+        }
+        parser->html = source->bytes->str;
+        size_t read = fread(source->bytes->str + parser->length, 1, count, source->file);
+        parser->length += read;
+        source->bytes->length = parser->length;
+        source->bytes->str[parser->length] = 0;
+        if (ferror(source->file)) source->failed = true;
+        if (!read || source->failed) return false;
+    }
+    return true;
+}
+
+Element* html5_parse_file_batches(Input* input, FILE* file, Html5ParseOptions* opts,
+        size_t batch_size, size_t byte_limit, Html5DocumentBatch visit, void* context) {
+    if (!input || !file || batch_size < 3 || batch_size > byte_limit || byte_limit > INT32_MAX)
+        return nullptr;
+    Html5Parser* parser = html5_parser_create(input->pool, input->arena, input);
+    Html5ParserScope parser_scope(parser);
+    if (!parser) return nullptr;
+    Html5FileSource source = {file, strbuf_new_cap(batch_size + 1), batch_size, byte_limit, false};
+    if (!source.bytes) return nullptr;
+    parser->html = source.bytes->str;
+    parser->refill = html5_refill_file;
+    parser->refill_context = &source;
+    html5_refill_file(parser, 2, &source); // the BOM check needs three bytes of lookahead.
+    Element* result = source.failed ? nullptr : html5_parse_document(parser, opts, batch_size, visit, context);
+    strbuf_free(source.bytes);
+    return source.failed ? nullptr : result;
 }
 
 Element* parse_svg_document(Input* input, const char* source) {

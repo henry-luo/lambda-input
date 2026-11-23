@@ -61,7 +61,7 @@ Item parse_textile_definition_list(MarkupParser* parser, const char* line) {
     }
 
     // Parse consecutive definition items
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Check if still a definition item
