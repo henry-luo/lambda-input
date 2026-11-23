@@ -1600,7 +1600,8 @@ static int css_evaluate_condition_span(void* context, CssConditionAtomReader rea
 typedef bool (*CssConditionListReader)(void*, CssConditionSpan);
 
 static bool css_condition_list_any(void* context, CssConditionListReader read,
-    CssConditionSpan whole) {
+    CssConditionSpan whole, bool* complete = nullptr) {
+    if (complete) *complete = false;
     size_t start = 0;
     int depth = 0;
     for (size_t i = 0; i <= whole.length; i++) {
@@ -1611,6 +1612,7 @@ static bool css_condition_list_any(void* context, CssConditionListReader read,
         if (read(context, {whole.start + start, i - start})) return true;
         start = i + 1;
     }
+    if (complete) *complete = depth == 0;
     return false;
 }
 
@@ -1732,9 +1734,10 @@ static int css_container_read_atom(void* data, CssConditionSpan span, Pool* scra
     return comparison > 0 ? actual >= expected : comparison < 0 ? actual <= expected : actual == expected;
 }
 
-static bool css_evaluate_container_part(CssEngine* engine, DomElement* target,
-    const char* condition, Pool* scratch) {
-    CssConditionSpan query = css_condition_trim({condition, strlen(condition)});
+static bool css_discover_container_part(CssContainerConditionContext* context,
+    CssConditionSpan* span, const char** container_name) {
+    Pool* scratch = context->scratch;
+    CssConditionSpan query = css_condition_trim(*span);
     const char* name = nullptr;
     if (query.length && query.start[0] != '(' &&
         !css_condition_starts_keyword(query, "not")) {
@@ -1746,9 +1749,49 @@ static bool css_evaluate_container_part(CssEngine* engine, DomElement* target,
         size_t consumed = (size_t)(tokens[0].start + tokens[0].length - query.start);
         query = css_condition_trim({query.start + consumed, query.length - consumed});
     }
+    int discovered = query.length ? css_evaluate_condition_span(context, css_container_read_atom, query, scratch, 0) : 0;
+    if ((query.length && !context->axes) || (!query.length && !name) || context->unsupported || discovered < 0) return false;
+    *span = query;
+    *container_name = name;
+    return true;
+}
+
+struct CssContainerSizeQuery {Pool* scratch; bool saw_query;};
+static bool css_container_part_is_not_size_only(void* data, CssConditionSpan query) {
+    auto* inspection = (CssContainerSizeQuery*)data;
+    inspection->saw_query = true;
+    // discovery does not resolve values; an explicit attr() is still a DOM dependency.
+    size_t count = 0;
+    CssToken* tokens = css_tokenize(query.start, query.length, inspection->scratch, &count);
+    if (!tokens) return true;
+    for (size_t i = 0; i < count; i++) {
+        StrView function = css_token_function_name(&tokens[i]);
+        if (str_icmp(function.str, function.length, "attr", 4) == 0) return true;
+    }
+    CssContainerConditionContext context = {nullptr, nullptr, inspection->scratch, 0, false};
+    const char* name = nullptr;
+    return !css_discover_container_part(&context, &query, &name) || !context.axes;
+}
+
+bool css_container_query_is_size_only(const char* condition) {
+    if (!condition || !*condition) return false;
+    Pool* scratch = mem_pool_create(nullptr, MEM_ROLE_TEMP, "css.container_dependency.scratch");
+    if (!scratch) return false;
+    CssContainerSizeQuery inspection = {scratch, false};
+    bool complete = false;
+    bool other = css_condition_list_any(&inspection, css_container_part_is_not_size_only,
+        {condition, strlen(condition)}, &complete);
+    bool result = complete && inspection.saw_query && !other;
+    mem_pool_destroy(scratch);
+    return result;
+}
+
+static bool css_evaluate_container_part(CssEngine* engine, DomElement* target,
+    const char* condition, Pool* scratch) {
+    CssConditionSpan query = {condition, strlen(condition)};
+    const char* name = nullptr;
     CssContainerConditionContext context = {engine, nullptr, scratch, 0, false};
-    int discovered = query.length ? css_evaluate_condition_span(&context, css_container_read_atom, query, scratch, 0) : 0;
-    if ((query.length && !context.axes) || (!query.length && !name) || context.unsupported || discovered < 0) return false;
+    if (!css_discover_container_part(&context, &query, &name)) return false;
     CssContainerMetrics box = {};
     if (!engine->container_provider(engine->container_context, target, name, context.axes, &box) ||
         !box.identity || !isfinite(box.width) || !isfinite(box.height)) return false;

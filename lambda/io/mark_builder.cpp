@@ -960,14 +960,39 @@ Item MarkBuilder::deep_copy_for_view(Item item) {
     return ui_mode_ ? deep_copy_for_dom(item) : deep_copy(item);
 }
 
-Item MarkBuilder::deep_copy_for_dom(Item item) {
+Item MarkBuilder::deep_copy_for_dom(Item item, DomDocument* document) {
     copying_view_ = true;
+    dom_copy_document_ = document;
     dom_contract_copy_failed_ = false;
     Item copied = deep_copy_internal(item);
+    dom_copy_document_ = nullptr;
     copying_view_ = false;
     if (dom_contract_copies_) hashmap_free(dom_contract_copies_);
     dom_contract_copies_ = nullptr;
     return dom_contract_copy_failed_ ? ItemError : copied;
+}
+
+// A numeric attribute carries values only, so its copy can leave the main
+// Input arena without taking a shared type, name, or DOM node along with it.
+static bool dom_numeric_attribute(Item item) {
+    switch (get_type_id(item)) {
+    case LMD_TYPE_NULL:
+    case LMD_TYPE_BOOL:
+    case LMD_TYPE_INT:
+    case LMD_TYPE_INT64:
+    case LMD_TYPE_UINT64:
+    case LMD_TYPE_FLOAT:
+    case LMD_TYPE_ARRAY_NUM:
+        return true;
+    case LMD_TYPE_ARRAY: {
+        ArrayReader reader(item.array);
+        for (int64_t i = 0; i < reader.length(); i++)
+            if (!dom_numeric_attribute(reader.get(i).item())) return false;
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 
 Item MarkBuilder::copy_ui_content(Item item) {
@@ -1366,7 +1391,24 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
                     if (!interned) return ItemNull;
                     copied_item.item = s2it(interned);
                 } else {
+                    TypeId field_kind = get_type_id(attr_item);
+                    Arena* original_arena = arena_;
+                    DomDocument* document = dom_copy_document_;
+                    if (document && (field_kind == LMD_TYPE_ARRAY || field_kind == LMD_TYPE_ARRAY_NUM) &&
+                            dom_numeric_attribute(attr_item)) {
+                        arena_ = dom_element_numeric_attribute_arena(document,
+                            element_to_dom_element(elem_builder.final().element));
+                        if (!arena_) {
+                            arena_ = original_arena;
+                            dom_contract_copy_failed_ = true;
+                            return ItemError;
+                        }
+                    }
+                    // Attribute values can contain markup that will never be attached.
+                    dom_copy_document_ = nullptr;
                     copied_item = deep_copy_internal(attr_item);
+                    dom_copy_document_ = document;
+                    arena_ = original_arena;
                 }
                 if (view_type) {
                     if (!copy_dom_field(view_attr, attr.get())) return ItemNull;

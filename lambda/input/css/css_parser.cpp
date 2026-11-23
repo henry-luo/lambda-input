@@ -27,6 +27,11 @@
 #include <stdio.h>
 #include <math.h>
 
+static bool css_token_is_identifier(const CssToken* token) {
+    // custom-property tokens retain the same identifier grammar in selectors.
+    return token && (token->type == CSS_TOKEN_IDENT || token->type == CSS_TOKEN_CUSTOM_PROPERTY);
+}
+
 bool css_parse_property_syntax(const char* syntax, Pool* pool, CssPropertyRegistration* result) {
     if (!syntax || !pool || !result) return false;
     const char* cursor = syntax;
@@ -1589,12 +1594,9 @@ CssCompoundSelector* css_parse_compound_selector_from_tokens(const CssToken* tok
         CssSimpleSelector* simple = css_parse_simple_selector_from_tokens(tokens, pos, token_count, pool);
 
         if (!simple) {
-            // If we haven't parsed any selectors yet, this is an error
-            if (compound->simple_selector_count == 0) {
-                return NULL;
-            }
-            // Otherwise, we've finished the compound selector
-            break;
+            // failed functions can consume their entire input; retaining the
+            // prefix would broaden the selector instead of rejecting it.
+            return NULL;
         }
 
         // Track pseudo-element presence
@@ -1742,7 +1744,7 @@ CssSelector* css_parse_selector_with_combinators(const CssToken* tokens, int* po
             // Check if the next token could start a selector
             if (*pos < token_count) {
                 const CssToken* next = &tokens[*pos];
-                if (next->type == CSS_TOKEN_IDENT ||
+                if (css_token_is_identifier(next) ||
                     (next->type == CSS_TOKEN_DELIM && (next->data.delimiter == '.' || next->data.delimiter == '*')) ||
                     next->type == CSS_TOKEN_HASH ||
                     next->type == CSS_TOKEN_LEFT_BRACKET ||
@@ -2062,7 +2064,7 @@ static bool css_parse_qualified_selector_name(const CssToken* tokens, int* pos,
     int start = *pos;
     bool empty_prefix = tokens[start].type == CSS_TOKEN_DELIM &&
         tokens[start].data.delimiter == '|';
-    bool named_or_wildcard = tokens[start].type == CSS_TOKEN_IDENT ||
+    bool named_or_wildcard = css_token_is_identifier(&tokens[start]) ||
         (tokens[start].type == CSS_TOKEN_DELIM &&
          tokens[start].data.delimiter == '*');
     int local_index = start + (empty_prefix ? 1 : 2);
@@ -2070,12 +2072,12 @@ static bool css_parse_qualified_selector_name(const CssToken* tokens, int* pos,
         tokens[start + 1].type != CSS_TOKEN_DELIM ||
         tokens[start + 1].data.delimiter != '|')) return false;
     if (local_index >= token_count ||
-        (tokens[local_index].type != CSS_TOKEN_IDENT &&
+        (!css_token_is_identifier(&tokens[local_index]) &&
          !(allow_universal_local && tokens[local_index].type == CSS_TOKEN_DELIM &&
            tokens[local_index].data.delimiter == '*'))) return false;
-    *prefix = empty_prefix ? "" : tokens[start].type == CSS_TOKEN_IDENT
+    *prefix = empty_prefix ? "" : css_token_is_identifier(&tokens[start])
         ? css_token_value_dup(&tokens[start], pool) : "*";
-    *local = tokens[local_index].type == CSS_TOKEN_IDENT
+    *local = css_token_is_identifier(&tokens[local_index])
         ? css_token_value_dup(&tokens[local_index], pool) : "*";
     *pos = local_index + 1;
     return *prefix && *local;
@@ -2108,7 +2110,7 @@ CssSimpleSelector* css_parse_simple_selector_from_tokens(const CssToken* tokens,
         selector->namespace_prefix = namespace_prefix;
         selector->namespace_url = namespace_prefix[0] == '\0' ? "" : NULL;
         matched = true;
-    } else if (token->type == CSS_TOKEN_IDENT || token->type == CSS_TOKEN_CUSTOM_PROPERTY) {
+    } else if (css_token_is_identifier(token)) {
         // Element/type selector: div, span, --foo, etc.
         selector->type = CSS_SELECTOR_TYPE_ELEMENT;
         // Extract selector value from token
@@ -2126,7 +2128,7 @@ CssSimpleSelector* css_parse_simple_selector_from_tokens(const CssToken* tokens,
     } else if (token->type == CSS_TOKEN_DELIM && token->data.delimiter == '.') {
         // Class selector: .classname
         (*pos)++;
-        if (*pos < token_count && tokens[*pos].type == CSS_TOKEN_IDENT) {
+        if (*pos < token_count && css_token_is_identifier(&tokens[*pos])) {
             selector->type = CSS_SELECTOR_TYPE_CLASS;
             const CssToken* name_token = &tokens[*pos];
             if (name_token->value) {
@@ -2366,7 +2368,7 @@ CssSimpleSelector* css_parse_simple_selector_from_tokens(const CssToken* tokens,
         const char* attr_name = NULL;
         bool qualified = css_parse_qualified_selector_name(
             tokens, pos, token_count, pool, false, &attr_prefix, &attr_name);
-        if (!qualified && tokens[*pos].type != CSS_TOKEN_IDENT) {
+        if (!qualified && !css_token_is_identifier(&tokens[*pos])) {
             log_debug("[CSS Parser] Expected attribute name, got token type %d", tokens[*pos].type);
             return NULL;
         }

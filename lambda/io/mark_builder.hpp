@@ -14,6 +14,7 @@ class MarkBuilder;
 class ElementBuilder;
 class MapBuilder;
 class ArrayBuilder;
+struct DomDocument;
 
 /**
  * MarkBuilder - Fluent API for constructing Mark documents in input parsers
@@ -51,6 +52,7 @@ private:
     bool ui_mode_;              // true = allocate DomElement/DomText (for layout/render/view)
     bool copying_view_ = false; // DOM occurrences copy owned markup as well as external values
     bool preserving_owned_content_ = false;
+    DomDocument* dom_copy_document_ = nullptr;
     HashMap* dom_contract_copies_ = nullptr;
     bool dom_contract_copy_failed_ = false;
 
@@ -275,7 +277,7 @@ public:
     // dom construction needs independent elements/content even within one arena
     // (D5.5.3 for views); ordinary evaluation keeps deep_copy's ownership optimization.
     Item deep_copy_for_view(Item item);
-    Item deep_copy_for_dom(Item item);
+    Item deep_copy_for_dom(Item item, DomDocument* document = nullptr);
     // UI content adopts external containers while retaining owned render identities.
     Item copy_ui_content(Item item);
 

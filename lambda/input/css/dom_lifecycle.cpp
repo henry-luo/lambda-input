@@ -391,13 +391,19 @@ void dom_node_set_backing_value(DomDocument* doc, DomNode* node, Item value) {
         Element* backing = &element->elmt;
         if (source && source != backing) {
             if (!element->occurrence_source)
-                element->occurrence_source = lam::own((DomOccurrenceSource*)pool_alloc(
+                element->occurrence_source = lam::own((DomOccurrenceSource*)pool_calloc(
                     element->storage_pool(), sizeof(DomOccurrenceSource)));
             if (!element->occurrence_source)
                 dom_lifecycle_fail("allocate-occurrence-source", dom_node_ref(node), DOM_NODE_PIN_EXTERNAL);
-            *element->occurrence_source = {source,
-                source->type == backing->type ? backing->type : nullptr,
-                source->data == backing->data ? backing->data : nullptr};
+            auto* occurrence = element->occurrence_source.get();
+            occurrence->element = source;
+            occurrence->borrowed_type = source->type == backing->type ? backing->type : nullptr;
+            occurrence->borrowed_data = source->data == backing->data ? backing->data : nullptr;
+        } else if (element->occurrence_source && element->occurrence_source->numeric_attributes) {
+            auto* occurrence = element->occurrence_source.get();
+            occurrence->element = nullptr;
+            occurrence->borrowed_type = nullptr;
+            occurrence->borrowed_data = nullptr;
         } else {
             lam::free_owned(element->storage_pool(), element->occurrence_source);
         }
@@ -603,7 +609,8 @@ void dom_node_set_backing_source(DomDocument* doc, DomNode* node,
 Element* dom_node_backing_source(DomDocument* doc, DomNode* node) {
     if (!node || node->doc != doc) return nullptr;
     if (DomElement* element = node->as_element()) {
-        if (element->occurrence_source) return element->occurrence_source->element;
+        if (element->occurrence_source && element->occurrence_source->element)
+            return element->occurrence_source->element;
         return (node->node_flags & DOM_NODE_FLAG_EMBEDDED_SOURCE) ? &element->elmt : nullptr;
     }
     DomComment* comment = node->as_comment();

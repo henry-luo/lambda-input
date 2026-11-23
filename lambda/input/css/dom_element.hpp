@@ -1091,6 +1091,7 @@ struct DomOccurrenceSource {
     Element* element;
     void* borrowed_type;
     void* borrowed_data;
+    Arena* numeric_attributes;
 };
 
 struct DomStyleRareExt {
@@ -1200,7 +1201,7 @@ struct DomElement : DomNode {
     // Tree structure (only elements can have children)
     lam::Own<DomNode> first_child;  // First child node (Element, Text, or Comment); owns the sibling chain
     lam::Up<DomNode> last_child;    // Last child node
-    lam::Own<DomOccurrenceSource> occurrence_source; // allocated only for a distinct backing
+    lam::Own<DomOccurrenceSource> occurrence_source; // separate render source or owned numeric attributes
 
     // HTML/CSS style related
     lam::Up<const char> id;      // Element ID attribute (cached)
@@ -1835,6 +1836,8 @@ void dom_rebind_equal_render_result(DomDocument* doc, Item previous, Item curren
 void dom_rebind_render_element(DomDocument* doc, Element* previous, Element* current);
 // data/ARIA, or an inert attribute whose boolean presence is unchanged; CSS dependencies remain caller-owned.
 bool dom_element_can_write_metadata(DomElement* element, const char* name);
+// use the DOM class cache's token boundaries when projecting a raw attribute value.
+bool dom_class_attribute_has_token(const char* value, const char* name, bool case_sensitive);
 // The caller has ruled out CSS and native attribute dependencies on layout.
 bool dom_element_write_attribute_without_cascade(DomElement* element, const char* name, const char* value);
 DomElement* element_dom_map_lookup(struct hashmap* map, Element* elem);
@@ -1989,6 +1992,7 @@ DomElement* build_dom_tree_from_element(Element* element, DomDocument* document,
  */
 void dom_element_destroy(DomElement* element);
 void dom_element_release_retired_storage(DomElement* element);
+Arena* dom_element_numeric_attribute_arena(DomDocument* document, DomElement* occurrence);
 
 /**
  * Clear all data from a DomElement (without freeing the structure)

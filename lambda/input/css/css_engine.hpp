@@ -277,6 +277,8 @@ bool css_evaluate_media_query(CssEngine* engine, const char* media_query);
 bool css_evaluate_supports_condition(CssEngine* engine, const char* condition);
 bool css_evaluate_container_query(CssEngine* engine, struct DomElement* target,
     const char* condition);
+// recognize supported size-only queries without selecting or measuring a container.
+bool css_container_query_is_size_only(const char* condition);
 bool css_container_length_to_px(CssEngine* engine, struct DomElement* target,
     CssUnit unit, double value, double* pixels);
 uint8_t css_container_type_axes(const CssValue* value);
