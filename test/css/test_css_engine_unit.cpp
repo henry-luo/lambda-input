@@ -24,6 +24,28 @@ extern "C" {
 
 using namespace CssTestHelpers;
 
+TEST(CssContainerDependency, RecognizesOnlySizeFeatureQueries) {
+    const struct { const char* condition; bool size_only; } cases[] = {
+        {"site (max-width: 768px)", true},
+        {"(width > 10px) and (height < 300px)", true},
+        {"not (inline-size < 12rem)", true},
+        {"(width > 1px), (height > 1px)", true},
+        {"(width: calc(30px + 5px))", true},
+        {"style(--theme: dark)", false},
+        {"site style(--theme: dark)", false},
+        {"(width > 1px), style(--theme: dark)", false},
+        {"(width > 1px), (height > 1px", false},
+        {"(width > 1px), )", false},
+        {"(width > attr(data-limit px))", false},
+        {"(unsupported: 10px)", false},
+        {"site", false}, {"", false}, {nullptr, false},
+    };
+    for (const auto& entry : cases) {
+        SCOPED_TRACE(entry.condition ? entry.condition : "null");
+        EXPECT_EQ(css_container_query_is_size_only(entry.condition), entry.size_only);
+    }
+}
+
 // ============================================================================
 // Test Fixture
 // ============================================================================

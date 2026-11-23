@@ -305,6 +305,11 @@ bool selector_matcher_matches_attribute(SelectorMatcher* matcher,
                                         bool case_insensitive,
                                         DomElement* element);
 
+// share the same value/flag rules with mutation dependency projections.
+bool selector_matcher_matches_attribute_value(SelectorMatcher* matcher,
+    const char* element_value, bool exists, const char* selected_value,
+    CssSelectorType type, bool case_insensitive, bool case_sensitive);
+
 // ============================================================================
 // Pseudo-Class Matching
 // ============================================================================

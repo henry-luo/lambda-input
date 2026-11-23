@@ -743,11 +743,6 @@ static bool selector_matcher_type_namespace_matches(
         strcmp(dom_element_namespace_uri(element), selector->namespace_url) == 0;
 }
 
-static bool selector_matcher_matches_attribute_value(
-    SelectorMatcher* matcher, const char* element_value, bool exists,
-    const char* attr_value, CssSelectorType attr_type, bool case_insensitive,
-    bool case_sensitive);
-
 static bool selector_matcher_matches_namespaced_attribute(
     SelectorMatcher* matcher, CssSimpleSelector* selector, DomElement* element) {
     const char* wanted_uri = selector->namespace_url;
@@ -991,7 +986,7 @@ bool selector_matcher_matches_compound(SelectorMatcher* matcher,
 
     return true;
 }
-static bool selector_matcher_matches_attribute_value(
+bool selector_matcher_matches_attribute_value(
     SelectorMatcher* matcher, const char* element_attr, bool exists,
     const char* attr_value, CssSelectorType attr_type, bool case_insensitive,
     bool case_sensitive) {

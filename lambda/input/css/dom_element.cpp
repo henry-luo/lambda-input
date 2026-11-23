@@ -2159,6 +2159,18 @@ static StrView dom_next_class_token(const char*& cursor) {
     return {start, length};
 }
 
+bool dom_class_attribute_has_token(const char* value, const char* name, bool case_sensitive) {
+    if (!value || !name) return false;
+    const size_t length = strlen(name);
+    const char* cursor = value;
+    for (StrView token = dom_next_class_token(cursor); token.length;
+         token = dom_next_class_token(cursor)) {
+        if (case_sensitive ? str_eq(token.str, token.length, name, length) :
+            str_icmp(token.str, token.length, name, length) == 0) return true;
+    }
+    return false;
+}
+
 static DomClassList* dom_parse_class_list(Pool* pool, const char* value, bool unique) {
     if (!value) return nullptr;
 
