@@ -686,6 +686,35 @@ UrlError url_set_href(Url* url, const char* href) {
     return url_parse_into(href, url);
 }
 
+static void url_canonicalize_dot_segments(char* path) {
+    char* output = path;
+    for (char* segment = path; *segment;) {
+        char* end = strchr(segment, '/');
+        if (!end) end = segment + strlen(segment);
+        char* scan = segment;
+        unsigned dots = 0;
+        while (scan < end && dots < 3) {
+            if (*scan == '.') scan++;
+            else if (end - scan >= 3 && scan[0] == '%' && scan[1] == '2' &&
+                    (scan[2] == 'e' || scan[2] == 'E')) scan += 3;
+            else break;
+            dots++;
+        }
+        // only whole dot segments navigate; encoded dots inside names stay escaped.
+        if (scan == end && dots > 0 && dots <= 2) {
+            for (unsigned i = 0; i < dots; i++) *output++ = '.';
+        } else {
+            size_t size = (size_t)(end - segment);
+            memmove(output, segment, size);
+            output += size;
+        }
+        bool slash = *end == '/';
+        if (slash) *output++ = '/';
+        segment = end + (slash ? 1 : 0);
+    }
+    *output = '\0';
+}
+
 // Helper function to normalize path (remove . and .. segments).
 // `cap` is the total size of the `path` buffer (including the NUL terminator); every
 // write below is bounded by it, so the function can never overflow the caller's buffer.
@@ -696,6 +725,7 @@ void url_normalize_path(char* path, size_t cap) {
     char* path_copy = (char*)mem_alloc(original_len + 1, MEM_CAT_TEMP);
     if (!path_copy) return;
     memcpy(path_copy, path, original_len + 1);
+    url_canonicalize_dot_segments(path_copy);
 
     // RFC 3986 §5.2.4 preserves empty segments and the slash left by a final
     // dot segment; tokenizing on '/' loses both directory semantics.

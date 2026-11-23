@@ -1,6 +1,7 @@
 #include "lib/re2_glue.hpp"
 #include <gtest/gtest.h>
 #include "lambda/input/css/dom_element.hpp"
+#include "lambda/input/css/dom_lifecycle.hpp"
 #include "lambda/input/css/dom_xml_serializer.h"
 #include "lib/strbuf.h"
 #include "lambda/input/css/dom_svg_context.h"
@@ -46,6 +47,43 @@ TEST(InputDomNativeTest, ViewOccurrencesOwnBackingAndLeaveSourceUnchanged) {
     ASSERT_TRUE(first_child->set_attribute("id", "changed-child"));
     EXPECT_STREQ(ElementReader(child.element).get_attr("id").cstring(), "child");
     EXPECT_STREQ(ElementReader(dom_element_backing(second_child)).get_attr("id").cstring(), "child");
+    dom_document_destroy(document);
+    pool_destroy(pool);
+}
+
+TEST(InputDomNativeTest, BulkWeakValidationRejectsRetirementDuringThePass) {
+    Pool* pool = pool_create();
+    ASSERT_NE(pool, nullptr);
+    Input* input = Input::create(pool);
+    ASSERT_NE(input, nullptr);
+    DomDocument* document = dom_document_create(input);
+    ASSERT_NE(document, nullptr);
+    DomElement* root = dom_create_backed_element_identity(document, "div", nullptr, false);
+    ASSERT_NE(root, nullptr);
+    document->root = lam::up(root);
+    DomNodeRef refs[80] = {};
+    for (auto& ref : refs) {
+        auto* child = DomText::create_detached_copy(document, "text", 4);
+        ASSERT_NE(child, nullptr);
+        ASSERT_TRUE(root->DomNode::append_child(child));
+        ref = dom_node_ref(child);
+    }
+
+    ASSERT_TRUE(root->remove_child(refs[0].address));
+    ASSERT_EQ(dom_retire_sweep(document), 1u);
+    DomNodeValidationScope validation(document);
+    // enough old references to require structural lookups beyond the weak cache.
+    for (size_t i = 1; i < sizeof(refs) / sizeof(*refs); i++)
+        EXPECT_EQ(dom_node_ref_validate(document, refs[i]), refs[i].address);
+    uint32_t previous_stamp = refs[2].lifetime_stamp;
+    EXPECT_EQ(dom_node_ref_refresh(document, refs[2]), refs[2].address);
+    EXPECT_NE(refs[2].lifetime_stamp, previous_stamp);
+
+    ASSERT_TRUE(root->remove_child(refs[1].address));
+    ASSERT_EQ(dom_retire_sweep(document), 1u);
+    EXPECT_EQ(dom_node_ref_validate(document, refs[0]), nullptr);
+    EXPECT_EQ(dom_node_ref_validate(document, refs[1]), nullptr);
+    EXPECT_EQ(dom_node_ref_validate(document, refs[2]), refs[2].address);
     dom_document_destroy(document);
     pool_destroy(pool);
 }

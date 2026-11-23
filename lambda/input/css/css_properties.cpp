@@ -4719,6 +4719,9 @@ CssPropertyCode css_property_code_from_name_id(NameId name_id) {
 CssPropertyCode css_property_canonical_code(CssPropertyCode property_code) {
     // the source IDs still select the legacy grammar before declarations are normalized.
     switch (property_code) {
+        case CSS_PROPERTY_GRID_GAP: return CSS_PROPERTY_GAP;
+        case CSS_PROPERTY_GRID_ROW_GAP: return CSS_PROPERTY_ROW_GAP;
+        case CSS_PROPERTY_GRID_COLUMN_GAP: return CSS_PROPERTY_COLUMN_GAP;
         case CSS_PROPERTY_WEBKIT_BOX_ORIENT: return CSS_PROPERTY_FLEX_DIRECTION;
         case CSS_PROPERTY_WEBKIT_LINE_CLAMP: return CSS_PROPERTY_LINE_CLAMP;
         default: return property_code;

@@ -28,15 +28,10 @@ typedef enum DomNodePinReason : uint8_t {
     DOM_NODE_PIN_REASON_COUNT,
 } DomNodePinReason;
 
-typedef enum DomNodeLifeState : uint8_t {
-    DOM_NODE_LIVE = 1,
-    DOM_NODE_DETACHED_CANDIDATE,
-    DOM_NODE_RETIRED,
-} DomNodeLifeState;
-
 typedef struct DomNodeRef {
     DomNode* address;
     uint32_t expected_id;
+    uint32_t lifetime_stamp; // zero for an address-only probe; minted references are copied intact
 } DomNodeRef;
 uint64_t dom_node_ref_identity_hash(DomNodeRef ref, uint64_t seed0, uint64_t seed1);
 int dom_node_ref_identity_compare(DomNodeRef left, DomNodeRef right);
@@ -77,15 +72,43 @@ void dom_node_borrowed_source_storage(DomDocument* doc, DomNode* node,
 void dom_node_refresh_managed_backing(DomDocument* doc, DomNode* node);
 DomNodeRef dom_node_ref(DomNode* node);
 DomNode* dom_node_ref_validate(DomDocument* doc, DomNodeRef ref);
+// Renew the lifetime proof only when this document still owns that identity.
+DomNode* dom_node_ref_refresh(DomDocument* doc, DomNodeRef& ref);
 bool dom_node_registry_owns(DomDocument* doc, DomNode* node);
+
+// Bulk consumers share an ownership walk when checking unproven or expired addresses.
+class DomNodeValidationScope {
+public:
+    explicit DomNodeValidationScope(DomDocument* doc);
+    ~DomNodeValidationScope();
+    DomNodeValidationScope(const DomNodeValidationScope&) = delete;
+    DomNodeValidationScope& operator=(const DomNodeValidationScope&) = delete;
+
+private:
+    friend bool dom_node_registry_owns(DomDocument*, DomNode*);
+    friend void dom_lifecycle_destroy(DomDocument*);
+    bool owns_address(DomNode* address);
+
+    DomDocument* document = nullptr;
+    struct hashmap* addresses = nullptr;
+    uint64_t registrations = 0;
+    uint32_t stamp = 0;
+    bool indexed = false;
+};
+
 struct DomManualSlotLink;
+// A successful pin gives its holder ownership of ref.address through adoption.
+// Weak validation is document-local. Release the original hold once at delivery or teardown.
 bool dom_node_pin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason);
 bool dom_node_unpin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason);
+void dom_observe_native_pins(DomDocument* doc);
 uint32_t dom_node_pin_count(DomDocument* doc, DomNodeRef ref,
                             DomNodePinReason reason);
 void dom_node_retain_live(DomNode* node);
 void dom_node_release_live(DomNode* node);
 void dom_node_schedule_detached(DomDocument* doc, DomNode* root);
+void dom_node_own_unlinked(DomNode* node);
+bool dom_child_links_valid(DomElement* parent);
 void dom_node_cancel_detached(DomDocument* doc, DomNode* root);
 void dom_js_mutation_records_reset(DomDocument* doc);
 bool dom_js_mutation_records_truncate(DomDocument* doc, int count);

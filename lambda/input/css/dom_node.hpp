@@ -53,6 +53,7 @@ enum DomNodeFlag : uint8_t {
     DOM_NODE_FLAG_TEXT_OWNS_STRING = 1u << 1,
     DOM_NODE_FLAG_TEXT_REINSERTABLE = 1u << 2,
     DOM_NODE_FLAG_GC_BACKING = 1u << 3,
+    DOM_NODE_FLAG_DETACHED_CANDIDATE = 1u << 7,
     DOM_NODE_FLAG_INLINE_STRING = 1u << 6, // allocation includes its original immutable String
     DOM_NODE_FLAG_EMBEDDED_SOURCE = 1u << 5, // embedded Mark element is its own source
     DOM_NODE_FLAG_PRIVATE_PSEUDO_STYLES = 1u << 4, // elements only: skip cold props on pseudo reads
@@ -92,6 +93,8 @@ struct DomNode {
     DomNodeType node_type : 4;
     bool layout_dirty : 1;
     bool ruby_annotation_hidden : 1;
+    bool lifecycle_live : 1;
+    bool preparing_adoption : 1;
     ViewType view_type;
     uint8_t node_flags;
     uint8_t shared_pseudo_reset_slots; // four bits each for ::before and ::after
@@ -111,6 +114,9 @@ struct DomNode {
     float layout_height_contribution; // advance_y delta from this node during parent's layout
 
     uint32_t external_retain_count; // durable holders follow the physical node through adoption
+    uint32_t detached_root_slot; // one-based index while the document owns this root directly
+    uint32_t wrapper_pin_count; // native wrapper handles eligible for idle collection
+    Arena* recycling_arena; // physical allocation owner, stable across adoption
     ViewState* view_state_ref; // cleared by the state store before the document epoch advances
 
     // node_name() is for all nodes, including text and comment nodes

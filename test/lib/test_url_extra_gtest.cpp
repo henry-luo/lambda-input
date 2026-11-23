@@ -20,6 +20,36 @@ protected:
     }
 };
 
+TEST_F(UrlExtraTest, PathnameWritesKeepSerializedComponentsCoherent) {
+    struct Case { const char* base; const char* value; const char* path; const char* href; } cases[] = {
+        {"http://a/b", "c%20d", "/c%20d", "http://a/c%20d"},
+        {"https://example.test/old?q=one#frag", "/a b/\xc3\xa9?x#y",
+         "/a%20b/%C3%A9%3Fx%23y", "https://example.test/a%20b/%C3%A9%3Fx%23y?q=one#frag"},
+        {"https://example.test/old", "/a/%2e/%2E%2e/b//", "/b//", "https://example.test/b//"},
+        {"https://example.test/old", "\\a\\..\\b", "/b", "https://example.test/b"},
+        {"https://example.test/old", "//new-host/path", "//new-host/path", "https://example.test//new-host/path"},
+        {"https://example.test/old", "", "/", "https://example.test/"},
+        {"https://example.test/old", "/tab\tline\r\n/x", "/tabline/x", "https://example.test/tabline/x"},
+        {"https://example.test/old", "\t\r\n/start", "/start", "https://example.test/start"},
+        {"https://example.test/old", "^" "\x60" "{}\"<>",
+         "/%5E%60%7B%7D%22%3C%3E", "https://example.test/%5E%60%7B%7D%22%3C%3E"},
+        {"https://example.test/old", "/a/%2e-name/.hidden/..x", "/a/%2e-name/.hidden/..x",
+         "https://example.test/a/%2e-name/.hidden/..x"},
+        {"mailto:person@example.test?x=1#frag", "/replacement", "person@example.test", "mailto:person@example.test?x=1#frag"},
+        {"custom:/old/path", "next\\part?x#y", "/next\\part%3Fx%23y", "custom:/next\\part%3Fx%23y"},
+        {"file:///C:/old", "/D|/a/../b", "/D:/b", "file:///D:/b"}
+    };
+    for (const auto& sample : cases) {
+        SCOPED_TRACE(sample.value);
+        Url* url = url_parse(sample.base);
+        ASSERT_NE(url, nullptr);
+        EXPECT_EQ(url_set_pathname(url, sample.value), URL_OK);
+        EXPECT_STREQ(url_get_pathname(url), sample.path);
+        EXPECT_STREQ(url_get_href(url), sample.href);
+        url_destroy(url);
+    }
+}
+
 TEST_F(UrlExtraTest, ReplacementRetainsTheCarrierAndResolvesAgainstTheNewComponents) {
     Url* url = url_parse("file:///original.html");
     ASSERT_NE(url, nullptr);

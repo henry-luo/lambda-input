@@ -64,7 +64,7 @@ private:
     int next_version_num_;         // Next version number
 
     // DOM linked-list sync helper (ui_mode only)
-    void dom_relink_children(Element* parent_elem);
+    bool dom_relink_children(Element* parent_elem);
 
     // Room for `dense_length` children beside the list's owned scalar tail,
     // grown into this editor's arena (inline mode; LR11-3)

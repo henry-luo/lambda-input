@@ -407,21 +407,19 @@ TEST(NetworkResourceManager, AdmissionPrecedesSharedCacheAndReadyContentReuse) {
     resource_manager_destroy(blocked); resource_manager_destroy(admitted); enhanced_cache_destroy(cache);
 }
 
-TEST(NetworkSchedulerCurlMulti, FileUrlCompletesAndWritesLocalResource) {
+static void check_curl_multi_file_url(const char* fixture_name, const char* url_name) {
     mkdir("./temp", 0755);
 
-    const char* fixture_path = "./temp/network_scheduler_file_url.txt";
+    char fixture_path[1024];
+    snprintf(fixture_path, sizeof(fixture_path), "./temp/%s", fixture_name);
     const char* fixture_body = "curl multi fixture body\n";
     ASSERT_TRUE(write_text_fixture(fixture_path, fixture_body));
 
     char cwd[1024];
     ASSERT_NE(getcwd(cwd, sizeof(cwd)), nullptr);
 
-    char source_path[1400];
-    snprintf(source_path, sizeof(source_path), "%s/temp/network_scheduler_file_url.txt", cwd);
-
     char url[1500];
-    snprintf(url, sizeof(url), "file://%s", source_path);
+    snprintf(url, sizeof(url), "file://%s/temp/%s", cwd, url_name);
 
     NetworkSchedulerConfig config;
     memset(&config, 0, sizeof(config));
@@ -454,16 +452,32 @@ TEST(NetworkSchedulerCurlMulti, FileUrlCompletesAndWritesLocalResource) {
     wait_for_completion(&completion);
 
     EXPECT_TRUE(completion.success);
-    ASSERT_NE(res.local_path, nullptr);
+    EXPECT_NE(res.local_path, nullptr);
 
-    char loaded[128];
-    ASSERT_TRUE(read_text_file(res.local_path, loaded, sizeof(loaded)));
-    EXPECT_STREQ(loaded, fixture_body);
+    char loaded[128] = {};
+    if (res.local_path) {
+        EXPECT_TRUE(read_text_file(res.local_path, loaded, sizeof(loaded)));
+        EXPECT_STREQ(loaded, fixture_body);
+    }
 
     if (res.local_path) mem_free(res.local_path);
     if (res.error_message) mem_free(res.error_message);
     completion_state_destroy(&completion);
     network_scheduler_destroy(scheduler);
+}
+
+TEST(NetworkSchedulerCurlMulti, FileUrlCompletesAndWritesLocalResource) {
+    check_curl_multi_file_url("network_scheduler_file_url.txt", "network_scheduler_file_url.txt");
+}
+
+TEST(NetworkSchedulerCurlMulti, FileUrlSerializesSpacesAndUnicode) {
+    check_curl_multi_file_url("network_scheduler_caf\xc3\xa9 space.txt",
+                             "network_scheduler_caf\xc3\xa9 space.txt");
+}
+
+TEST(NetworkSchedulerCurlMulti, FileUrlPreservesExistingPercentEscapes) {
+    check_curl_multi_file_url("network_scheduler_%20 space.txt",
+                             "network_scheduler_%2520%20space.txt");
 }
 
 typedef struct BlockingTaskState {

@@ -5,6 +5,7 @@
 #include "lib/log.h"
 #include "lib/arena.h"
 #include "lib/hashmap.h"
+#include <assert.h>
 #include <string.h>
 #include <stdlib.h>
 #include <new>
@@ -270,9 +271,9 @@ void mark_editor_destroy(MarkEditor* editor) {
  * be embedded inside DomText, or may need a normal backed DomText wrapper when the
  * source tree was parsed before editing.
  */
-void MarkEditor::dom_relink_children(Element* parent_elem) {
+bool MarkEditor::dom_relink_children(Element* parent_elem) {
     DomElement* parent = element_to_dom_element(parent_elem);
-    if (!parent) return;
+    if (!parent) return false;
     DomNode* old_first = parent->first_child;
     ArrayList* old_nodes = arraylist_new(8);
     ArrayList* relinked_nodes = arraylist_new((int)parent_elem->length);
@@ -280,7 +281,7 @@ void MarkEditor::dom_relink_children(Element* parent_elem) {
         log_error("mark_editor_dom_relink: failed to allocate child list");
         if (old_nodes) arraylist_free(old_nodes);
         if (relinked_nodes) arraylist_free(relinked_nodes);
-        return;
+        return false;
     }
 
     for (DomNode* node = old_first; node; node = node->next_sibling) {
@@ -288,7 +289,7 @@ void MarkEditor::dom_relink_children(Element* parent_elem) {
             log_error("mark_editor_dom_relink: failed to snapshot child list");
             arraylist_free(old_nodes);
             arraylist_free(relinked_nodes);
-            return;
+            return false;
         }
     }
 
@@ -305,11 +306,31 @@ void MarkEditor::dom_relink_children(Element* parent_elem) {
         if (!node) {
             node = mark_editor_create_relinked_ui_child(parent, child);
         }
+        if (node && mark_editor_relinked_node_index(relinked_nodes, node) >= 0) {
+            // repeated Mark values require distinct DOM occurrences and sibling links.
+            if (node->is_text()) {
+                node = DomText::create_detached_copy(parent->doc, node->as_text()->text, node->as_text()->length);
+            } else if (node->is_element()) {
+                Item copy = builder_->deep_copy_for_dom(child);
+                node = get_type_id(copy) == LMD_TYPE_ELEMENT
+                    ? build_dom_tree_from_element_detached(copy.element, parent->doc, parent) : nullptr;
+            }
+            if (!node) {
+                arraylist_free(old_nodes);
+                arraylist_free(relinked_nodes);
+                return false;
+            }
+            // publish_child_edit staged these slots privately. Keep the backing
+            // occurrence identical to the wrapper across the next relink.
+            parent_elem->items[i] = node->is_element()
+                ? Item{.element = dom_element_to_element(node->as_element())}
+                : Item{.item = s2it(node->as_text()->native_string.get())};
+        }
         if (node && !arraylist_append(relinked_nodes, node)) {
             log_error("mark_editor_dom_relink: failed to record child node");
             arraylist_free(old_nodes);
             arraylist_free(relinked_nodes);
-            return;
+            return false;
         }
     }
 
@@ -347,7 +368,7 @@ void MarkEditor::dom_relink_children(Element* parent_elem) {
             log_error("mark_editor_dom_relink: failed to preserve DOM-only child");
             arraylist_free(old_nodes);
             arraylist_free(relinked_nodes);
-            return;
+            return false;
         }
     }
 
@@ -357,6 +378,7 @@ void MarkEditor::dom_relink_children(Element* parent_elem) {
     for (int i = 0; i < arraylist_length(relinked_nodes); i++) {
         DomNode* node = (DomNode*)arraylist_get(relinked_nodes, i);
         if (node->parent && node->parent != parent) dom_unlink_from_sibling_chain(node);
+        if (node->detached_root_slot) dom_node_cancel_detached(parent->doc, node);
         node->parent = lam::up(parent);
         node->prev_sibling = lam::up(prev);
         node->next_sibling = nullptr;
@@ -370,6 +392,8 @@ void MarkEditor::dom_relink_children(Element* parent_elem) {
     }
     arraylist_free(old_nodes);
     arraylist_free(relinked_nodes);
+    assert(dom_child_links_valid(parent));
+    return true;
 }
 
 //==============================================================================
@@ -1344,11 +1368,19 @@ Item MarkEditor::publish_child_edit(Element* old_elmt, const Array* edited, bool
             target->data_cap = type->byte_size;
         }
     }
+    Array previous = *(Array*)target;
     target->items = edited->items;
     target->length = edited->length;
     target->capacity = edited->capacity;
     target->extra = edited->extra;
-    if (mode_ == EDIT_MODE_INLINE && ui_mode_ && relink) dom_relink_children(target);
+    if (mode_ == EDIT_MODE_INLINE && ui_mode_ && relink && !dom_relink_children(target)) {
+        // selection failed before committing any sibling links.
+        target->items = previous.items;
+        target->length = previous.length;
+        target->capacity = previous.capacity;
+        target->extra = previous.extra;
+        return ItemError;
+    }
     return {.element = target};
 }
 

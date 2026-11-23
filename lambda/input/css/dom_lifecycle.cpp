@@ -8,7 +8,7 @@
 #include "lib/time_util.h"
 #include "lib/mem_grow.hpp"
 #include "lib/memtrack.h"
-#include "lib/hashmap_helpers.h"
+#include "lib/hashmap_typed.hpp"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -22,28 +22,22 @@ int dom_node_ref_identity_compare(DomNodeRef left, DomNodeRef right) {
     return left.expected_id < right.expected_id ? -1 : left.expected_id > right.expected_id;
 }
 
-struct DomDetachedRoot;
+struct DomPinDiagnostic {
+    DomNodeRef ref;
+    DomNodePinReason reason;
+    uint32_t count;
+    DomPinDiagnostic* next;
+};
 
-typedef struct DomNodeRecord {
-    DomNode* address;
-    Arena* primary_arena;
-    uint32_t id;
-    DomNodeLifeState state;
-    bool recyclable;
-    bool current_owner;
-    bool retiring : 1;
-    bool preparing_adoption : 1;
-    uint32_t pins[DOM_NODE_PIN_REASON_COUNT];
-    DomDetachedRoot* candidate;
-    struct DomNodeRecord* bucket_next;
-    struct DomNodeRecord* all_next;
-    struct DomNodeRecord* all_prev;
-    struct DomNodeRecord* retire_next;
-} DomNodeRecord;
+struct DomRecycleWork {
+    DomRecycleWork* next;
+    Arena* arena;
+    size_t size;
+};
 
 // only roots awaiting disposal own pending work. Children are reached structurally.
 struct DomDetachedRoot {
-    DomNodeRecord* record;
+    DomNode* node;
     size_t stranded_bytes;
     DomDetachedRoot* next;
     DomDetachedRoot* prev;
@@ -63,17 +57,20 @@ struct DomManagedBacking {
 
 typedef struct DomNodeRegistry {
     DomManagedBacking* managed_roots;
-    DomNodeRecord** buckets;
-    size_t bucket_count;
-    size_t record_count;
-    DomNodeRecord* all_records;
-    // Detached candidates only: scheduling a detach compares against these, and
-    // scanning every record per replaced node made reactive redraws quadratic.
+    DomPinDiagnostic* pin_diagnostics;
+    struct DomNodeRegistry* next_observed;
+    DomNode** roots; // unpublished and detached ownership roots
+    size_t root_count, root_capacity;
+    DomNode* inline_roots[8];
+    uint32_t lifetime_stamp;
+    DomNode* recent[32]; // bounded weak lookup cache, evicted before storage is released
+    DomNodeValidationScope* validation_scope;
+
     DomDetachedRoot* candidates;
     DomDetachedRoot* next_candidate; // cancellations may advance the active traversal
     bool collecting;
     DomDocument* document;
-    DomNodeRecord* pending_free;
+    DomRecycleWork* pending_free;
     struct DomNodeRegistry* queue_prev;
     struct DomNodeRegistry* queue_next;
     bool queued;
@@ -86,6 +83,28 @@ typedef struct DomNodeRegistry {
 static thread_local bool dom_retirement_deferred;
 static thread_local DomNodeRegistry* dom_retirement_queue;
 static thread_local DomNodeRegistry* dom_retirement_queue_tail;
+
+// Only explicitly observed documents join this diagnostic list. A releasing
+// handle may outlive its issuer, so its old document address is just a key.
+static thread_local DomNodeRegistry* dom_observed_documents;
+
+static DomNodeRegistry** dom_observer_slot(DomDocument* issuer) {
+    auto** slot = &dom_observed_documents;
+    while (*slot && (*slot)->document != issuer) slot = &(*slot)->next_observed;
+    return slot;
+}
+
+// A stamp proves that no node has lost its address since a live reference was
+// minted. On exhaustion every subsequent document uses structural validation.
+static uint32_t dom_next_lifetime_stamp() {
+    static uint32_t sequence;
+    uint32_t last = __atomic_load_n(&sequence, __ATOMIC_RELAXED);
+    while (last != UINT32_MAX) {
+        if (__atomic_compare_exchange_n(&sequence, &last, last + 1, false,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return last + 1;
+    }
+    return 0;
+}
 
 static void dom_retire_dequeue(DomNodeRegistry* registry) {
     if (!registry || !registry->queued) return;
@@ -141,37 +160,158 @@ static DomNodeRegistry* dom_registry(DomDocument* doc) {
     return doc ? (DomNodeRegistry*)doc->services.node_registry : nullptr;
 }
 
-static size_t dom_node_bucket(DomNodeRegistry* registry, DomNode* address) {
+static DomNode*& dom_cached_address(DomNodeRegistry* registry, DomNode* address) {
     uintptr_t value = (uintptr_t)address;
-    value ^= value >> 17u;
-    value *= (uintptr_t)0xed5ad4bbu;
-    value ^= value >> 11u;
-    return (size_t)(value & (registry->bucket_count - 1u));
+    return registry->recent[((value >> 4) ^ (value >> 10)) % 32];
 }
 
-static DomNodeRecord* dom_record_find(DomNodeRegistry* registry, DomNode* address) {
-    if (!registry || !registry->buckets || !address) return nullptr;
-    size_t bucket = dom_node_bucket(registry, address);
-    for (DomNodeRecord* record = registry->buckets[bucket]; record;
-         record = record->bucket_next) {
-        if (record->address == address) return record;
+static void dom_forget_address(DomNodeRegistry* registry, DomNode* node) {
+    DomNode*& cached = dom_cached_address(registry, node);
+    if (cached == node) cached = nullptr;
+}
+
+static bool dom_reserve_roots(DomNodeRegistry* registry, size_t count) {
+    if (count <= registry->root_capacity) return true;
+    // inline storage belongs to the service and must never be passed to pool_free.
+    DomNode** roots = registry->roots == registry->inline_roots ? nullptr : registry->roots;
+    size_t capacity = roots ? registry->root_capacity : 0;
+    if (!lam::pool_grow_array(registry->document->document_pool, &roots, &capacity, count, 16))
+        return false;
+    if (registry->roots == registry->inline_roots)
+        memcpy(roots, registry->inline_roots, registry->root_count * sizeof(*roots));
+    registry->roots = roots;
+    registry->root_capacity = capacity;
+    return true;
+}
+
+static bool dom_own_root(DomNodeRegistry* registry, DomNode* node) {
+    if (node->detached_root_slot) return true;
+    if (registry->root_count == UINT32_MAX || !dom_reserve_roots(registry, registry->root_count + 1)) return false;
+    registry->roots[registry->root_count++] = node;
+    node->detached_root_slot = (uint32_t)registry->root_count;
+    return true;
+}
+
+void dom_node_own_unlinked(DomNode* node) {
+    if (node->lifecycle_live && !dom_own_root(dom_registry(node->doc), node))
+        dom_lifecycle_fail("own-unlinked-root", dom_node_ref(node), DOM_NODE_PIN_EXTERNAL);
+}
+
+static void dom_disown_root(DomNodeRegistry* registry, DomNode* node) {
+    if (!node->detached_root_slot) return;
+    size_t index = node->detached_root_slot - 1;
+    DomNode* last = registry->roots[--registry->root_count];
+    registry->roots[index] = last;
+    last->detached_root_slot = node->detached_root_slot;
+    node->detached_root_slot = 0;
+    if (registry->roots != registry->inline_roots && registry->root_count <= 8) {
+        memcpy(registry->inline_roots, registry->roots, registry->root_count * sizeof(last));
+        pool_free(registry->document->document_pool, registry->roots);
+        registry->roots = registry->inline_roots;
+        registry->root_capacity = 8;
     }
+}
+
+// Attribute and shadow ownership edges are independent of the DOM child chain.
+template <typename Inspect>
+static bool dom_visit_owned_tree(DomNode* root, const Inspect& inspect) {
+    if (inspect(root)) return true;
+    DomElement* element = root->as_element();
+    if (!element) return false;
+    if (element->rare_ext) {
+        for (DomAttr* attr = element->rare_ext->attribute_nodes; attr; attr = attr->attribute_next)
+            if (inspect(attr)) return true;
+        DomElement* shadow = element->shadow_root_element();
+        if (shadow && dom_visit_owned_tree(shadow, inspect)) return true;
+    }
+    for (DomNode* child = element->first_child; child; child = child->next_sibling)
+        if (dom_visit_owned_tree(child, inspect)) return true;
+    return false;
+}
+
+template <typename Inspect>
+static bool dom_visit_owned_nodes(DomNodeRegistry* registry, const Inspect& inspect) {
+    DomNode* published = registry->document->root;
+    if (published && dom_visit_owned_tree(published, inspect)) return true;
+    for (size_t i = registry->root_count; i; --i) {
+        DomNode* root = registry->roots[i - 1];
+        if (root != published && dom_visit_owned_tree(root, inspect)) return true;
+    }
+    return false;
+}
+
+static bool dom_probe_owned_address(DomNodeRegistry* registry, DomNode* node) {
+    // compare a weak address only against known live storage before reading it.
+    bool found = dom_visit_owned_nodes(registry, [node](DomNode* member) { return member == node; });
+    return found && node->lifecycle_live && node->doc == registry->document;
+}
+
+bool dom_node_registry_owns(DomDocument* doc, DomNode* node) {
+    auto* registry = dom_registry(doc);
+    if (!registry || !node || registry->destroying) return false;
+    DomNode*& cached = dom_cached_address(registry, node);
+    if (cached == node) return true;
+    bool found = registry->validation_scope ? registry->validation_scope->owns_address(node)
+                                            : dom_probe_owned_address(registry, node);
+    if (found) cached = node;
+    return found;
+}
+
+struct DomValidationAddress { DomNode* node; };
+using DomValidationSet = TypedHashMap<DomValidationAddress,
+    HashMapPointerMemberKeyOps<DomValidationAddress, &DomValidationAddress::node>>;
+
+DomNodeValidationScope::DomNodeValidationScope(DomDocument* doc) {
+    if (auto* registry = dom_registry(doc); registry && !registry->validation_scope) {
+        registry->validation_scope = this;
+        document = doc;
+    }
+}
+
+DomNodeValidationScope::~DomNodeValidationScope() {
+    if (auto* registry = dom_registry(document)) registry->validation_scope = nullptr;
+    DomValidationSet::destroy(addresses);
+}
+
+bool DomNodeValidationScope::owns_address(DomNode* address) {
+    auto* registry = dom_registry(document);
+    // a retirement or transfer in progress cannot lend a stable snapshot.
+    if (!registry->lifetime_stamp) return dom_probe_owned_address(registry, address);
+
+    if (stamp != registry->lifetime_stamp || registrations != registry->stats.registered_nodes) {
+        // the first cold check needs only one walk. Further checks share a snapshot.
+        DomValidationSet::destroy(addresses);
+        addresses = nullptr;
+        indexed = false;
+        stamp = registry->lifetime_stamp;
+        registrations = registry->stats.registered_nodes;
+        return dom_probe_owned_address(registry, address);
+    }
+    if (!indexed) {
+        indexed = true;
+        addresses = DomValidationSet::create(0);
+        if (addresses && dom_visit_owned_nodes(registry, [this](DomNode* node) {
+            if (node->lifecycle_live && node->doc == document) DomValidationSet::set(addresses, {node});
+            return DomValidationSet::oom(addresses);
+        })) {
+            DomValidationSet::destroy(addresses);
+            addresses = nullptr;
+        }
+    }
+    return addresses ? DomValidationSet::get(addresses, {address}) != nullptr
+                     : dom_probe_owned_address(registry, address);
+}
+
+static DomDetachedRoot* dom_find_candidate(DomNodeRegistry* registry, DomNode* node) {
+    if (!(node->node_flags & DOM_NODE_FLAG_DETACHED_CANDIDATE)) return nullptr;
+    for (auto* work = registry->candidates; work; work = work->next)
+        if (work->node == node) return work;
     return nullptr;
 }
 
-static void dom_record_begin_candidacy(DomNodeRegistry* registry, DomNodeRecord* record) {
-    auto* work = (DomDetachedRoot*)pool_calloc(registry->document->document_pool, sizeof(DomDetachedRoot));
-    if (!work) dom_lifecycle_fail("allocate-detached-root", dom_node_ref(record->address), DOM_NODE_PIN_EXTERNAL);
-    work->record = record;
-    work->next = registry->candidates;
-    if (work->next) work->next->prev = work;
-    registry->candidates = work;
-    record->candidate = work;
-}
-
-static void dom_record_end_candidacy(DomNodeRegistry* registry, DomNodeRecord* record) {
-    DomDetachedRoot* work = record->candidate;
+static void dom_end_candidacy(DomNodeRegistry* registry, DomDetachedRoot* work) {
     if (!work) return;
+    work->node->node_flags &= ~DOM_NODE_FLAG_DETACHED_CANDIDATE;
     if (registry->next_candidate == work) registry->next_candidate = work->next;
     if (work->prev) work->prev->next = work->next;
     else registry->candidates = work->next;
@@ -179,7 +319,6 @@ static void dom_record_end_candidacy(DomNodeRegistry* registry, DomNodeRecord* r
     registry->stats.wrapper_stranded_bytes -= work->stranded_bytes;
     if (registry->stranded_after_collection > registry->stats.wrapper_stranded_bytes)
         registry->stranded_after_collection = registry->stats.wrapper_stranded_bytes;
-    record->candidate = nullptr;
     pool_free(registry->document->document_pool, work);
 }
 
@@ -198,25 +337,7 @@ static Arena* dom_node_primary_arena(DomDocument* doc, DomNode* node) {
     return nullptr;
 }
 
-static bool dom_registry_resize(DomDocument* doc, size_t bucket_count) {
-    DomNodeRegistry* registry = dom_registry(doc);
-    if (!registry || !doc->document_pool || bucket_count < 64) return false;
-    DomNodeRecord** buckets = (DomNodeRecord**)pool_calloc(
-        doc->document_pool, bucket_count * sizeof(DomNodeRecord*));
-    if (!buckets) return false;
-    DomNodeRecord** old_buckets = registry->buckets;
-    size_t old_count = registry->bucket_count;
-    registry->buckets = buckets;
-    registry->bucket_count = bucket_count;
-    for (DomNodeRecord* record = registry->all_records; record;
-         record = record->all_next) {
-        size_t bucket = dom_node_bucket(registry, record->address);
-        record->bucket_next = buckets[bucket];
-        buckets[bucket] = record;
-    }
-    if (old_buckets && old_count) pool_free(doc->document_pool, old_buckets);
-    return true;
-}
+
 
 bool dom_lifecycle_init(DomDocument* doc) {
     if (!doc || !doc->document_pool) return false;
@@ -225,12 +346,11 @@ bool dom_lifecycle_init(DomDocument* doc) {
         doc->document_pool, sizeof(DomNodeRegistry));
     if (!registry) return false;
     registry->document = doc;
+    registry->lifetime_stamp = dom_next_lifetime_stamp();
     doc->services.node_registry = registry;
-    if (!dom_registry_resize(doc, 256)) {
-        doc->services.node_registry = nullptr;
-        pool_free(doc->document_pool, registry);
-        return false;
-    }
+    registry->roots = registry->inline_roots;
+    registry->root_capacity = 8;
+
     return true;
 }
 
@@ -318,10 +438,13 @@ void dom_lifecycle_destroy(DomDocument* doc) {
     dom_retire_begin_destroy(doc);
     dom_lifecycle_release_backing_roots(doc);
     DomNodeRegistry* registry = dom_registry(doc);
-    if (registry) dom_retire_dequeue(registry);
-    // Registry records are document-pool allocations and disappear in the
-    // immediately following pool destruction; clearing the owner blocks any
-    // teardown callback from validating already-destroyed arena storage.
+    if (registry) {
+        dom_retire_dequeue(registry);
+        if (registry->validation_scope) registry->validation_scope->document = nullptr;
+    }
+    auto** observed = dom_observer_slot(doc);
+    if (*observed) *observed = (*observed)->next_observed;
+    // the pool owns remaining detached roots and document-scoped work.
     doc->services.node_registry = nullptr;
 }
 
@@ -340,134 +463,59 @@ static size_t dom_node_allocation_size(const DomNode* node) {
     }
 }
 
-static void dom_publish_record(DomNodeRegistry* registry, DomNodeRecord* record) {
-    size_t bucket = dom_node_bucket(registry, record->address);
-    record->bucket_next = registry->buckets[bucket];
-    registry->buckets[bucket] = record;
-    record->all_next = registry->all_records;
-    if (record->all_next) record->all_next->all_prev = record;
-    registry->all_records = record;
-    registry->record_count++;
-    registry->stats.registered_nodes++;
-}
-
-static DomNodeRecord* dom_reserve_record(DomDocument* doc, size_t unpublished) {
-    DomNodeRegistry* registry = dom_registry(doc);
-    if ((registry->record_count + unpublished + 1u) * 4u > registry->bucket_count * 3u &&
-        !dom_registry_resize(doc, registry->bucket_count * 2u)) return nullptr;
-    return (DomNodeRecord*)pool_calloc(doc->document_pool, sizeof(DomNodeRecord));
-}
-
-static bool dom_node_registry_register_owned(DomDocument* doc, DomNode* node,
-        Arena* primary_arena, uint32_t id,
-        size_t primary_size, bool recyclable) {
-    DomNodeRegistry* registry = dom_registry(doc);
-    if (!registry || !node || !id || !primary_size || primary_size != dom_node_allocation_size(node)) return false;
-    if (recyclable && !primary_arena) {
-        log_error("DOM_LIFECYCLE_INVARIANT: recyclable node %p has no owning arena",
-                  (void*)node);
-        return false;
-    }
-    DomNodeRecord* record = dom_record_find(registry, node);
-    if (record) {
-        if (record->state != DOM_NODE_RETIRED) {
-            if (record->current_owner && record->id == id) return true;
-            dom_lifecycle_fail("duplicate-live-register", dom_node_ref(node),
-                               DOM_NODE_PIN_EXTERNAL);
-            return false;
-        }
-        memset(record->pins, 0, sizeof(record->pins));
-        record->id = id;
-        record->primary_arena = primary_arena;
-        record->state = DOM_NODE_LIVE;
-        record->recyclable = recyclable;
-        dom_record_end_candidacy(registry, record);
-        record->current_owner = true;
-        registry->stats.reused_addresses++;
-        registry->stats.registered_nodes++;
-        return true;
-    }
-
-    record = dom_reserve_record(doc, 0);
-    if (!record) return false;
-    record->address = node;
-    record->primary_arena = primary_arena;
-    record->id = id;
-    record->state = DOM_NODE_LIVE;
-    record->recyclable = recyclable;
-    record->current_owner = true;
-    dom_publish_record(registry, record);
-    return true;
-}
-
 bool dom_node_registry_register(DomDocument* doc, DomNode* node,
                                 size_t primary_size, bool recyclable) {
-    Arena* primary_arena = dom_node_primary_arena(doc, node);
-    if (!node || !dom_node_registry_register_owned(doc, node, primary_arena, node->id,
-                                                   primary_size, recyclable)) return false;
+    auto* registry = dom_registry(doc);
+    if (!registry || !node || !node->id || !primary_size ||
+        primary_size != dom_node_allocation_size(node)) return false;
+    if (node->lifecycle_live) return node->doc == doc;
+    Arena* arena = recyclable ? dom_node_primary_arena(doc, node) : nullptr;
+    if ((recyclable && !arena) || !dom_own_root(registry, node)) return false;
+    node->recycling_arena = arena;
     node->doc = lam::up(doc);
+    node->lifecycle_live = true;
+    dom_cached_address(registry, node) = node;
+    ++registry->stats.registered_nodes;
     return true;
-}
-
-static void dom_record_unlink_free(DomNodeRegistry* registry, DomNodeRecord* record);
-
-static bool dom_record_has_pins(const DomNodeRecord* record) {
-    for (uint32_t count : record->pins) {
-        if (count) return true;
-    }
-    return false;
 }
 
 struct DomAdoptionStep {
-    DomNodeRecord* old_record;
-    DomNodeRecord* new_record;
+    DomNode* node;
     uint32_t id;
-    bool unpublished;
 };
 
 static bool dom_prepare_adoption_step(DomDocument* source, DomDocument* destination,
-        DomNode* node, uint32_t id, size_t unpublished, DomAdoptionStep* step) {
-    if (!source || !dom_registry(destination) || source == destination || !node || !id) return false;
-    auto* old = dom_record_find(dom_registry(source), node);
-    if (!old || !old->current_owner || old->preparing_adoption ||
-        old->state == DOM_NODE_RETIRED || old->id != node->id)
-        return false;
-    auto* next = dom_record_find(dom_registry(destination), node);
-    if (next && (next->current_owner || next->state == DOM_NODE_RETIRED)) return false;
+        DomNode* node, uint32_t id, DomAdoptionStep* step) {
+    if (!source || !dom_registry(destination) || source == destination || !node || !id ||
+        !node->lifecycle_live || node->doc != source || node->preparing_adoption) return false;
     if (node->is_element() && !node->as_element()->preserve_storage_owner()) return false;
     if (node->external_retain_count && !dom_wrapper_adopt_document(source, destination, node, false)) return false;
     if (!dom_slot_prepare_adoption(source, destination, node)) return false;
-    bool fresh = !next;
-    if (fresh) next = dom_reserve_record(destination, unpublished);
-    if (!next) {
-        dom_slot_finish_adoption(source, destination, node, false);
-        return false;
-    }
-    // an old-document lease keeps its original generation when the node returns.
-    old->preparing_adoption = true;
-    *step = {old, next, !fresh && dom_record_has_pins(next) ? next->id : id, fresh};
+    node->preparing_adoption = true;
+    *step = {node, id};
     return true;
 }
 
 static void dom_finish_adoption_step(DomDocument* source, DomDocument* destination,
         DomAdoptionStep step, bool commit) {
-    auto* source_record = step.old_record;
-    auto* destination_record = step.new_record;
-    DomNode* node = source_record->address;
-    source_record->preparing_adoption = false;
+    DomNode* node = step.node;
+    node->preparing_adoption = false;
     if (!commit) {
         dom_slot_finish_adoption(source, destination, node, false);
-        if (step.unpublished) pool_free(destination->document_pool, destination_record);
         return;
     }
+    auto* from = dom_registry(source);
+    auto* to = dom_registry(destination);
     dom_node_refresh_managed_backing(source, node);
-    destination_record->address = node;
-    destination_record->id = step.id;
-    destination_record->primary_arena = source_record->primary_arena;
-    destination_record->state = DOM_NODE_LIVE;
-    destination_record->recyclable = source_record->recyclable;
-    destination_record->current_owner = true;
-    if (step.unpublished) dom_publish_record(dom_registry(destination), destination_record);
+    dom_forget_address(from, node);
+    dom_end_candidacy(from, dom_find_candidate(from, node));
+    dom_disown_root(from, node);
+    if (source->root == node) {
+        source->root = nullptr;
+        source->html_root = nullptr;
+    }
+    ++to->stats.registered_nodes;
+
     if (node->node_flags & DOM_NODE_FLAG_GC_BACKING) {
         // keep the slot address and the registering heap stable across adoption.
         DomManagedBacking** slot = dom_managed_backing_slot(source, node);
@@ -476,25 +524,25 @@ static void dom_finish_adoption_step(DomDocument* source, DomDocument* destinati
         root->next = dom_registry(destination)->managed_roots;
         dom_registry(destination)->managed_roots = root;
     }
-    // The source registry may still own wrapper/expando pins that must unpin
-    // normally, but its detached candidate must never recycle adopted storage.
-    dom_record_end_candidacy(dom_registry(source), source_record);
-    source_record->state = DOM_NODE_LIVE;
-    source_record->current_owner = false;
     node->id = step.id;
     node->doc = lam::up(destination);
+    dom_cached_address(to, node) = node;
+
     if (node->external_retain_count) dom_wrapper_adopt_document(source, destination, node, true);
     if (node->is_element() && node->as_element()->form_storage()) form_control_adopt_document(node->as_element());
     dom_slot_finish_adoption(source, destination, node, true);
-    if (!dom_record_has_pins(source_record)) dom_record_unlink_free(dom_registry(source), source_record);
 }
 
 bool dom_node_registry_transfer(DomDocument* source, DomDocument* destination,
         DomNode* node, uint32_t* destination_id) {
     DomAdoptionStep step;
-    if (!destination_id ||
-        !dom_prepare_adoption_step(source, destination, node, *destination_id, 0, &step)) return false;
+    if (!destination_id || !dom_registry(destination) ||
+        !dom_reserve_roots(dom_registry(destination), dom_registry(destination)->root_count + 1) ||
+        !dom_prepare_adoption_step(source, destination, node, *destination_id, &step)) return false;
+    dom_registry(source)->lifetime_stamp = 0;
     dom_finish_adoption_step(source, destination, step, true);
+    dom_registry(source)->lifetime_stamp = dom_next_lifetime_stamp();
+    dom_own_root(dom_registry(destination), node);
     *destination_id = step.id;
     return true;
 }
@@ -503,7 +551,7 @@ struct DomAdoptionBatch {
     DomDocument* source;
     DomDocument* destination;
     DomAdoptionStep* steps;
-    size_t count, capacity, unpublished;
+    size_t count, capacity;
 };
 
 static bool dom_prepare_adoption_subtree(DomAdoptionBatch* batch, DomNode* node) {
@@ -511,9 +559,8 @@ static bool dom_prepare_adoption_subtree(DomAdoptionBatch* batch, DomNode* node)
             &batch->capacity, batch->count + 1, 16)) return false;
     DomAdoptionStep& step = batch->steps[batch->count];
     if (!dom_prepare_adoption_step(batch->source, batch->destination, node,
-        dom_document_alloc_node_id(batch->destination), batch->unpublished, &step)) return false;
+        dom_document_alloc_node_id(batch->destination), &step)) return false;
     ++batch->count;
-    batch->unpublished += step.unpublished;
     DomElement* element = node->as_element();
     if (!element) return true;
     for (DomAttr* attr = element->rare_ext ? element->rare_ext->attribute_nodes.get() : nullptr;
@@ -528,16 +575,20 @@ static bool dom_prepare_adoption_subtree(DomAdoptionBatch* batch, DomNode* node)
 bool dom_adopt_detached_subtree(DomDocument* source, DomDocument* destination, DomNode* node) {
     if (!source || !destination || !node || node->parent || !dom_registry(destination)) return false;
     DomAdoptionBatch batch = {source, destination};
-    bool prepared = dom_prepare_adoption_subtree(&batch, node);
+    bool prepared = dom_reserve_roots(dom_registry(destination), dom_registry(destination)->root_count + 1) &&
+        dom_prepare_adoption_subtree(&batch, node);
+    if (prepared) dom_registry(source)->lifetime_stamp = 0;
     for (size_t i = 0; i < batch.count; ++i) {
-        DomNode* member = batch.steps[i].old_record->address;
+        DomNode* member = batch.steps[i].node;
         dom_finish_adoption_step(source, destination, batch.steps[i], prepared);
         if (prepared) member->view_state_ref = nullptr;
     }
     if (prepared) {
+        dom_registry(source)->lifetime_stamp = dom_next_lifetime_stamp();
+        dom_own_root(dom_registry(destination), node);
         // owner callbacks can inspect other members; publish the complete closure first.
         for (size_t i = 0; i < batch.count; ++i) {
-            DomNode* member = batch.steps[i].new_record->address;
+            DomNode* member = batch.steps[i].node;
             if (DomAttr* attr = member->as_attribute()) {
                 if (attr->owner_changed) attr->owner_changed(attr);
             } else if (member->is_element() && member->as_element()->shadow_root_element()) {
@@ -604,27 +655,34 @@ void dom_node_refresh_managed_backing(DomDocument* doc, DomNode* node) {
 }
 
 DomNodeRef dom_node_ref(DomNode* node) {
-    DomNodeRef ref = {node, node ? node->id : 0};
+    DomNodeRef ref = {node, node ? node->id : 0, 0};
+    if (node && node->lifecycle_live) {
+        if (auto* registry = dom_registry(node->doc)) {
+            ref.lifetime_stamp = registry->lifetime_stamp;
+            dom_cached_address(registry, node) = node;
+        }
+    }
     return ref;
 }
 
-DomNode* dom_node_ref_validate(DomDocument* doc, DomNodeRef ref) {
-    DomNodeRegistry* registry = dom_registry(doc);
+static DomNode* dom_validate_weak_ref(DomNodeRegistry* registry, DomNodeRef ref) {
     if (!registry || !ref.address || !ref.expected_id) return nullptr;
-    // Lookup is address-only and intentionally does not read the target bytes;
-    // an arena slot may already contain a different node generation.
-    DomNodeRecord* record = dom_record_find(registry, ref.address);
-    if (!record || record->state == DOM_NODE_RETIRED || record->id != ref.expected_id) {
-        registry->stats.stale_ref_rejections++;
-        return nullptr;
-    }
-    return ref.address;
+    bool accessible = ref.lifetime_stamp && ref.lifetime_stamp == registry->lifetime_stamp;
+    if ((accessible || dom_node_registry_owns(registry->document, ref.address)) && ref.address->id == ref.expected_id)
+        return ref.address;
+    ++registry->stats.stale_ref_rejections;
+    return nullptr;
 }
 
-bool dom_node_registry_owns(DomDocument* doc, DomNode* node) {
-    DomNodeRecord* record = dom_record_find(dom_registry(doc), node);
-    return record && record->current_owner && record->state != DOM_NODE_RETIRED &&
-        record->id == node->id;
+DomNode* dom_node_ref_validate(DomDocument* doc, DomNodeRef ref) {
+    return dom_validate_weak_ref(dom_registry(doc), ref);
+}
+
+DomNode* dom_node_ref_refresh(DomDocument* doc, DomNodeRef& ref) {
+    DomNodeRegistry* registry = dom_registry(doc);
+    DomNode* node = dom_validate_weak_ref(registry, ref);
+    if (node && ref.lifetime_stamp != registry->lifetime_stamp) ref.lifetime_stamp = registry->lifetime_stamp;
+    return node;
 }
 
 // callers already own a live reference when transferring a hold (D5.5.1).
@@ -649,40 +707,70 @@ void dom_node_release_live(DomNode* node) {
     }
 }
 
+// Verification is explicitly enabled by test fixtures before they acquire handles.
+void dom_observe_native_pins(DomDocument* doc) {
+    auto* registry = dom_registry(doc);
+    if (!registry || *dom_observer_slot(doc)) return;
+    registry->next_observed = dom_observed_documents;
+    dom_observed_documents = registry;
+}
+
+static DomPinDiagnostic** dom_pin_diagnostic_slot(DomNodeRegistry* registry,
+        DomNodeRef ref, DomNodePinReason reason) {
+    auto** slot = &registry->pin_diagnostics;
+    while (*slot && ((*slot)->ref.address != ref.address ||
+           (*slot)->ref.expected_id != ref.expected_id || (*slot)->reason != reason))
+        slot = &(*slot)->next;
+    return slot;
+}
+
+static void dom_observe_pin_change(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason, bool acquire) {
+    auto* registry = *dom_observer_slot(doc);
+    if (!registry) return;
+    auto** slot = dom_pin_diagnostic_slot(registry, ref, reason);
+    if (acquire) {
+        if (!*slot) {
+            *slot = (DomPinDiagnostic*)pool_alloc(doc->document_pool, sizeof(DomPinDiagnostic));
+            if (!*slot) dom_lifecycle_fail("allocate-pin-diagnostic", ref, reason);
+            **slot = {ref, reason, 0, nullptr};
+        }
+        ++(*slot)->count;
+    } else if (*slot && !--(*slot)->count) {
+        auto* entry = *slot;
+        *slot = entry->next;
+        pool_free(doc->document_pool, entry);
+    }
+}
+
+uint32_t dom_node_pin_count(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason) {
+    auto* registry = *dom_observer_slot(doc);
+    if (!registry) return 0;
+    auto* entry = *dom_pin_diagnostic_slot(registry, ref, reason);
+    return entry ? entry->count : 0;
+}
+
 bool dom_node_pin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason) {
     DomNodeRegistry* registry = dom_registry(doc);
     if (!registry || reason >= DOM_NODE_PIN_REASON_COUNT) return false;
-    DomNodeRecord* record = dom_record_find(registry, ref.address);
-    if (!record || record->state == DOM_NODE_RETIRED || record->id != ref.expected_id) {
-        dom_lifecycle_fail("pin-stale", ref, reason);
-        return false;
-    }
-    dom_node_retain_live(ref.address);
-    record->pins[reason]++;
+    if (!dom_node_ref_validate(doc, ref)) dom_lifecycle_fail("pin-stale", ref, reason);
+    DomNode* node = ref.address;
+    dom_node_retain_live(node);
+    if (reason == DOM_NODE_PIN_WRAPPER) ++node->wrapper_pin_count;
+    dom_observe_pin_change(doc, ref, reason, true);
     return true;
 }
 
 bool dom_node_unpin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason) {
-    DomNodeRegistry* registry = dom_registry(doc);
-    if (!registry || reason >= DOM_NODE_PIN_REASON_COUNT) return false;
-    DomNodeRecord* record = dom_record_find(registry, ref.address);
-    if (!record || record->state == DOM_NODE_RETIRED || record->id != ref.expected_id ||
-        record->pins[reason] == 0) {
-        dom_lifecycle_fail("unpin-stale-or-underflow", ref, reason);
-        return false;
+    if (!ref.address || reason >= DOM_NODE_PIN_REASON_COUNT) return false;
+    // the holder guarantees addressability until this release, including during teardown.
+    DomNode* node = ref.address;
+    if (reason == DOM_NODE_PIN_WRAPPER) {
+        if (!node->wrapper_pin_count) dom_lifecycle_fail("wrapper-underflow", ref, reason);
+        --node->wrapper_pin_count;
     }
-    dom_node_release_live(ref.address);
-    record->pins[reason]--;
-    if (!record->current_owner && !dom_record_has_pins(record)) dom_record_unlink_free(registry, record);
+    dom_observe_pin_change(doc, ref, reason, false);
+    dom_node_release_live(node);
     return true;
-}
-
-uint32_t dom_node_pin_count(DomDocument* doc, DomNodeRef ref,
-                            DomNodePinReason reason) {
-    DomNodeRegistry* registry = dom_registry(doc);
-    if (!registry || reason >= DOM_NODE_PIN_REASON_COUNT) return 0;
-    DomNodeRecord* record = dom_record_find(registry, ref.address);
-    return record && record->id == ref.expected_id ? record->pins[reason] : 0;
 }
 
 static DomNode* dom_retirement_parent(DomNode* node) {
@@ -699,29 +787,29 @@ static bool dom_node_is_within(DomNode* node, DomNode* ancestor) {
 void dom_node_schedule_detached(DomDocument* doc, DomNode* root) {
     DomNodeRegistry* registry = dom_registry(doc);
     if (!registry || !root || root == (DomNode*)doc->root) return;
-    DomNodeRecord* record = dom_record_find(registry, root);
-    if (!record || !record->current_owner || record->id != root->id ||
-        record->state == DOM_NODE_RETIRED) return;
-    // a root inside an already detached candidate is covered by that candidate;
-    // otherwise this root subsumes the candidates nested inside it.
-    for (auto* work = registry->candidates; work; work = work->next) {
-        DomNodeRecord* other = work->record;
-        if (other != record && dom_node_is_within(root, other->address)) return;
-    }
+    if (!root->lifecycle_live || root->doc != doc) return;
+    if (!dom_retirement_parent(root) && !dom_own_root(registry, root))
+        dom_lifecycle_fail("detached-root", dom_node_ref(root), DOM_NODE_PIN_EXTERNAL);
+    for (auto* work = registry->candidates; work; work = work->next)
+        if (work->node != root && dom_node_is_within(root, work->node)) return;
+    bool scheduled = false;
     for (auto* work = registry->candidates; work;) {
-        DomNodeRecord* other = work->record;
-        DomDetachedRoot* next = work->next;
-        if (other != record && dom_node_is_within(other->address, root)) {
-            dom_record_end_candidacy(registry, other);
-            other->state = DOM_NODE_LIVE;
-        }
+        auto* next = work->next;
+        if (root == work->node) scheduled = true;
+        else if (dom_node_is_within(work->node, root)) dom_end_candidacy(registry, work);
         work = next;
     }
-    if (!record->candidate) {
-        dom_record_begin_candidacy(registry, record);
-        record->state = DOM_NODE_DETACHED_CANDIDATE;
-        registry->stats.scheduled_candidates++;
+    if (!scheduled) {
+        auto* work = (DomDetachedRoot*)pool_calloc(doc->document_pool, sizeof(DomDetachedRoot));
+        if (!work) dom_lifecycle_fail("allocate-detached-root", dom_node_ref(root), DOM_NODE_PIN_EXTERNAL);
+        work->node = root;
+        root->node_flags |= DOM_NODE_FLAG_DETACHED_CANDIDATE;
+        work->next = registry->candidates;
+        if (work->next) work->next->prev = work;
+        registry->candidates = work;
+        ++registry->stats.scheduled_candidates;
     }
+
     // A detached table can retain anonymous layout boxes beyond the next view
     // pool reset; restore its authored child chain while those boxes are live.
     if (doc->view_tree) view_tree_prepare_detached_subtree(root);
@@ -733,14 +821,13 @@ void dom_node_schedule_detached(DomDocument* doc, DomNode* root) {
 void dom_node_cancel_detached(DomDocument* doc, DomNode* root) {
     DomNodeRegistry* registry = dom_registry(doc);
     if (!registry || !root) return;
-    DomNodeRecord* record = dom_record_find(registry, root);
-    if (!record || !record->current_owner || record->id != root->id ||
-        record->state == DOM_NODE_RETIRED) return;
-    if (record && record->candidate && record->id == root->id) {
-        dom_record_end_candidacy(registry, record);
-        record->state = DOM_NODE_LIVE;
-        registry->stats.cancelled_candidates++;
+    if (!root->lifecycle_live || root->doc != doc) return;
+    dom_disown_root(registry, root);
+    if (auto* work = dom_find_candidate(registry, root)) {
+        dom_end_candidacy(registry, work);
+        ++registry->stats.cancelled_candidates;
     }
+
     // Reinsertion calls this before linking the parent; the lifecycle decision
     // itself confirms that the subtree is becoming attached again.
     dom_expando_attachment_changed(doc, root, true);
@@ -754,16 +841,9 @@ static bool dom_subtree_can_retire(DomDocument* doc, DomNode* node,
     if (node && node->is_element() && node->as_element()->is_synthetic()) {
         return true;
     }
-    DomNodeRegistry* registry = dom_registry(doc);
-    DomNodeRecord* record = dom_record_find(registry, node);
-    // A retired descendant can remain in a detached parent's old sibling
-    // chain while the registry is the only safe source of its generation.
-    if (!record || record->state == DOM_NODE_RETIRED || !record->recyclable ||
-        record->id != node->id) {
-        return false;
-    }
-    // holds belong to the physical node, including holds issued before adoption.
-    uint32_t allowed = allow_wrappers ? record->pins[DOM_NODE_PIN_WRAPPER] : 0;
+    if (!node || node == doc->root || !node->lifecycle_live || node->doc != doc || !node->recycling_arena) return false;
+    uint32_t allowed = allow_wrappers ? node->wrapper_pin_count : 0;
+
     if (allow_wrappers && node->external_retain_count > allowed)
         allowed += dom_wrapper_hold_count(doc, node);
     if (node->external_retain_count != allowed) {
@@ -787,57 +867,22 @@ static bool dom_subtree_can_retire(DomDocument* doc, DomNode* node,
 
 // A rejected candidate held only by script wrappers waits on a collection;
 // charge it once per detachment so the host can pace idle-time collections.
-static void dom_record_note_stranded(DomDocument* doc, DomNodeRegistry* registry,
-                                     DomNodeRecord* record) {
-    if (record->candidate->stranded_bytes) return;
+static void dom_note_stranded(DomDocument* doc, DomNodeRegistry* registry, DomDetachedRoot* work) {
+    if (work->stranded_bytes) return;
     size_t bytes = 0;
-    if (!dom_subtree_can_retire(doc, record->address, true, &bytes)) return;
-    record->candidate->stranded_bytes = bytes;
+    if (!dom_subtree_can_retire(doc, work->node, true, &bytes)) return;
+    work->stranded_bytes = bytes;
     registry->stats.wrapper_stranded_bytes += bytes;
 }
 
-static DomNode* dom_retire_resolve_edge(DomNodeRegistry* registry, DomNode* node,
-                                       bool forward) {
-    DomNode* live = node;
-    while (live) {
-        DomNodeRecord* record = dom_record_find(registry, live);
-        if (!record || !record->retiring) break;
-        live = forward ? live->next_sibling : live->prev_sibling;
-    }
-    // Compress shared stale chains before any node storage is reclaimed.
-    while (node != live) {
-        // the two edges have different kinds (next owns, prev is a back link)
-        DomNode* next = forward ? node->next_sibling : node->prev_sibling;
-        if (forward) node->next_sibling = lam::own(live);
-        else node->prev_sibling = lam::up(live);
-        node = next;
-    }
-    return live;
-}
+static size_t dom_retire_subtree(DomDocument* doc, DomNode* node) {
 
-static void dom_retire_unlink_inbound_edges(DomNodeRegistry* registry) {
-    for (DomNodeRecord* record = registry->all_records; record;
-         record = record->all_next) {
-        registry->stats.retirement_edge_visits++;
-        if (!record->current_owner || record->state == DOM_NODE_RETIRED) continue;
-        DomNode* other = record->address;
-        other->next_sibling = lam::own(dom_retire_resolve_edge(registry, other->next_sibling, true));
-        other->prev_sibling = lam::up(dom_retire_resolve_edge(registry, other->prev_sibling, false));
-        if (other->is_element()) {
-            DomElement* element = other->as_element();
-            element->first_child = lam::own(dom_retire_resolve_edge(registry, element->first_child, true));
-            element->last_child = lam::up(dom_retire_resolve_edge(registry, element->last_child, false));
-        }
-    }
-}
-
-static size_t dom_retire_subtree(DomDocument* doc, DomNode* node,
-                                 DomNodeRecord** pending) {
     if (node && node->is_element() && node->as_element()->is_synthetic()) {
         return 0;
     }
     DomNodeRegistry* registry = dom_registry(doc);
-    DomNodeRecord* record = dom_record_find(registry, node);
+    size_t primary_size = dom_node_allocation_size(node);
+    Arena* arena = node->recycling_arena;
     // Only a fat node recycles its Lambda result identity. Ordinary DOM
     // wrappers borrow parser values that remain valid after wrapper retirement.
     Item result = ItemNull;
@@ -856,17 +901,18 @@ static size_t dom_retire_subtree(DomDocument* doc, DomNode* node,
             // the shadow root has an owning host edge even though its DOM parent is null.
             shadow->set_shadow_host_element(nullptr);
             element->set_shadow_root_element(nullptr);
-            retired += dom_retire_subtree(doc, shadow, pending);
+            retired += dom_retire_subtree(doc, shadow);
         }
         while (node->as_element()->rare_ext && node->as_element()->rare_ext->attribute_nodes) {
             DomAttr* attribute = node->as_element()->rare_ext->attribute_nodes;
             dom_attribute_node_detach(attribute);
-            retired += dom_retire_subtree(doc, attribute, pending);
+            retired += dom_retire_subtree(doc, attribute);
         }
         DomNode* child = node->as_element()->first_child;
         while (child) {
             DomNode* next = child->next_sibling;
-            retired += dom_retire_subtree(doc, child, pending);
+            dom_unlink_from_sibling_chain(child);
+            retired += dom_retire_subtree(doc, child);
             child = next;
         }
         dom_element_release_retired_storage(node->as_element());
@@ -876,14 +922,17 @@ static size_t dom_retire_subtree(DomDocument* doc, DomNode* node,
         dom_attribute_node_release_retired_storage(attribute);
     }
 
-    size_t primary_size = dom_node_allocation_size(node);
     if (node->node_flags & DOM_NODE_FLAG_GC_BACKING)
         dom_managed_backing_release(dom_managed_backing_slot(doc, node));
-    dom_record_end_candidacy(registry, record);
-    record->state = DOM_NODE_RETIRED;
-    record->retiring = true;
-    record->retire_next = *pending;
-    *pending = record;
+    dom_end_candidacy(registry, dom_find_candidate(registry, node));
+    dom_forget_address(registry, node);
+    dom_disown_root(registry, node);
+    node->lifecycle_live = false;
+    // retired storage holds its own recycle work until the next owner-thread idle slice.
+    auto* work = new (node) DomRecycleWork{registry->pending_free, arena, primary_size};
+    registry->pending_free = work;
+    registry->stats.pending_primary_bytes += primary_size;
+
     registry->stats.retired_nodes++;
     registry->stats.retired_primary_bytes += primary_size;
     return retired + 1u;
@@ -894,95 +943,53 @@ static size_t dom_retire_collect(DomDocument* doc) {
     if (!registry || !registry->candidates || registry->collecting || !doc->node_arena) return 0;
     registry->collecting = true;
     size_t retired = 0;
-    DomNodeRecord* pending = nullptr;
     registry->next_candidate = registry->candidates;
     while (registry->next_candidate) {
-        DomNodeRecord* record = registry->next_candidate->record;
-        registry->next_candidate = registry->next_candidate->next;
-        if (record->candidate && record->state == DOM_NODE_DETACHED_CANDIDATE) {
-            DomNode* root = record->address;
-            if (!dom_node_ref_validate(doc, {root, record->id})) {
-                dom_record_end_candidacy(registry, record);
-            } else if (root->is_element() && root->as_element()->is_synthetic()) {
-                // synthetic layout nodes are released by their view owner;
-                // lifecycle retirement must not recycle their DOM addresses.
-                dom_record_end_candidacy(registry, record);
-                record->state = DOM_NODE_LIVE;
-            } else if (dom_retirement_parent(root)) {
-                dom_record_end_candidacy(registry, record);
-                record->state = DOM_NODE_LIVE;
-                registry->stats.rejected_attached++;
-            } else {
-                // An embedded document pins its iframe host. Release that
-                // ownership edge before testing the detached subtree's pins,
-                // otherwise iframe removal forms a retention cycle.
+        auto* work = registry->next_candidate;
+        registry->next_candidate = work->next;
+        DomNode* root = work->node;
+        if ((root->is_element() && root->as_element()->is_synthetic()) || dom_retirement_parent(root)) {
+            dom_end_candidacy(registry, work);
+            ++registry->stats.rejected_attached;
+        } else {
+            // An embedded document pins its iframe host. Release that
+            // ownership edge before testing the detached subtree's pins,
+            // otherwise iframe removal forms a retention cycle.
+            if (doc->view_tree) {
+                view_tree_release_detached_embedded_documents(doc->view_tree, root);
+            }
+            if (dom_subtree_can_retire(doc, root)) {
+                // durable control/media state survives detachment, but must end before its weak node identity retires (D5.5.1).
+                view_state_detach_subtree(doc->state, root);
                 if (doc->view_tree) {
-                    view_tree_release_detached_embedded_documents(doc->view_tree, root);
-                }
-                if (dom_subtree_can_retire(doc, root)) {
-                    // durable control/media state survives detachment, but must end before its weak node identity retires (D5.5.1).
-                    view_state_detach_subtree(doc->state, root);
-                    if (doc->view_tree) {
-                        view_tree_release_retired_subtree(doc->view_tree, root);
-                    } else {
-                        // a script can allocate form props before the first view exists.
-                        view_pool_release_detached_form_props(root);
-                    }
-                    retired += dom_retire_subtree(doc, root, &pending);
+                    view_tree_release_retired_subtree(doc->view_tree, root);
                 } else {
-                    registry->stats.rejected_pinned++;
-                    dom_record_note_stranded(doc, registry, record);
+                    // a script can allocate form props before the first view exists.
+                    view_pool_release_detached_form_props(root);
                 }
+                registry->lifetime_stamp = 0;
+                retired += dom_retire_subtree(doc, root);
+            } else {
+                registry->stats.rejected_pinned++;
+                dom_note_stranded(doc, registry, work);
             }
         }
     }
-    if (pending) {
-        // MarkEditor can leave raw inbound edges outside a detached subtree.
-        // Repair all of them once per batch, while sibling chains remain live.
-        dom_retire_unlink_inbound_edges(registry);
-        while (pending) {
-            DomNodeRecord* record = pending;
-            pending = record->retire_next;
-            record->retire_next = nullptr;
-            record->retiring = false;
-            if (!registry->destroying) {
-                record->retire_next = registry->pending_free;
-                registry->pending_free = record;
-                registry->stats.pending_primary_bytes += dom_node_allocation_size(record->address);
-            }
-        }
-    }
+
+    if (retired) registry->lifetime_stamp = dom_next_lifetime_stamp();
     registry->collecting = false;
     return retired;
 }
 
-// Every lookup treats a missing record exactly like a retired one, so a
-// recycled slot's record only cost memory and lengthened each detach scan.
-static void dom_record_unlink_free(DomNodeRegistry* registry, DomNodeRecord* record) {
-    if (record->candidate) dom_record_end_candidacy(registry, record);
-    DomNodeRecord** edge = &registry->buckets[dom_node_bucket(registry, record->address)];
-    while (*edge && *edge != record) edge = &(*edge)->bucket_next;
-    if (*edge) *edge = record->bucket_next;
-    if (record->all_prev) record->all_prev->all_next = record->all_next;
-    else registry->all_records = record->all_next;
-    if (record->all_next) record->all_next->all_prev = record->all_prev;
-    registry->record_count--;
-    pool_free(registry->document->document_pool, record);
-}
-
 static void dom_retire_recycle_one(DomNodeRegistry* registry) {
-    DomNodeRecord* record = registry->pending_free;
-    registry->pending_free = record->retire_next;
-    record->retire_next = nullptr;
-    // Edges and generation refs are invalidated before a slot becomes reusable.
-    size_t size = dom_node_allocation_size(record->address);
-    memset(record->address, 0xdd, size);
-    // DOM nodes are the sanctioned arena reuse case: the slot is retained on
-    // its arena's retired list for later node allocations, never discarded.
-    arena_retire(record->primary_arena, record->address, size);
+    auto* work = registry->pending_free;
+    registry->pending_free = work->next;
+    Arena* arena = work->arena;
+    size_t size = work->size;
+    memset(work, 0xdd, size);
+    arena_retire(arena, work, size);
     registry->stats.pending_primary_bytes -= size;
-    registry->stats.recycled_nodes++;
-    dom_record_unlink_free(registry, record);
+    ++registry->stats.recycled_nodes;
 }
 
 size_t dom_retire_sweep(DomDocument* doc) {
@@ -1045,6 +1052,7 @@ void dom_retire_begin_destroy(DomDocument* doc) {
     if (!registry || registry->destroying) return;
     dom_retire_dequeue(registry);
     registry->destroying = true;
+    registry->lifetime_stamp = 0;
     // revoke JS handles before resource callbacks can free an adopted node's physical arena.
     dom_cssom_invalidate_document(doc);
     registry->sweep_requested = false;

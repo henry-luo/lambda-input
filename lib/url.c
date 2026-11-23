@@ -650,9 +650,45 @@ UrlError url_set_port(Url* url, const char* port) {
 
 UrlError url_set_pathname(Url* url, const char* pathname) {
     if (!url || !pathname) return URL_ERROR_INVALID_INPUT;
-    url_free_string(url->pathname);
-    url->pathname = url_create_string(pathname);
-    return url->pathname ? URL_OK : URL_ERROR_MEMORY_ALLOCATION;
+    bool special = url_scheme_is_special(url->scheme);
+    if (!special && !url_has_authority(url) &&
+            (!url->pathname || url->pathname->chars[0] != '/')) return URL_OK;
+
+    size_t length = strlen(pathname);
+    char* path = mem_alloc(length + 2, MEM_CAT_TEMP);
+    if (!path) return URL_ERROR_MEMORY_ALLOCATION;
+    size_t written = 0;
+    for (size_t i = 0; i < length; i++) {
+        char ch = pathname[i];
+        if (ch == '\t' || ch == '\r' || ch == '\n') continue;
+        path[written++] = special && ch == '\\' ? '/' : ch;
+    }
+    if (!written || path[0] != '/') {
+        memmove(path + 1, path, written);
+        path[0] = '/';
+        written++;
+    }
+    path[written] = '\0';
+    uint8_t keep[256];
+    for (size_t ch = 0; ch < sizeof(keep); ch++)
+        keep[ch] = ch > 0x20 && ch < 0x7f && ch != '"' && ch != '#' &&
+            ch != '<' && ch != '>' && ch != '?' && ch != '^' && ch != 0x60 &&
+            ch != '{' && ch != '}';
+    char* encoded = url_encode_with_table(path, written, keep);
+    mem_free(path);
+    if (!encoded) return URL_ERROR_MEMORY_ALLOCATION;
+    url_normalize_path(encoded, strlen(encoded) + 1);
+
+    // replace a coherent record atomically; pathname writes must preserve query and fragment.
+    Url updated = *url;
+    updated.pathname = url_create_string(encoded);
+    mem_free(encoded);
+    String* href = updated.pathname ? url_construct_href(&updated) : NULL;
+    Url* replacement = href ? url_parse(href->chars) : NULL;
+    url_free_string(updated.pathname);
+    url_free_string(href);
+    if (!replacement) return URL_ERROR_MEMORY_ALLOCATION;
+    return url_replace_contents(url, replacement) ? URL_OK : URL_ERROR_INVALID_INPUT;
 }
 
 UrlError url_set_search(Url* url, const char* search) {
