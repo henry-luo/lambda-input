@@ -12,9 +12,22 @@ void print_named_items(StringBuf *strbuf, TypeMap *map_type, void* map_data);
 
 static void format_item_reader(XmlContext& ctx, const ItemReader& item, const char* tag_name);
 
+static bool xml_output_valid(const XmlContext& ctx) {
+    if (!ctx.contains_nul) return true;
+    log_error("format_xml: U+0000 cannot be represented in XML");
+    return false;
+}
+
 static void format_xml_string(XmlContext& ctx, String* str, bool is_attribute = false) {
+    if (!ctx.admit(str->chars, str->len)) return;
     // UTF-8 bytes must stay together; a reference per byte changes the codepoints.
     format_markup_string_safe(ctx.output(), str, is_attribute, true, true, "xml");
+}
+
+static void write_raw_xml_string(XmlContext& ctx, String* str, const char* prefix = "") {
+    if (!str || !ctx.admit(str->chars, str->len)) return;
+    ctx.write_text(prefix);
+    ctx.write_text(str);
 }
 
 static void xml_emit_attr_value(XmlContext& ctx, const ItemReader& value) {
@@ -114,7 +127,7 @@ static void format_array_reader(XmlContext& ctx, const ArrayReader& arr, const c
 
     auto iter = arr.items();
     ItemReader item;
-    while (iter.next(&item)) {
+    while (!ctx.contains_nul && iter.next(&item)) {
         format_item_reader(ctx, item, tag_name ? tag_name : "item");
     }
 }
@@ -127,13 +140,15 @@ static void format_map_reader(XmlContext& ctx, const MapReader& map_reader, cons
     ctx.emit("<%N", tag_name);
 
     StringBuf* child_buf = stringbuf_new(ctx.pool());
-    XmlContext child_ctx(ctx.pool(), child_buf);
+    XmlContext child_ctx(ctx.pool(), child_buf, ctx.contains_nul);
     bool has_non_null_complex_child = false;
 
     auto iter = map_reader.entries();
     const char* key;
+    size_t key_length;
     ItemReader value;
-    while (iter.next(&key, &value)) {
+    while (!ctx.contains_nul && iter.next(&key, &value, nullptr, &key_length)) {
+        if (!ctx.admit(key, key_length)) return;
         if (value.isString() || value.isNumber() || value.isBool()) {
             ctx.emit(" %N=\"", key);
             xml_emit_attr_value(ctx, value);
@@ -148,6 +163,7 @@ static void format_map_reader(XmlContext& ctx, const MapReader& map_reader, cons
         }
     }
 
+    if (ctx.contains_nul) return;
     if (has_non_null_complex_child) {
         ctx.write_char('>');
         stringbuf_append_str_n(ctx.output(), child_buf->str->chars, child_buf->length);
@@ -159,6 +175,7 @@ static void format_map_reader(XmlContext& ctx, const MapReader& map_reader, cons
 }
 
 static void format_item_reader(XmlContext& ctx, const ItemReader& item, const char* tag_name) {
+    if (ctx.contains_nul) return;
     if (!tag_name) tag_name = "value";
 
     class XmlItemHandlers : public FormatItemHandlersDefault {
@@ -224,16 +241,15 @@ static void format_item_reader(XmlContext& ctx, const ItemReader& item, const ch
         void write_children_raw(const ElementReader& elem, const char* prefix) {
             auto child_iter = elem.children();
             ItemReader child;
-            while (child_iter.next(&child)) {
-                String* str = child.isString() ? child.asString() : nullptr;
-                if (!str) continue;
-                ctx_.write_text(prefix);
-                stringbuf_append_str_n(ctx_.output(), str->chars, str->len);
+            while (!ctx_.contains_nul && child_iter.next(&child)) {
+                if (child.isString()) write_raw_xml_string(ctx_, child.asString(), prefix);
             }
         }
 
         void format_element(const ElementReader& elem) {
-            const char* elem_name = elem.tagName();
+            StrView tag = elem.tagView();
+            if (!ctx_.admit(tag.str, tag.length)) return;
+            const char* elem_name = tag.str;
             if (!elem_name || elem_name[0] == '\0') {
                 log_debug("format_item_reader: element has no name");
                 ctx_.emit("<%N/>", tag_name_);
@@ -247,17 +263,7 @@ static void format_item_reader(XmlContext& ctx, const ItemReader& item, const ch
             if (strcmp(elem_name, "?xml") == 0) {
                 ctx_.write_text("<?xml");
 
-                // Handle XML declaration content as attributes
-                auto child_iter = elem.children();
-                ItemReader child;
-                while (child_iter.next(&child)) {
-                    if (child.isString()) {
-                        String* str = child.asString();
-                        if (str) {
-                            ctx_.emit(" %N", str->chars);
-                        }
-                    }
-                }
+                write_children_raw(elem, " ");
 
                 ctx_.write_text("?>");
                 return; // Early return for XML declaration
@@ -302,10 +308,12 @@ static void format_item_reader(XmlContext& ctx, const ItemReader& item, const ch
                 log_debug("format_item_reader: element has attributes, formatting");
                 auto attrs = elem.attrs();
                 const char* key;
+                size_t key_length;
                 ItemReader value;
                 Target* attr_ns;
-                while (attrs.next(&key, &value, &attr_ns)) {
+                while (!ctx_.contains_nul && attrs.next(&key, &value, &attr_ns, &key_length)) {
                     if (!key) continue;
+                    if (!ctx_.admit(key, key_length)) return;
 
                     const char* prefix = xml_namespace_prefix(ctx_, attr_ns, true);
                     if (attr_ns) xml_require_namespace(ctx_, attr_ns, prefix);
@@ -324,7 +332,7 @@ static void format_item_reader(XmlContext& ctx, const ItemReader& item, const ch
             // breaks downstream parsers — e.g. an injected
             // `@font-face { src: url("data:font/ttf;base64,...") }` block
             // becomes invalid CSS once quotes are entity-escaped.
-            bool is_raw_text = html_is_raw_text_element_id(elem.tagId(), elem_name, strlen(elem_name));
+            bool is_raw_text = html_is_raw_text_element_id(elem.tagId(), elem_name, tag.length);
 
             // Handle element content (text/child elements)
             if (elem.childCount() > 0) {
@@ -332,13 +340,12 @@ static void format_item_reader(XmlContext& ctx, const ItemReader& item, const ch
 
                 auto child_iter = elem.children();
                 ItemReader child;
-                while (child_iter.next(&child)) {
+                while (!ctx_.contains_nul && child_iter.next(&child)) {
                     if (child.isString()) {
                         String* str = child.asString();
                         if (str) {
                             if (is_raw_text) {
-                                stringbuf_emit(ctx_.output(), "%.*s",
-                                    (int)str->len, str->chars);
+                                write_raw_xml_string(ctx_, str);
                             } else {
                                 format_xml_string(ctx_, str);
                             }
@@ -346,7 +353,7 @@ static void format_item_reader(XmlContext& ctx, const ItemReader& item, const ch
                     } else if (child.isSymbol()) {
                         // Symbol items (named entities) - output as &name;
                         Symbol* sym = child.asSymbol();
-                        if (sym) {
+                        if (sym && ctx_.admit(sym->chars, sym->len)) {
                             ctx_.emit("&%N;", sym->chars);
                         }
                     } else if (child.isArray()) {
@@ -355,7 +362,7 @@ static void format_item_reader(XmlContext& ctx, const ItemReader& item, const ch
                         ArrayReader arr = child.asArray();
                         auto arr_iter = arr.items();
                         ItemReader arr_item;
-                        while (arr_iter.next(&arr_item)) {
+                        while (!ctx_.contains_nul && arr_iter.next(&arr_item)) {
                             format_item_reader(ctx_, arr_item, NULL);
                         }
                     } else {
@@ -384,7 +391,9 @@ static void format_item_reader(XmlContext& ctx, const ItemReader& item, const ch
 String* format_xml(Pool* pool, Item root_item) {
     ScopedFormatPool ctx_pool("format.xml");
     StringBuf* sb = stringbuf_new(pool);
-    XmlContext ctx(ctx_pool.get(), sb);
+    if (!sb) return nullptr;
+    bool contains_nul = false;
+    XmlContext ctx(ctx_pool.get(), sb, contains_nul);
 
     ItemReader reader(root_item.to_const());
 
@@ -397,14 +406,14 @@ String* format_xml(Pool* pool, Item root_item) {
                root_tag, (long long)root_elem.childCount());
 
         // Check if this is a "document" element containing multiple children
-        if (strcmp(root_tag, "document") == 0 && root_elem.childCount() > 0) {
+        if (str_eq_const(root_tag, root_elem.tagView().length, "document") && root_elem.childCount() > 0) {
             log_debug("format_xml: document element with %lld children", (long long)root_elem.childCount());
 
             // Format all children in order (XML declaration, then actual elements)
             auto child_iter = root_elem.children();
             ItemReader child;
 
-            while (child_iter.next(&child)) {
+            while (!contains_nul && child_iter.next(&child)) {
                 if (child.isElement()) {
                     ElementReader child_elem = child.asElement();
                     const char* child_tag = child_elem.tagName();
@@ -422,7 +431,7 @@ String* format_xml(Pool* pool, Item root_item) {
                 }
             }
 
-            return stringbuf_to_string(sb);
+            return xml_output_valid(ctx) ? stringbuf_to_string(sb) : nullptr;
         }
     }
 
@@ -441,13 +450,19 @@ String* format_xml(Pool* pool, Item root_item) {
 
     format_item_reader(ctx, reader, tag_name);
 
-    return stringbuf_to_string(sb);
+    return xml_output_valid(ctx) ? stringbuf_to_string(sb) : nullptr;
 }
 
 // Convenience function that formats XML to a provided StringBuf
-void format_xml_to_stringbuf(StringBuf* sb, Item root_item) {
+bool format_xml_to_stringbuf(StringBuf* sb, Item root_item) {
+    if (!sb) return false;
     ScopedFormatPool pool("format.xml");
-    XmlContext ctx(pool.get(), sb);
+    bool contains_nul = false;
+    XmlContext ctx(pool.get(), sb, contains_nul);
+    size_t start = sb->length;
     ItemReader reader(root_item.to_const());
     format_item_reader(ctx, reader, "root");
+    if (xml_output_valid(ctx)) return true;
+    stringbuf_truncate(sb, start);
+    return false;
 }

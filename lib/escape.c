@@ -93,6 +93,7 @@ const EscapeRule ESCAPE_RULES_LATEX[] = {
 const int ESCAPE_RULES_LATEX_COUNT = (int)(sizeof(ESCAPE_RULES_LATEX) / sizeof(ESCAPE_RULES_LATEX[0]));
 
 const EscapeRule ESCAPE_RULES_YAML[] = {
+    {'\0', "\\0"},
     {'"', "\\\""},
     {'\\', "\\\\"},
     {'\n', "\\n"},

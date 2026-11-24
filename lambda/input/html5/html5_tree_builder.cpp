@@ -551,9 +551,13 @@ Html5Parser* html5_fragment_parser_create(Pool* pool, Arena* arena, Input* input
  * @return true on success, false on error
  */
 bool html5_fragment_parse(Html5Parser* parser, const char* html) {
+    return html5_fragment_parse_n(parser, html, html ? strlen(html) : 0);
+}
+
+bool html5_fragment_parse_n(Html5Parser* parser, const char* html, size_t html_len) {
     if (!parser || !html) return false;
 
-    size_t html_len = strlen(html);
+    // the tokenizer handles zero bytes according to its state, independently of EOF.
     if (html_len == 0 && parser->fragment_context_tag != MARKUP_NAME_HTML) return true;
 
     // Store the current position (we may be continuing from previous parse)
@@ -565,12 +569,11 @@ bool html5_fragment_parse(Html5Parser* parser, const char* html) {
     parser->html = html;
     parser->pos = 0;
     parser->length = html_len;
-    parser->tokenizer_state = parser->fragment_context_tag == MARKUP_NAME_NOSCRIPT &&
-        parser->scripting_enabled ? HTML5_TOK_RAWTEXT : HTML5_TOK_DATA;
-    if (parser->tokenizer_state == HTML5_TOK_RAWTEXT) {
-        // a fragment's context has not emitted a start tag, so its end tag cannot break out.
-        parser->last_start_tag_name_len = 0;
-    }
+    // the fragment context selects tokenization even though it is not on the open stack.
+    parser->tokenizer_state = html5_text_state_for_tag(parser->fragment_context_tag,
+        parser->scripting_enabled);
+    // no start tag has been emitted for this context; its closing tag stays literal text.
+    parser->last_start_tag_name_len = 0;
 
     log_debug("html5_fragment: parsing %zu bytes of HTML", html_len);
 

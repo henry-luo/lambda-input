@@ -1284,6 +1284,36 @@ TEST_F(HtmlParserTest, NoscriptFragmentsRespectScriptingAndKeepContextEndTagsLit
     }
 }
 
+TEST_F(HtmlParserTest, TextElementFragmentsUseContextTokenization) {
+    const struct { const char* context; bool references; } cases[] = {
+        {"title", true}, {"textarea", true}, {"style", false}, {"xmp", false},
+        {"iframe", false}, {"noembed", false}, {"noframes", false},
+        {"script", false}, {"noscript", false}, {"plaintext", false},
+    };
+    Input* input = Input::create(pool);
+    ASSERT_NE(input, nullptr);
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.context);
+        Html5Parser* parser = html5_fragment_parser_create(pool, input->arena, input, c.context);
+        ASSERT_NE(parser, nullptr);
+        Html5ParserScope scope(parser);
+        parser->scripting_enabled = true;
+        StrBuf* source = strbuf_new();
+        strbuf_append_format(source, "<b>&amp;</b></%s><i>still text</i>", c.context);
+        ASSERT_TRUE(html5_fragment_parse(parser, source->str));
+        Element* fragment = html5_fragment_get_body(parser);
+        ASSERT_NE(fragment, nullptr);
+        ASSERT_EQ(fragment->length, 1);
+        ASSERT_EQ(get_type_id(fragment->items[0]), LMD_TYPE_STRING);
+        StrBuf* expected = strbuf_new();
+        strbuf_append_format(expected, "<b>%s</b></%s><i>still text</i>",
+            c.references ? "&" : "&amp;", c.context);
+        EXPECT_STREQ(fragment->items[0].get_string()->chars, expected->str);
+        strbuf_free(expected);
+        strbuf_free(source);
+    }
+}
+
 TEST_F(HtmlParserTest, TextElementsPreserveIncompleteAndUnmatchedEndTagsAtEof) {
     const char* tails[] = {"<", "</", "</wrong>", "</WrOnG ", "</wrong/", "</wrong"};
     for (const char* tag : {"noscript", "textarea"}) {

@@ -14,9 +14,9 @@ bool dom_serializes_html_void(DomElement* element) {
     return false;
 }
 
-static void collect_xml_attr_value(const char* value, StrBuf* sb) {
+static void collect_xml_attr_value(const char* value, size_t length, StrBuf* sb) {
     if (!value || !sb) return;
-    for (const char* p = value; *p; p++) {
+    for (const char* p = value; p < value + length; p++) {
         if (*p == '&') strbuf_append_str(sb, "&amp;");
         else if (*p == '<') strbuf_append_str(sb, "&lt;");
         else if (*p == '"') strbuf_append_str(sb, "&quot;");
@@ -81,11 +81,11 @@ static void dom_xml_append_name(StrBuf* output, StrView prefix, const char* loca
     strbuf_append_str(output, local);
 }
 
-static void dom_xml_append_declaration(DomXmlSerialization* context, StrView prefix, const char* uri) {
+static void dom_xml_append_declaration(DomXmlSerialization* context, StrView prefix, StrView uri) {
     strbuf_append_str(context->output, " xmlns");
     if (prefix.length) { strbuf_append_char(context->output, ':'); strbuf_append_str_n(context->output, prefix.str, prefix.length); }
     strbuf_append_str(context->output, "=\"");
-    collect_xml_attr_value(uri, context->output);
+    collect_xml_attr_value(uri.str, uri.length, context->output);
     strbuf_append_char(context->output, '"');
 }
 
@@ -111,7 +111,7 @@ static StrView dom_xml_choose_prefix(DomXmlSerialization* context, const char* u
         prefix = {owned, strlen(owned)};
     }
     dom_xml_bind_prefix(context, prefix, uri);
-    dom_xml_append_declaration(context, prefix, uri);
+    dom_xml_append_declaration(context, prefix, strview_from_cstr(uri));
     return prefix;
 }
 
@@ -125,11 +125,12 @@ static void dom_xml_append_attribute(DomXmlSerialization* context, DomAttributeV
     strbuf_append_char(context->output, ' ');
     dom_xml_append_name(context->output, prefix, attribute.local_name);
     strbuf_append_str(context->output, "=\"");
-    collect_xml_attr_value(attribute.value, context->output);
+    collect_xml_attr_value(attribute.value, attribute.value_length, context->output);
     strbuf_append_char(context->output, '"');
 }
 
-extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProjection* projection) {
+static bool dom_serialize_xml_impl(void* opaque, StrBuf* output,
+        const DomXmlProjection* projection, bool require_no_nul) {
     DomNode* node = (DomNode*)opaque;
     if (!node || !output) return false;
     Pool* pool = mem_pool_create(nullptr, MEM_ROLE_CSS, "dom.xml_serialization");
@@ -138,6 +139,7 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
     dom_xml_bind_prefix(&context, {"xml", 3}, DOM_XML_NAMESPACE);
     DomXmlFrame* frame = nullptr;
     DomNode* current = node;
+    size_t start = output->length;
     while (current || frame) {
         if (!current) {
             if (frame->child) {
@@ -165,11 +167,13 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
         if (dom_is_generated_pseudo_node(next)) continue;
         if (next->is_text()) {
             DomText* text = next->as_text();
+            if (require_no_nul && text->text && memchr(text->text, 0, text->length)) goto invalid_nul;
             collect_xml_text_value(text->text, text->length, output);
             continue;
         }
         if (next->is_comment()) {
             DomComment* comment = next->as_comment();
+            if (require_no_nul && comment->content && memchr(comment->content, 0, comment->length)) goto invalid_nul;
             strbuf_append_str(output, "<!--");
             if (comment->content) strbuf_append_str_n(output, comment->content, comment->length);
             strbuf_append_str(output, "-->");
@@ -196,6 +200,9 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
         DomAttributeIterator iterator = dom_element_attribute_iterator(element);
         DomAttributeView attribute;
         while (dom_element_next_attribute(&iterator, &attribute)) {
+            // check authored values before a namespace lookup or projection can shorten them.
+            if (require_no_nul && attribute.value &&
+                memchr(attribute.value, 0, attribute.value_length)) goto invalid_nul;
             if (strcmp(attribute.namespace_uri, DOM_XMLNS_NAMESPACE)) continue;
             const char* value = attribute.value ? attribute.value : "";
             if (!strcmp(attribute.local_name, "xmlns")) declared_default = value;
@@ -242,14 +249,15 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
         dom_xml_append_name(output, opened->prefix, element->local_name());
         strbuf_append_str_n(output, declarations->str, declarations->length);
         strbuf_free(declarations);
-        if (append_default) dom_xml_append_declaration(&context, {}, uri);
+        if (append_default) dom_xml_append_declaration(&context, {}, strview_from_cstr(uri));
 
         iterator = dom_element_attribute_iterator(element);
         while (dom_element_next_attribute(&iterator, &attribute)) {
             if (dom_attribute_is_internal(attribute.qualified_name)) continue;
             if (!strcmp(attribute.namespace_uri, DOM_XMLNS_NAMESPACE)) {
                 if (!strcmp(attribute.local_name, "xmlns")) {
-                    if (!omit_default) dom_xml_append_declaration(&context, {}, attribute.value);
+                    if (!omit_default)
+                        dom_xml_append_declaration(&context, {}, {attribute.value, attribute.value_length});
                 } else {
                     StrView declared = {attribute.local_name, strlen(attribute.local_name)};
                     DomXmlPrefixBinding* ancestor = nullptr;
@@ -257,14 +265,17 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
                         if (dom_xml_prefix_equal(binding->prefix, declared)) { ancestor = binding; break; }
                     const char* value = attribute.value ? attribute.value : "";
                     if (strcmp(value, DOM_XML_NAMESPACE) && (!ancestor || strcmp(ancestor->uri, value)))
-                        dom_xml_append_declaration(&context, declared, value);
+                        dom_xml_append_declaration(&context, declared, {value, attribute.value_length});
                 }
                 continue;
             }
             if (!*attribute.namespace_uri && omit_default && !strcmp(attribute.local_name, "xmlns")) continue;
             for (DomXmlAttributeOverride* replacement = overrides; replacement; replacement = replacement->next)
                 if (!strcmp(replacement->name, attribute.qualified_name)) {
-                    attribute.value = replacement->value; replacement->written = true; break;
+                    attribute.value = replacement->value;
+                    attribute.value_length = replacement->value ? strlen(replacement->value) : 0;
+                    replacement->written = true;
+                    break;
                 }
             dom_xml_append_attribute(&context, attribute, opened->inherited_bindings);
         }
@@ -273,7 +284,8 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
             const char* colon = strchr(replacement->name, ':');
             const char* local = colon ? colon + 1 : replacement->name;
             DomAttributeView attribute = {replacement->namespace_uri ? replacement->namespace_uri : "",
-                replacement->name, local, replacement->value};
+                replacement->name, local, replacement->value,
+                replacement->value ? strlen(replacement->value) : 0};
             dom_xml_append_attribute(&context, attribute, opened->inherited_bindings);
         }
         if (!opened->child && !(projection && projection->append_children) &&
@@ -288,4 +300,19 @@ extern "C" bool dom_serialize_xml(void* opaque, StrBuf* output, const DomXmlProj
     }
     pool_destroy(pool);
     return true;
+
+invalid_nul:
+    output->length = start;
+    output->str[start] = '\0';
+    pool_destroy(pool);
+    return false;
+}
+
+extern "C" bool dom_serialize_xml(void* node, StrBuf* output, const DomXmlProjection* projection) {
+    return dom_serialize_xml_impl(node, output, projection, true);
+}
+
+extern "C" bool dom_serialize_xml_dom_string(void* node, StrBuf* output) {
+    // XMLSerializer passes false for the DOM Parsing require-well-formed flag.
+    return dom_serialize_xml_impl(node, output, nullptr, false);
 }

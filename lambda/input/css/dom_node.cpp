@@ -51,14 +51,17 @@ NameId DomNode::tag() const {
 
 // Get text content for text nodes
 // For symbol nodes (HTML entities/emoji), resolves to UTF-8 representation
-unsigned char* DomNode::text_data() const {
+unsigned char* DomNode::text_data(size_t* byte_length) const {
     const DomText* text = as_text();
+    if (byte_length) *byte_length = text ? text->length : 0;
     if (!text) return nullptr;
 
     // For symbol nodes, resolve to UTF-8 representation
     if (text->is_symbol() && text->text) {
         CssSymbolResolution resolved = css_symbol_resolve(text->text, text->length);
         if (resolved.utf8) {
+            // resolved entities and emoji are static C strings, unlike DOM text.
+            if (byte_length) *byte_length = strlen(resolved.utf8);
             return (unsigned char*)resolved.utf8;
         }
         // Unknown symbol - fall through to return raw text

@@ -659,8 +659,8 @@ bool css_content_append(const CssValue* value, const CssContentBindings* binding
     const char* attribute = css_content_attribute_name(value);
     const CssFunction* function = value->type == CSS_VALUE_TYPE_FUNCTION ? value->data.function : nullptr;
     if (attribute) {
-        const char* result = bindings->attribute ? bindings->attribute(bindings->context, attribute) : nullptr;
-        if (result) strbuf_append_str(text, result);
+        StrView result = bindings->attribute ? bindings->attribute(bindings->context, attribute) : StrView{};
+        if (result.str) strbuf_append_str_n(text, result.str, result.length);
         else if (value->type == CSS_VALUE_TYPE_ATTR && value->data.attr_ref->fallback)
             return css_content_append(value->data.attr_ref->fallback, bindings, quote_depth, text, depth + 1);
         return true;

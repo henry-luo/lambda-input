@@ -303,6 +303,7 @@ Html5Parser* html5_fragment_parser_create(Pool* pool, Arena* arena, Input* input
     const char* context_tag = nullptr, bool svg_namespace = false);
 // Parse an HTML fragment into an existing fragment parser context
 bool html5_fragment_parse(Html5Parser* parser, const char* html);
+bool html5_fragment_parse_n(Html5Parser* parser, const char* html, size_t html_len);
 // Get the body element containing parsed fragment content
 Element* html5_fragment_get_body(Html5Parser* parser);
 

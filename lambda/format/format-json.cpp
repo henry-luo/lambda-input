@@ -33,8 +33,10 @@ static void format_map_reader_contents(JsonContext& ctx, const MapReader& map_re
     bool first = true;
     auto iter = map_reader.entries();
     const char* key;
+    size_t key_length;
     ItemReader value;
-    while (iter.next(&key, &value)) format_map_property(ctx, key, value, indent, &first, strlen(key));
+    while (iter.next(&key, &value, nullptr, &key_length))
+        format_map_property(ctx, key, value, indent, &first, key_length);
 
     if (!first) {
         ctx.line(indent);
@@ -119,11 +121,12 @@ static void format_element_reader_with_indent(JsonContext& ctx, const ElementRea
     if (elem.attrCount() > 0) {
         auto attrs = elem.attrs();
         const char* key;
+        size_t key_length;
         ItemReader value;
-        while (attrs.next(&key, &value)) {
+        while (attrs.next(&key, &value, nullptr, &key_length)) {
             if (!key) continue;
 
-            ctx.property(key, strlen(key), indent + 1);
+            ctx.property(key, key_length, indent + 1);
             format_item_reader_with_indent(ctx, value, indent + 1);
         }
     }
@@ -223,7 +226,7 @@ static void format_item_reader_with_indent(JsonContext& ctx, const ItemReader& i
                 if (!fld->name || !attr_data) continue;
                 const char* key = fld->name->str;
                 ItemReader value(map_shape_field_to_item(attr_data, fld).to_const());
-                ctx_.property(key, strlen(key), indent_ + 1);
+                ctx_.property(key, fld->name->length, indent_ + 1);
                 format_item_reader_with_indent(ctx_, value, indent_ + 1);
             }
             // S2.1.3: content children, under the same "_" key an element uses.
