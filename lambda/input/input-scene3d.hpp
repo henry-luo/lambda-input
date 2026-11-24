@@ -9,11 +9,13 @@ namespace lambda {
 static constexpr size_t SCENE_ASSET_BUFFER_LIMIT = 64 * 1024 * 1024;
 // bones per skeleton, the native skinning palette's capacity (radiant/scene3d/scene3d.cpp)
 static constexpr unsigned SCENE_ASSET_BONE_LIMIT = 256;
+enum class SceneAssetPresentation { Full, Thumbnail, Snapshot };
 // D5.1.3: imported values belong to the destination Input, including decoded buffers.
 struct SceneAsset {
     InputContext ctx;
     Item root, resources;
     unsigned serial = 0;
+    SceneAssetPresentation presentation = SceneAssetPresentation::Full;
     // a scene group gathers its resources first; a `<character>` has none
     explicit SceneAsset(Input* input, const char* root_tag = "group") : ctx(input) {
         root = element(root_tag); resources = ItemNull;

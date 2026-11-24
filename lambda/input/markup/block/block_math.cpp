@@ -68,7 +68,7 @@ Item parse_math_block(MarkupParser* parser, const char* line) {
         }
     }
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Check for closing $$ at start of line

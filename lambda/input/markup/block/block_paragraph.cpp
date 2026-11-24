@@ -28,12 +28,12 @@ extern Item parse_inline_spans(MarkupParser* parser, const char* text);
  */
 static Item parse_rst_literal_block(MarkupParser* parser) {
     // Skip empty lines first
-    while (parser->current_line < parser->line_count &&
+    while (parser->hasLine(parser->current_line) &&
            is_empty_line(parser->lines[parser->current_line])) {
         parser->current_line++;
     }
 
-    if (parser->current_line >= parser->line_count) {
+    if (!parser->hasLine(parser->current_line)) {
         return Item{.item = ITEM_UNDEFINED};
     }
 
@@ -48,17 +48,17 @@ static Item parse_rst_literal_block(MarkupParser* parser) {
 
     // Collect indented lines
     ArrayList* code_lines = arraylist_new(16);
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* line = parser->lines[parser->current_line];
 
         // Empty line might continue the block
         if (is_empty_line(line)) {
             // Check if there are more indented lines after
             size_t peek = parser->current_line + 1;
-            while (peek < (size_t)parser->line_count && is_empty_line(parser->lines[peek])) {
+            while (parser->hasLine(peek) && is_empty_line(parser->lines[peek])) {
                 peek++;
             }
-            if (peek < (size_t)parser->line_count) {
+            if (parser->hasLine(peek)) {
                 const char* next = parser->lines[peek];
                 int next_indent = 0;
                 while (next[next_indent] == ' ') next_indent++;
@@ -283,7 +283,7 @@ Item parse_paragraph(MarkupParser* parser, const char* line) {
     // Collect continuation lines. Inline math joins like any other inline:
     // only a blank line or an interrupting block (including a `$$` math
     // block) ends a paragraph, so a `$` in the text never splits one.
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // A man macro begins a new block even when it follows filled text
@@ -537,7 +537,7 @@ Item parse_rst_line_block(MarkupParser* parser, const char* line) {
     }
 
     // Collect all | prefix lines
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Skip leading whitespace
@@ -628,7 +628,7 @@ Item parse_rst_image_directive(MarkupParser* parser, const char* line) {
     }
 
     // Parse option lines (indented lines starting with :name:)
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* opt_line = parser->lines[parser->current_line];
 
         // Check for empty line - may or may not end options
@@ -723,7 +723,7 @@ Item parse_rst_contents_directive(MarkupParser* parser, const char* line) {
 
     parser->current_line++;
     int depth = 6;
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* option = parser->lines[parser->current_line];
         if (*option != ' ' && *option != '\t') break;
         option = str_skip_line_space(option);
@@ -753,7 +753,7 @@ Item parse_rst_contents_directive(MarkupParser* parser, const char* line) {
 
     Element* list = create_element(parser, "ul");
     if (list) {
-        for (int i = parser->current_line; i + 1 < parser->line_count; i++) {
+        for (int i = parser->current_line; parser->hasLine(i + 1); i++) {
             HeaderInfo info = parser->adapter()->detectHeader(
                 parser->lines[i], parser->lines[i + 1]);
             if (!info.valid || rst_heading_level_at(parser, i) > depth ||
@@ -792,13 +792,9 @@ static void parse_rst_directive_body(MarkupParser* parser, Element* parent,
         body_lines[i] = (char*)(source + (indent < base_indent ? indent : base_indent));
     }
 
-    char** saved_lines = parser->lines;
-    int saved_count = parser->line_count;
-    int saved_line = parser->current_line;
     ParserState saved_state = parser->state;
-    parser->lines = body_lines;
-    parser->line_count = count;
-    parser->current_line = 0;
+    // a directive's nested lines stop at its own boundary even in a streaming document.
+    MarkupLinesScope scope(parser, body_lines, count);
     parser->state.reset();
     while (parser->current_line < count) {
         int before = parser->current_line;
@@ -808,9 +804,7 @@ static void parse_rst_directive_body(MarkupParser* parser, Element* parent,
         }
         if (parser->current_line == before) parser->current_line++;
     }
-    parser->lines = saved_lines;
-    parser->line_count = saved_count;
-    parser->current_line = saved_line;
+    scope.restore();
     parser->state = saved_state;
     mem_free(body_lines);
 }
@@ -940,7 +934,7 @@ Item parse_rst_directive(MarkupParser* parser, const char* line) {
     // RST comments have no directive separator and consume their indented body.
     if (!separator) {
         parser->current_line++;
-        while (parser->current_line < parser->line_count) {
+        while (parser->hasLine(parser->current_line)) {
             const char* next = parser->lines[parser->current_line];
             if (!is_empty_line(next)) {
                 int indent = 0;
@@ -972,7 +966,7 @@ Item parse_rst_directive(MarkupParser* parser, const char* line) {
 
     int first = parser->current_line + 1;
     int end = first;
-    while (end < parser->line_count) {
+    while (parser->hasLine(end)) {
         const char* next = parser->lines[end];
         if (!is_empty_line(next)) {
             int indent = 0;
@@ -1067,7 +1061,7 @@ Item parse_man_tagged_paragraph(MarkupParser* parser, const char* line) {
     const char* tag = nullptr;
     parser->current_line++;
     if (next_line_is_term) {
-        if (parser->current_line < parser->line_count) {
+        if (parser->hasLine(parser->current_line)) {
             tag = parser->lines[parser->current_line++];
         }
     } else {
@@ -1095,7 +1089,7 @@ Item parse_man_tagged_paragraph(MarkupParser* parser, const char* line) {
             list_push((List*)term, tag_content);
         }
     }
-    if (parser->current_line < parser->line_count) {
+    if (parser->hasLine(parser->current_line)) {
         const char* body = parser->lines[parser->current_line];
         if (!is_empty_line(body) && body[0] != '.') {
             Item content = parse_paragraph(parser, body);
@@ -1129,7 +1123,7 @@ Item parse_rst_definition_list(MarkupParser* parser, const char* line) {
     }
 
     // Parse definition list entries
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Skip blank separators only while another term and definition follow.
@@ -1168,7 +1162,7 @@ Item parse_rst_definition_list(MarkupParser* parser, const char* line) {
         parser->current_line++;
 
         // Check for definition (indented lines following the term)
-        if (parser->current_line < parser->line_count) {
+        if (parser->hasLine(parser->current_line)) {
             const char* def_line = parser->lines[parser->current_line];
 
             // Definition must be indented
@@ -1177,13 +1171,13 @@ Item parse_rst_definition_list(MarkupParser* parser, const char* line) {
                 StringBuf* sb = parser->sb;
                 stringbuf_reset(sb);
 
-                while (parser->current_line < parser->line_count) {
+                while (parser->hasLine(parser->current_line)) {
                     const char* dl_line = parser->lines[parser->current_line];
 
                     if (is_empty_line(dl_line)) {
                         // Empty line - check if more definition content follows
                         size_t peek = parser->current_line + 1;
-                        if (peek < (size_t)parser->line_count) {
+                        if (parser->hasLine(peek)) {
                             const char* next = parser->lines[peek];
                             if (*next == ' ' || *next == '\t') {
                                 // More indented content, include blank line

@@ -625,7 +625,7 @@ Item parse_nested_list_content(MarkupParser* parser, int content_column) {
     ArrayList* content_lines = arraylist_new(16);
     bool had_blank_line = false;
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* line = parser->lines[parser->current_line];
 
         // Handle empty lines
@@ -633,7 +633,7 @@ Item parse_nested_list_content(MarkupParser* parser, int content_column) {
             // Empty line within list item content
             // Need to look ahead to see if list continues
             int next_line_idx = parser->current_line + 1;
-            if (next_line_idx >= parser->line_count) {
+            if (!parser->hasLine(next_line_idx)) {
                 break;  // End of document
             }
 
@@ -716,7 +716,7 @@ Item parse_nested_list_content(MarkupParser* parser, int content_column) {
     Element* content_container = create_element(parser, "div");
 
     // Parse block elements from the content
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* content_line = parser->lines[parser->current_line];
 
         // Skip empty lines
@@ -735,7 +735,7 @@ Item parse_nested_list_content(MarkupParser* parser, int content_column) {
             // a nested block's own class (a fence in a list item), through the column map
             highlight_note_item(parser, block_item.item, line_before);
             list_push((List*)content_container, block_item);
-        } else if (parser->current_line < parser->line_count) {
+        } else if (parser->hasLine(parser->current_line)) {
             parser->current_line++;  // Prevent infinite loop
         }
     }
@@ -759,7 +759,7 @@ Item parse_nested_list_content(MarkupParser* parser, int content_column) {
  * parse_list_structure - Parse a complete list (ul or ol) with all items
  */
 Item parse_list_structure(MarkupParser* parser, int base_indent) {
-    if (!parser || parser->current_line >= parser->line_count) {
+    if (!parser || !parser->hasLine(parser->current_line)) {
         return Item{.item = ITEM_UNDEFINED};
     }
 
@@ -823,7 +823,7 @@ Item parse_list_structure(MarkupParser* parser, int base_indent) {
         current_item_content_column = base_indent + 2;
     }
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* line = parser->lines[parser->current_line];
 
         // Handle empty lines
@@ -831,10 +831,10 @@ Item parse_list_structure(MarkupParser* parser, int base_indent) {
             // Check if list continues after empty line(s)
             // Look ahead past any consecutive blank lines to find the next content line
             int next_line = parser->current_line + 1;
-            while (next_line < parser->line_count && is_empty_line(parser->lines[next_line])) {
+            while (parser->hasLine(next_line) && is_empty_line(parser->lines[next_line])) {
                 next_line++;
             }
-            if (next_line >= parser->line_count) break;
+            if (!parser->hasLine(next_line)) break;
 
             const char* next = parser->lines[next_line];
             int next_indent = get_list_indentation(next);
@@ -964,7 +964,7 @@ Item parse_list_structure(MarkupParser* parser, int base_indent) {
                 // CommonMark: A list item can begin with at most one blank line.
                 // If the marker line has no content AND is immediately followed by a blank line,
                 // the list item is empty and ends here.
-                if (first_line_empty && parser->current_line < parser->line_count) {
+                if (first_line_empty && parser->hasLine(parser->current_line)) {
                     const char* next_line = parser->lines[parser->current_line];
                     if (is_empty_line(next_line)) {
                         // Empty list item - add to list and continue to next line processing
@@ -977,7 +977,7 @@ Item parse_list_structure(MarkupParser* parser, int base_indent) {
 
                 // Collect continuation lines
                 bool had_blank = false;
-                while (parser->current_line < parser->line_count) {
+                while (parser->hasLine(parser->current_line)) {
                     const char* cont_line = parser->lines[parser->current_line];
 
                     // Handle empty lines
@@ -987,14 +987,14 @@ Item parse_list_structure(MarkupParser* parser, int base_indent) {
                         int next_idx = parser->current_line + 1;
 
                         // Skip over consecutive blank lines
-                        while (next_idx < parser->line_count &&
+                        while (parser->hasLine(next_idx) &&
                                is_empty_line(parser->lines[next_idx])) {
                             blank_count++;
                             next_idx++;
                         }
 
                         // End of document
-                        if (next_idx >= parser->line_count) {
+                        if (!parser->hasLine(next_idx)) {
                             break;
                         }
 
@@ -1104,7 +1104,7 @@ Item parse_list_structure(MarkupParser* parser, int base_indent) {
                     }
 
                     // Parse blocks
-                    while (parser->current_line < parser->line_count) {
+                    while (parser->hasLine(parser->current_line)) {
                         const char* content_line = parser->lines[parser->current_line];
 
                         if (is_empty_line(content_line)) {
@@ -1131,7 +1131,7 @@ Item parse_list_structure(MarkupParser* parser, int base_indent) {
                             had_blank_before_block = false;
 
                             list_push((List*)item, block_item);
-                        } else if (parser->current_line < parser->line_count) {
+                        } else if (parser->hasLine(parser->current_line)) {
                             parser->current_line++;
                         }
                     }

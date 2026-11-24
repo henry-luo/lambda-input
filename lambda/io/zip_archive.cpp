@@ -391,42 +391,115 @@ ZipArchive* zip_archive_open(const void* bytes, size_t length,
     log_debug("ZIP_INDEX_READY: entries=%d zip64=%d bytes=%zu", archive->entries->length - 1, archive->zip64, length);
     return archive;
 }
-static bool zip_inflate_bytes(const uint8_t* input, size_t input_length,
-        uint8_t* output, size_t output_capacity, size_t expected, ZipError* error) {
-    z_stream stream = {};
-    if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) return zip_fail(error, "ZIP DEFLATE initialization failed");
-    size_t consumed = 0, produced = 0;
-    int result = Z_OK;
-    while (result == Z_OK) {
-        uInt incoming = input_length - consumed > UINT_MAX ? UINT_MAX : (uInt)(input_length - consumed);
-        uInt outgoing = output_capacity - produced > UINT_MAX ? UINT_MAX : (uInt)(output_capacity - produced);
-        stream.next_in = (Bytef*)input + consumed;
-        stream.avail_in = incoming;
-        stream.next_out = output + produced;
-        stream.avail_out = outgoing;
-        result = inflate(&stream, Z_NO_FLUSH);
-        size_t read = incoming - stream.avail_in, written = outgoing - stream.avail_out;
-        consumed += read;
-        produced += written;
-        if (produced > expected || (!read && !written && result == Z_OK)) { result = Z_DATA_ERROR; break; }
+struct ZipMemberReader {
+    ZipArchive* archive;
+    ZipEntry* entry;
+    z_stream stream;
+    size_t consumed;
+    size_t produced;
+    uint32_t crc;
+    bool inflating;
+    bool ended;
+    bool failed;
+};
+
+ZipMemberReader* zip_member_open(ZipArchive* archive, uint32_t index, ZipError* error) {
+    ZipEntry* entry = archive_entry(archive, index);
+    if (!archive || archive->format != ARCHIVE_ZIP || !entry || !index || entry->directory || entry->size >= SIZE_MAX ||
+        entry->size > archive->budget->limits.member_bytes ||
+        (entry->method != 0 && entry->method != 8)) {
+        zip_fail(error, "Expected a supported ZIP member file");
+        return nullptr;
     }
-    inflateEnd(&stream);
-    return (result == Z_STREAM_END && consumed == input_length && produced == expected) ||
-        zip_fail(error, "ZIP DEFLATE payload is truncated, corrupt, or has an invalid size");
+    if (!archive_charge_expansion(archive, entry->size, error)) return nullptr;
+    auto* reader = (ZipMemberReader*)mem_calloc(1, sizeof(ZipMemberReader), MEM_CAT_INPUT_OTHER);
+    if (!reader) return nullptr;
+    reader->archive = archive_retain(archive);
+    reader->entry = entry;
+    if (!reader->archive || (entry->method == 8 && inflateInit2(&reader->stream, -MAX_WBITS) != Z_OK)) {
+        zip_member_close(reader);
+        zip_fail(error, "ZIP member initialization failed");
+        return nullptr;
+    }
+    reader->inflating = entry->method == 8;
+    if (reader->inflating) archive->decompressions++;
+    return reader;
+}
+
+void zip_member_close(ZipMemberReader* reader) {
+    if (!reader) return;
+    if (reader->inflating) inflateEnd(&reader->stream);
+    archive_release(reader->archive);
+    mem_free(reader);
+}
+
+static bool zip_member_fail(ZipMemberReader* reader, ZipError* error, const char* message) {
+    reader->failed = true;
+    return zip_fail(error, "%s", message);
+}
+
+bool zip_member_read(ZipMemberReader* reader, void* buffer, size_t capacity, size_t* read, ZipError* error) {
+    *read = 0;
+    if (!reader || reader->failed || !buffer || !capacity) return false;
+    if (reader->ended) return true;
+    if (capacity > UINT_MAX) capacity = UINT_MAX;
+    ZipEntry* entry = reader->entry;
+    const uint8_t* source = reader->archive->snapshot->data + entry->data_offset;
+    const size_t remaining = (size_t)entry->size - reader->produced;
+    // Permit a trailing DEFLATE end marker while detecting any excess output.
+    if (capacity > remaining && remaining < UINT_MAX) capacity = remaining + 1;
+    size_t count;
+    bool ended;
+    if (reader->inflating) {
+        z_stream& stream = reader->stream;
+        do {
+            size_t incoming = (size_t)entry->compressed_size - reader->consumed;
+            if (incoming > UINT_MAX) incoming = UINT_MAX;
+            stream.next_in = (Bytef*)source + reader->consumed;
+            stream.avail_in = (uInt)incoming;
+            stream.next_out = (Bytef*)buffer;
+            stream.avail_out = (uInt)capacity;
+            int status = inflate(&stream, Z_NO_FLUSH);
+            count = capacity - stream.avail_out;
+            size_t progress = incoming - stream.avail_in;
+            reader->consumed += progress;
+            ended = status == Z_STREAM_END;
+            if (!ended && (status != Z_OK || (!count && !progress)))
+                return zip_member_fail(reader, error, "ZIP DEFLATE payload is truncated or corrupt");
+        } while (!count && !ended);
+    } else {
+        count = remaining < capacity ? remaining : capacity;
+        memcpy(buffer, source + reader->consumed, count);
+        reader->consumed += count;
+        ended = count == remaining;
+    }
+    if (count > remaining)
+        return zip_member_fail(reader, error, "ZIP member exceeds its declared size");
+    reader->produced += count;
+    reader->crc = crc32(reader->crc, (const Bytef*)buffer, (uInt)count);
+    if (ended && (reader->produced != entry->size || reader->consumed != entry->compressed_size ||
+                  reader->crc != entry->crc))
+        return zip_member_fail(reader, error, "ZIP member size or CRC mismatch");
+    reader->ended = ended;
+    *read = count;
+    return true;
 }
 
 static bool zip_load_member(ZipArchive* archive, ZipEntry* entry, ZipError* error) {
     if (!archive_charge_expansion(archive, entry->size, error) ||
-            !archive_member_allocate(archive, entry, error)) return false;
-    const uint8_t* source = archive->snapshot->data + entry->data_offset;
-    if (entry->method == 0) memcpy(entry->payload->data, source, (size_t)entry->size);
-    else {
-        archive->decompressions++;
-        if (!zip_inflate_bytes(source, (size_t)entry->compressed_size,
-                entry->payload->data, entry->payload->capacity, (size_t)entry->size, error)) return false;
+        !archive_member_allocate(archive, entry, error)) return false;
+    ZipMemberReader* reader = zip_member_open(archive, entry->index, error);
+    if (!reader) return false;
+    size_t total = 0;
+    bool ok = true;
+    while (ok && !reader->ended) {
+        size_t count = 0;
+        ok = zip_member_read(reader, entry->payload->data + total,
+            entry->payload->capacity - total, &count, error);
+        total += count;
     }
-    return zip_crc(entry->payload->data, (size_t)entry->size) == entry->crc ||
-        zip_fail(error, "ZIP member CRC mismatch");
+    zip_member_close(reader);
+    return ok;
 }
 ZipWriteOptions zip_default_write_options() {
     return {8, Z_DEFAULT_COMPRESSION, false, false, zip_default_limits()};

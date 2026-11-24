@@ -210,7 +210,7 @@ static Item parse_indented_code_block(MarkupParser* parser, const char* line) {
     StringBuf* sb = parser->sb;
     stringbuf_reset(sb);
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
         const char* content_start = nullptr;
 
@@ -227,7 +227,7 @@ static Item parse_indented_code_block(MarkupParser* parser, const char* line) {
         else if (is_blank_line(current)) {
             // Look ahead to see if there's more indented code
             bool more_code = false;
-            for (int ahead = parser->current_line + 1; ahead < parser->line_count; ahead++) {
+            for (int ahead = parser->current_line + 1; parser->hasLine(ahead); ahead++) {
                 const char* future = parser->lines[ahead];
                 if (is_indented_code_line(future, nullptr)) {
                     more_code = true;
@@ -317,7 +317,7 @@ Item parse_code_block(MarkupParser* parser, const char* line) {
             }
             // Skip to next line (should be ----)
             parser->current_line++;
-            if (parser->current_line >= parser->line_count) {
+            if (!parser->hasLine(parser->current_line)) {
                 return Item{.item = ITEM_UNDEFINED};
             }
             line = parser->lines[parser->current_line];
@@ -409,7 +409,7 @@ Item parse_code_block(MarkupParser* parser, const char* line) {
             StringBuf* sb = parser->sb;
             stringbuf_reset(sb);
 
-            while (parser->current_line < parser->line_count) {
+            while (parser->hasLine(parser->current_line)) {
                 const char* current = parser->lines[parser->current_line];
 
                 // Check for closing fence
@@ -456,7 +456,7 @@ Item parse_code_block(MarkupParser* parser, const char* line) {
     open_fence_info.valid = true;
 
     bool found_close = false;
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Check for closing fence using format adapter (for Org, RST, etc.)

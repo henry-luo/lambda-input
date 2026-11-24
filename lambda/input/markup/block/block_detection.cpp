@@ -15,7 +15,7 @@ namespace markup {
 extern bool is_html_block_start(const char* line);
 
 bool is_rst_definition_term(MarkupParser* parser, int line_index) {
-    if (!parser || line_index < 0 || line_index + 1 >= parser->line_count) return false;
+    if (!parser || line_index < 0 || !parser->hasLine(line_index + 1)) return false;
     const char* term = parser->lines[line_index];
     const char* definition = parser->lines[line_index + 1];
     if (!term || is_empty_line(term) || *term == ' ' || *term == '\t' ||
@@ -191,7 +191,7 @@ BlockType detect_block_type(MarkupParser* parser, const char* line) {
 
         // Header detection
         const char* next_line = nullptr;
-        if (parser->current_line + 1 < parser->line_count) {
+        if (parser->hasLine(parser->current_line + 1)) {
             next_line = parser->lines[parser->current_line + 1];
         }
 
@@ -267,7 +267,7 @@ BlockType detect_block_type(MarkupParser* parser, const char* line) {
         // Table detection (GFM extension - not available in strict CommonMark mode)
         if (parser->config.flavor != Flavor::COMMONMARK) {
             const char* table_next = nullptr;
-            if (parser->current_line + 1 < parser->line_count) {
+            if (parser->hasLine(parser->current_line + 1)) {
                 table_next = parser->lines[parser->current_line + 1];
             }
             if (adapter->detectTable(line, table_next)) {

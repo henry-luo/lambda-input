@@ -112,7 +112,7 @@ Item parse_asciidoc_admonition(MarkupParser* parser, const char* line) {
     parser->current_line++;
 
     // Check for continuation lines (same indentation, no blank line)
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* next_line = parser->lines[parser->current_line];
 
         // Blank line ends admonition
@@ -166,7 +166,7 @@ Item parse_asciidoc_definition_list(MarkupParser* parser, const char* line) {
         return Item{.item = ITEM_ERROR};
     }
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Skip empty lines within list
@@ -174,7 +174,7 @@ Item parse_asciidoc_definition_list(MarkupParser* parser, const char* line) {
             parser->current_line++;
 
             // Check if next line continues the list
-            if (parser->current_line < parser->line_count) {
+            if (parser->hasLine(parser->current_line)) {
                 const char* next = parser->lines[parser->current_line];
                 const char* p = next;
                 p = str_skip_line_space(p);

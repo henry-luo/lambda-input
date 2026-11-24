@@ -144,6 +144,8 @@ struct LinkPrescanState {
  * Extends InputContext to use MarkBuilder for creating Lambda data structures.
  * Uses FormatAdapter for format-specific detection rules.
  */
+struct FileLines;
+
 class MarkupParser : public InputContext {
 public:
     // Configuration
@@ -153,9 +155,16 @@ public:
     FormatAdapter* adapter_;
 
     // Document lines
-    char** lines;
-    int line_count;
+    mutable char** lines;
+    mutable int line_count;
     int current_line;
+
+    // only top-level file lines may request more input.
+    FileLines* file_lines = nullptr;
+    bool preview_stream = false;
+    mutable bool preview_requires_definitions = false;
+    bool hasLine(size_t index) const;
+    size_t streamBytesConsumed() const;
 
     // Parsing state
     ParserState state;
@@ -276,7 +285,7 @@ public:
      * Get current line content (or nullptr if past end)
      */
     const char* currentLine() const {
-        if (current_line >= 0 && current_line < line_count) {
+        if (current_line >= 0 && hasLine(current_line)) {
             return lines[current_line];
         }
         return nullptr;
@@ -286,7 +295,7 @@ public:
      * Get next line content (or nullptr if at end)
      */
     const char* nextLine() const {
-        if (current_line + 1 >= 0 && current_line + 1 < line_count) {
+        if (current_line + 1 >= 0 && hasLine(current_line + 1)) {
             return lines[current_line + 1];
         }
         return nullptr;
@@ -297,7 +306,7 @@ public:
      */
     const char* peekLine(int offset) const {
         int idx = current_line + offset;
-        if (idx >= 0 && idx < line_count) {
+        if (idx >= 0 && hasLine(idx)) {
             return lines[idx];
         }
         return nullptr;
@@ -307,7 +316,7 @@ public:
      * Check if at end of document
      */
     bool atEnd() const {
-        return current_line >= line_count;
+        return !hasLine(current_line);
     }
 
     /**
@@ -388,15 +397,17 @@ class MarkupLinesScope {
     MarkupParser* parser_;
     char** lines_;
     int count_, current_;
+    FileLines* file_lines_;
     bool* lazy_;
     size_t lazy_count_;
 public:
     MarkupLinesScope(MarkupParser* parser, char** lines, int count)
         : parser_(parser), lines_(parser->lines), count_(parser->line_count),
-          current_(parser->current_line), lazy_(parser->state.lazy_lines),
+          current_(parser->current_line), file_lines_(parser->file_lines), lazy_(parser->state.lazy_lines),
           lazy_count_(parser->state.lazy_lines_count) {
         parser->lines = lines;
         parser->line_count = count;
+        parser->file_lines = nullptr;
         parser->current_line = 0;
         parser->state.lazy_lines = nullptr;
         parser->state.lazy_lines_count = 0;
@@ -405,6 +416,7 @@ public:
         if (!parser_) return;
         parser_->lines = lines_;
         parser_->line_count = count_;
+        parser_->file_lines = file_lines_;
         parser_->current_line = current_;
         parser_->state.lazy_lines = lazy_;
         parser_->state.lazy_lines_count = lazy_count_;
@@ -440,6 +452,20 @@ void markup_parser_destroy(MarkupParser* parser);
  * Parse entire document, returns root element
  */
 Item parse_document(MarkupParser* parser);
+Element* markup_document_open(MarkupParser* parser, Element** body);
+Item markup_document_next_block(MarkupParser* parser);
+bool markup_document_finish(MarkupParser* parser, Element* doc, Element* body);
+
+struct MarkupFileSession;
+// The caller retains the file and Input throughout the session.
+MarkupFileSession* markup_file_open(Input* input, FILE* file, Format format,
+    Flavor flavor, size_t byte_limit);
+void markup_file_close(MarkupFileSession* session);
+enum class MarkupFileStatus { MORE, END, ERROR };
+MarkupFileStatus markup_file_advance(MarkupFileSession* session, size_t batch_bytes);
+Element* markup_file_document(MarkupFileSession* session);
+Element* markup_file_body(MarkupFileSession* session);
+size_t markup_file_consumed(MarkupFileSession* session);
 void parse_document_metadata(MarkupParser* parser);
 
 /**

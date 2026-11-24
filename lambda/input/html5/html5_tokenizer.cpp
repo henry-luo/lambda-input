@@ -342,14 +342,19 @@ void html5_error_list_add_tag(Html5ErrorList* list, Html5ErrorType type,
 // ============================================================================
 
 // helper: consume next character from input
+static inline bool html5_has_byte(Html5Parser* parser, size_t index) {
+    return index < parser->length ||
+        (parser->refill && parser->refill(parser, index, parser->refill_context));
+}
+
 char html5_consume_next_char(Html5Parser* parser) {
-    if (parser->pos >= parser->length) {
+    if (!html5_has_byte(parser, parser->pos)) {
         return '\0';  // EOF
     }
     char c = parser->html[parser->pos++];
     // source newlines normalize before character references are decoded (HTML §13.2.3.5).
     if (c == '\r') {
-        if (parser->pos < parser->length && parser->html[parser->pos] == '\n') parser->pos++;
+        if (html5_has_byte(parser, parser->pos) && parser->html[parser->pos] == '\n') parser->pos++;
         return '\n';
     }
     return c;
@@ -358,7 +363,7 @@ char html5_consume_next_char(Html5Parser* parser) {
 // helper: peek at character without consuming
 char html5_peek_char(Html5Parser* parser, size_t offset) {
     size_t peek_pos = parser->pos + offset;
-    if (peek_pos >= parser->length) {
+    if (!html5_has_byte(parser, peek_pos)) {
         return '\0';
     }
     char c = parser->html[peek_pos];
@@ -367,7 +372,7 @@ char html5_peek_char(Html5Parser* parser, size_t offset) {
 
 // helper: check if at EOF
 bool html5_is_eof(Html5Parser* parser) {
-    return parser->pos >= parser->length;
+    return !html5_has_byte(parser, parser->pos);
 }
 
 // helper: reconsume current character (move back one position)
@@ -1536,14 +1541,14 @@ Html5Token* html5_tokenize_next(Html5Parser* parser) {
                     html5_switch_tokenizer_state(parser, HTML5_TOK_COMMENT_START);
                 }
                 // check for "DOCTYPE" (case-insensitive) - c already has first char
-                else if ((c == 'd' || c == 'D') && parser->pos + 6 <= parser->length &&
+                else if ((c == 'd' || c == 'D') && html5_has_byte(parser, parser->pos + 5) &&
                          html5_match_string_ci(&parser->html[parser->pos - 1], "doctype", 7)) {
                     parser->pos += 6;  // skip remaining 6 chars (already consumed 'd')
                     html5_switch_tokenizer_state(parser, HTML5_TOK_DOCTYPE);
                 }
                 // check for "[CDATA["
                 else if (c == '[' && html5_current_node_is_foreign(parser) &&
-                         parser->pos + 6 <= parser->length &&
+                         html5_has_byte(parser, parser->pos + 5) &&
                          strncmp(&parser->html[parser->pos], "CDATA[", 6) == 0) {
                     parser->pos += 6;
                     html5_switch_tokenizer_state(parser, HTML5_TOK_CDATA_SECTION);
@@ -1873,13 +1878,13 @@ Html5Token* html5_tokenize_next(Html5Parser* parser) {
                 } else {
                     // check for PUBLIC keyword (case-insensitive)
                     if ((c == 'P' || c == 'p') &&
-                        parser->pos + 5 <= parser->length &&
+                        html5_has_byte(parser, parser->pos + 4) &&
                         html5_match_string_ci(&parser->html[parser->pos - 1], "public", 6)) {
                         parser->pos += 5;  // skip "ublic"
                         html5_switch_tokenizer_state(parser, HTML5_TOK_AFTER_DOCTYPE_PUBLIC_KEYWORD);
                     // check for SYSTEM keyword (case-insensitive)
                     } else if ((c == 'S' || c == 's') &&
-                               parser->pos + 5 <= parser->length &&
+                               html5_has_byte(parser, parser->pos + 4) &&
                                html5_match_string_ci(&parser->html[parser->pos - 1], "system", 6)) {
                         parser->pos += 5;  // skip "ystem"
                         html5_switch_tokenizer_state(parser, HTML5_TOK_AFTER_DOCTYPE_SYSTEM_KEYWORD);

@@ -50,11 +50,11 @@ typedef TypedHashMap<FootnoteDefinition,
 static void record_source_position(MarkupParser* parser, Item block, int start, int end);
 
 void parse_document_metadata(MarkupParser* parser) {
-    if (!parser->config.collect_metadata || parser->current_line != 0 || !parser->line_count) return;
+    if (!parser->config.collect_metadata || parser->current_line != 0 || !parser->hasLine(0)) return;
 
     if (parser->config.format == Format::ASCIIDOC) {
         const char* line = parser->lines[0];
-        const char* next = parser->line_count > 1 ? parser->lines[1] : nullptr;
+        const char* next = parser->hasLine(1) ? parser->lines[1] : nullptr;
         bool explicit_title = line[0] == '=' && (line[1] == ' ' || line[1] == '\t');
         HeaderInfo info = parser->adapter()->detectHeader(line, next);
         bool underlined_title = info.uses_underline && next && *str_skip_line_space(next) == '=';
@@ -84,8 +84,8 @@ void parse_document_metadata(MarkupParser* parser) {
     if (parser->config.format != Format::MARKDOWN || parser->config.flavor == Flavor::COMMONMARK ||
         !front_matter_delimiter(parser->lines[0], false)) return;
     int end = 1;
-    while (end < parser->line_count && !front_matter_delimiter(parser->lines[end], true)) end++;
-    if (end == parser->line_count) return;
+    while (parser->hasLine(end) && !front_matter_delimiter(parser->lines[end], true)) end++;
+    if (!parser->hasLine(end)) return;
 
     StrBuf* source = strbuf_new();
     if (!source) return;
@@ -169,12 +169,12 @@ bool MarkupParser::parseFootnoteDefinition(const char* line) {
     ArrayList* content = arraylist_new(8);
     arraylist_append(content, (void*)str_skip_line_space(label_end + 2));
     current_line++;
-    while (current_line < line_count) {
+    while (hasLine(current_line)) {
         const char* next = lines[current_line];
         if (is_empty_line(next)) {
             int after = current_line + 1;
-            while (after < line_count && is_empty_line(lines[after])) after++;
-            if (after == line_count || get_list_indentation(lines[after]) < 4) break;
+            while (hasLine(after) && is_empty_line(lines[after])) after++;
+            if (!hasLine(after) || get_list_indentation(lines[after]) < 4) break;
             arraylist_append(content, (void*)"");
         } else {
             if (get_list_indentation(next) < 4) break;
@@ -195,7 +195,7 @@ bool MarkupParser::parseFootnoteDefinition(const char* line) {
     bool parsing_list = state.parsing_list_content;
     state.list_depth = 0;
     state.parsing_list_content = false;
-    while (current_line < line_count) {
+    while (hasLine(current_line)) {
         int before = current_line;
         Item block = parse_block_element(this);
         if (block.item != ITEM_UNDEFINED && block.item != ITEM_ERROR) list_push((List*)note, block);
@@ -297,7 +297,7 @@ void MarkupParser::resolveFootnotes(Element* body) {
  * Dispatches to the appropriate block parser based on block type detection.
  */
 Item parse_block_element(MarkupParser* parser) {
-    if (!parser || parser->current_line >= parser->line_count) {
+    if (!parser || !parser->hasLine(parser->current_line)) {
         return Item{.item = ITEM_UNDEFINED};
     }
 
@@ -422,76 +422,55 @@ static void record_source_position(MarkupParser* parser, Item block, int start, 
  * then parses all block elements into the body.
  * If HTML content was encountered, includes the HTML DOM.
  */
-Item parse_document(MarkupParser* parser) {
-    if (!parser) {
-        return Item{.item = ITEM_ERROR};
-    }
-
-    // Create root document element
+Element* markup_document_open(MarkupParser* parser, Element** body) {
     Element* doc = create_element(parser, "doc");
-    if (!doc) {
-        log_error("parse_document: failed to create doc element");
-        return Item{.item = ITEM_ERROR};
-    }
-
-    // Add version attribute
+    *body = create_element(parser, "body");
+    if (!doc || !*body) return nullptr;
     add_attribute_to_element(parser, doc, "version", "1.0");
+    return doc;
+}
 
-    // Create body element for content
-    Element* body = create_element(parser, "body");
-    if (!body) {
-        log_error("parse_document: failed to create body element");
-        return Item{.item = ITEM_ERROR};
+Item markup_document_next_block(MarkupParser* parser) {
+    int line_before = parser->current_line;
+    Item block = parse_block_element(parser);
+    if (block.item != ITEM_UNDEFINED && block.item != ITEM_ERROR) {
+        if (parser->input() && parser->input()->source_positions)
+            record_source_position(parser, block, line_before, parser->current_line);
+        highlight_note_item(parser, block.item, line_before);
     }
+    if (parser->current_line == line_before) parser->current_line++;
+    return block;
+}
 
-    // Parse all blocks into body
-    bool source_positions = parser->input() && parser->input()->source_positions;
-    if (parser->span_sink) parser->span_sink->root_lines = parser->lines;
-    while (parser->current_line < parser->line_count) {
-        int line_before = parser->current_line;
-
-        Item block = parse_block_element(parser);
-
-        if (block.item != ITEM_UNDEFINED && block.item != ITEM_ERROR) {
-            if (source_positions) {
-                record_source_position(parser, block, line_before, parser->current_line);
-            }
-            highlight_note_item(parser, block.item, line_before);
-            list_push((List*)body, block);
-        }
-
-        // Safety: ensure progress to prevent infinite loops
-        if (parser->current_line == line_before) {
-            parser->current_line++;
-        }
-    }
-
+bool markup_document_finish(MarkupParser* parser, Element* doc, Element* body) {
     parser->resolveFootnotes(body);
-
-    if (parser->document_metadata_) list_push((List*)doc, Item{.element = parser->document_metadata_});
-
-    // Add body to document
-    list_push((List*)doc, Item{.item = (uint64_t)body});
-
-    // If any HTML content was parsed, add the HTML DOM to the document
-    // The HTML DOM contains all HTML fragments accumulated during parsing
+    // Preserve the alternate HTML projection for callers of the full parser.
     Element* html_body = parser->getHtmlBody();
-    if (html_body && html_body->length > 0) {
-        // Create an html-dom wrapper element containing the parsed HTML structure
-        Element* html_dom = create_element(parser, "html-dom");
-        if (html_dom) {
-            // Copy all children from the HTML5 body to our html-dom element
-            for (size_t i = 0; i < (size_t)html_body->length; i++) {
-                list_push((List*)html_dom, html_body->items[i]);
-            }
-            // Add html-dom to the document
-            list_push((List*)doc, Item{.item = (uint64_t)html_dom});
+    if (!html_body || !html_body->length) return true;
+    Element* html_dom = create_element(parser, "html-dom");
+    if (!html_dom) return false;
+    for (int64_t i = 0; i < html_body->length; i++)
+        list_push((List*)html_dom, html_body->items[i]);
+    list_push((List*)doc, Item{.element = html_dom});
+    return true;
+}
 
-            log_debug("parse_document: added html-dom with %zu children", html_body->length);
-        }
+Item parse_document(MarkupParser* parser) {
+    if (!parser) return ItemError;
+    Element* body = nullptr;
+    Element* doc = markup_document_open(parser, &body);
+    if (!doc) return ItemError;
+    if (parser->span_sink) parser->span_sink->root_lines = parser->lines;
+    while (parser->hasLine(parser->current_line)) {
+        Item block = markup_document_next_block(parser);
+        if (block.item != ITEM_UNDEFINED && block.item != ITEM_ERROR)
+            list_push((List*)body, block);
     }
-
-    return Item{.item = (uint64_t)doc};
+    if (parser->document_metadata_)
+        list_push((List*)doc, Item{.element = parser->document_metadata_});
+    list_push((List*)doc, Item{.element = body});
+    if (!markup_document_finish(parser, doc, body)) return ItemError;
+    return Item{.element = doc};
 }
 
 } // namespace markup

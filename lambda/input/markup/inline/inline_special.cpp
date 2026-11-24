@@ -274,6 +274,7 @@ Item parse_footnote_reference(MarkupParser* parser, const char** text) {
     }
 
     // Create footnote-ref element
+    if (parser->preview_stream) parser->preview_requires_definitions = true;
     Element* ref = create_element(parser, "footnote-ref");
     if (!ref) {
         *text = pos + 1;

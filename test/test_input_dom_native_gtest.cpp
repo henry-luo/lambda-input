@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include "lambda/input/css/dom_element.hpp"
 #include "lambda/input/css/dom_lifecycle.hpp"
+#include "lambda/input/css/selector_matcher.hpp"
 #include "lambda/input/css/dom_xml_serializer.h"
 #include "lib/strbuf.h"
 #include "lambda/input/css/dom_svg_context.h"
@@ -13,6 +14,36 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+
+TEST(InputDomNativeTest, RawClassProjectionAgreesWithCachedSelectorMatching) {
+    Pool* pool = pool_create();
+    ASSERT_NE(pool, nullptr);
+    Input* input = Input::create(pool);
+    ASSERT_NE(input, nullptr);
+    DomDocument* document = dom_document_create(input);
+    ASSERT_NE(document, nullptr);
+    DomElement* element = dom_create_backed_element_identity(document, "div", nullptr, false);
+    ASSERT_NE(element, nullptr);
+    const char* values[] = {"", "marker", "MARKER", "unrelated", "marker extra",
+        "extra\tmarker\n", "marker\ftail", "marker\vtail", "markers", "prefix-marker"};
+    CssSimpleSelector selector = {};
+    selector.type = CSS_SELECTOR_TYPE_CLASS;
+    selector.value = "marker";
+    SelectorMatcher matcher;
+    selector_matcher_init(&matcher, document->document_pool);
+    for (const char* value : values) {
+        ASSERT_TRUE(element->set_attribute("class", value));
+        for (unsigned mode = 0; mode < 2; mode++) {
+            matcher.case_sensitive_classes = mode != 0;
+            EXPECT_EQ(dom_class_attribute_has_token(value, selector.value, matcher.case_sensitive_classes),
+                selector_matcher_matches_simple(&matcher, &selector, element)) << value;
+        }
+    }
+    EXPECT_FALSE(dom_class_attribute_has_token(nullptr, "marker", true));
+    EXPECT_FALSE(dom_class_attribute_has_token("marker", nullptr, true));
+    dom_document_destroy(document);
+    pool_destroy(pool);
+}
 
 TEST(InputDomNativeTest, ViewOccurrencesOwnBackingAndLeaveSourceUnchanged) {
     Pool* pool = pool_create();

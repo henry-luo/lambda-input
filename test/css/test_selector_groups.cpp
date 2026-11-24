@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 #include "helpers/css_test_helpers.hpp"
+#include "lib/strbuf.h"
 
 extern "C" {
 #include "lambda/input/css/css_engine.hpp"
@@ -42,6 +43,39 @@ TEST_F(SelectorGroupTest, InvalidOrdinaryListDoesNotApplyPartialRule) {
         ".a, > .bad { color: red; } .a { color: blue; }", nullptr);
     ASSERT_NE(sheet, nullptr);
     EXPECT_EQ(sheet->rule_count, 1u);
+}
+
+TEST_F(SelectorGroupTest, DoubleHyphenClassNamesAreIdentifiers) {
+    CssEngine* engine = CreateEngine();
+    ASSERT_NE(engine, nullptr);
+    const char* selectors[] = {".--marker", "div.--marker", "body .--marker",
+        "body > div:has(.--marker)", ".page:is(.--marker,.other)", ".page:not(.--marker)",
+        "[--flag]", "|--element", "div --element"};
+    for (const char* selector : selectors) {
+        StrBuf* source = strbuf_new();
+        strbuf_append_str(source, selector);
+        strbuf_append_str(source, "{color:blue}");
+        CssStylesheet* sheet = css_parse_stylesheet(engine, source->str, nullptr);
+        ASSERT_NE(sheet, nullptr);
+        ASSERT_EQ(sheet->rule_count, 1u) << selector;
+        strbuf_free(source);
+    }
+}
+
+TEST_F(SelectorGroupTest, FailedFunctionalPseudoCannotBroadenCompound) {
+    CssEngine* engine = CreateEngine();
+    ASSERT_NE(engine, nullptr);
+    const char* invalid[] = {".page:has(.marker,:bogus)", "body > div:has(.marker,:bogus)",
+        ".page:not(.marker,:bogus)", ".page:has()", ".page:nth-child(bad)"};
+    for (const char* selector : invalid) {
+        StrBuf* source = strbuf_new();
+        strbuf_append_str(source, selector);
+        strbuf_append_str(source, "{display:none}.keep{color:blue}");
+        CssStylesheet* sheet = css_parse_stylesheet(engine, source->str, nullptr);
+        ASSERT_NE(sheet, nullptr);
+        EXPECT_EQ(sheet->rule_count, 1u) << selector;
+        strbuf_free(source);
+    }
 }
 
 TEST_F(SelectorGroupTest, KnownShadowPseudoKeepsOrdinarySelectorListValid) {

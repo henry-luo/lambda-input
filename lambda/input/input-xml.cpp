@@ -1,6 +1,7 @@
 #include "input.hpp"
 #include "input-parsers.h"
 #include "../io/mark_builder.hpp"
+#include "../io/zip_archive.hpp"
 #include "input-context.hpp"
 #include "source_tracker.hpp"
 #include "lib/html_entities.h"
@@ -857,9 +858,10 @@ static bool xml_text_is_space(const char* chars, size_t len) {
 static String* xml_decode_text(XmlInputContext& ctx, const char* start, const char* end) {
     if (end <= start) return nullptr;
     if (ctx.strict()) {
-        const char* forbidden = strstr(start, "]]>");
-        if (forbidden && forbidden < end) {
-            xml_error(ctx, forbidden, "XML_CHARACTER_DATA", "']]>' is forbidden in XML character data"); return nullptr;
+        // scan this text span only. Searching the document tail for every run is quadratic.
+        size_t forbidden = str_find(start, (size_t)(end - start), "]]>", 3);
+        if (forbidden != STR_NPOS) {
+            xml_error(ctx, start + forbidden, "XML_CHARACTER_DATA", "']]>' is forbidden in XML character data"); return nullptr;
         }
     }
     StringBuf* sb = ctx.sb;
@@ -1348,3 +1350,226 @@ Element* parse_mathml_document(Input* input, const char* source) {
     log_error("xml-document-element: expected a MathML namespace root");
     return nullptr;
 }
+
+struct XmlBodyReader {
+    ZipMemberReader* member;
+    StrBuf* bytes;
+    StrBuf* header;
+    StrBuf* tail;
+    size_t position;
+    size_t consumed;
+    bool source_end;
+    bool ended;
+    bool failed;
+};
+
+struct XmlBodyToken {
+    size_t start, end, name, name_length;
+    bool closing, empty, special;
+};
+
+static bool xml_body_byte(XmlBodyReader* reader, size_t position) {
+    while (position >= reader->bytes->length && !reader->source_end && !reader->failed) {
+        char bytes[4096];
+        size_t count = 0;
+        ZipError error = {};
+        if (!zip_member_read(reader->member, bytes, sizeof(bytes), &count, &error)) {
+            log_error("XML_BODY_READ: %s", error.message);
+            reader->failed = true;
+            return false;
+        }
+        reader->source_end = count == 0;
+        size_t expected = reader->bytes->length + count;
+        strbuf_append_str_n(reader->bytes, bytes, count);
+        if (reader->bytes->length != expected) reader->failed = true;
+    }
+    if (position < reader->bytes->length && !reader->bytes->str[position]) reader->failed = true;
+    return !reader->failed && position < reader->bytes->length;
+}
+
+static bool xml_body_matches(XmlBodyReader* reader, size_t at, const char* token, size_t length) {
+    return xml_body_byte(reader, at + length - 1) &&
+        !memcmp(reader->bytes->str + at, token, length);
+}
+
+static bool xml_body_token(XmlBodyReader* reader, XmlBodyToken* token) {
+    size_t at = reader->position;
+    if (!xml_body_byte(reader, at + 1) || reader->bytes->str[at] != '<') return false;
+    *token = {};
+    token->start = at++;
+    char next = reader->bytes->str[at];
+    if (next == '!' || next == '?') {
+        token->special = true;
+        const char* end;
+        size_t length;
+        if (next == '?') { end = "?>"; length = 2; at++; }
+        else if (xml_body_matches(reader, at, "!--", 3)) { end = "-->"; length = 3; at += 3; }
+        else if (xml_body_matches(reader, at, "![CDATA[", 8)) { end = "]]>"; length = 3; at += 8; }
+        else return false; // document XML prohibits DTDs.
+        while (xml_body_byte(reader, at) && !xml_body_matches(reader, at, end, length)) ++at;
+        if (!xml_body_matches(reader, at, end, length)) return false;
+        token->end = reader->position = at + length;
+        return true;
+    }
+    token->closing = next == '/';
+    if (token->closing) ++at;
+    token->name = at;
+    while (xml_body_byte(reader, at)) {
+        char ch = reader->bytes->str[at];
+        if (str_is_space(ch) || ch == '/' || ch == '>') break;
+        ++at;
+    }
+    token->name_length = at - token->name;
+    if (!token->name_length) return false;
+    char quote = 0;
+    while (xml_body_byte(reader, at)) {
+        char ch = reader->bytes->str[at++];
+        if (quote) {
+            if (ch == quote) quote = 0;
+        } else if (ch == '\'' || ch == '"') quote = ch;
+        else if (ch == '>') {
+            token->empty = reader->bytes->str[at - 2] == '/';
+            token->end = reader->position = at;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool xml_body_skip_subtree(XmlBodyReader* reader, XmlBodyToken start) {
+    if (start.special || start.empty) return true;
+    unsigned depth = 1;
+    while (xml_body_byte(reader, reader->position)) {
+        if (reader->bytes->str[reader->position] != '<') { ++reader->position; continue; }
+        XmlBodyToken token;
+        if (!xml_body_token(reader, &token)) return false;
+        if (token.special || token.empty) continue;
+        if (token.closing) --depth;
+        else if (++depth >= XML_MAX_DEPTH) return false;
+        if (!depth) return true;
+    }
+    return false;
+}
+
+static bool xml_body_space(XmlBodyReader* reader) {
+    while (xml_body_byte(reader, reader->position) &&
+        strchr(" \t\r\n", reader->bytes->str[reader->position])) ++reader->position;
+    return xml_body_byte(reader, reader->position);
+}
+
+static bool xml_body_named(XmlBodyReader* reader, const XmlBodyToken& token, const char* local) {
+    StrView name = strview_init(reader->bytes->str + token.name, token.name_length);
+    for (size_t i = 0; i < name.length; ++i) {
+        if (name.str[i] == ':') { name.str += i + 1; name.length -= i + 1; break; }
+    }
+    return strview_equal(&name, local);
+}
+
+static bool xml_body_header(XmlBodyReader* reader) {
+    if (xml_body_matches(reader, 0, "\xef\xbb\xbf", 3)) reader->position = 3;
+    XmlBodyToken root;
+    do {
+        if (!xml_body_space(reader) || !xml_body_token(reader, &root)) return false;
+    } while (root.special);
+    if (root.closing || root.empty || !xml_body_named(reader, root, "document")) return false;
+
+    XmlBodyToken body;
+    for (;;) {
+        if (!xml_body_space(reader) || !xml_body_token(reader, &body) || body.closing) return false;
+        if (!body.special && xml_body_named(reader, body, "body")) break;
+        if (!xml_body_skip_subtree(reader, body)) return false;
+    }
+    strbuf_append_str_n(reader->header, reader->bytes->str, body.end);
+    if (!body.empty) {
+        strbuf_append_str(reader->tail, "</");
+        strbuf_append_str_n(reader->tail, reader->bytes->str + body.name, body.name_length);
+        strbuf_append_char(reader->tail, '>');
+    }
+    strbuf_append_str(reader->tail, "</");
+    strbuf_append_str_n(reader->tail, reader->bytes->str + root.name, root.name_length);
+    strbuf_append_char(reader->tail, '>');
+    return reader->header->length == body.end && reader->tail->length ==
+        root.name_length + 3 + (body.empty ? 0 : body.name_length + 3);
+}
+
+XmlBodyReader* xml_body_open(ZipMemberReader* member) {
+    if (!member) return nullptr;
+    auto* reader = (XmlBodyReader*)mem_calloc(1, sizeof(XmlBodyReader), MEM_CAT_INPUT_OTHER);
+    if (!reader) { zip_member_close(member); return nullptr; }
+    reader->member = member;
+    reader->bytes = strbuf_new();
+    reader->header = strbuf_new();
+    reader->tail = strbuf_new();
+    if (!reader->bytes || !reader->header || !reader->tail || !xml_body_header(reader)) {
+        xml_body_close(reader);
+        return nullptr;
+    }
+    return reader;
+}
+
+void xml_body_close(XmlBodyReader* reader) {
+    if (!reader) return;
+    zip_member_close(reader->member);
+    if (reader->bytes) strbuf_free(reader->bytes);
+    if (reader->header) strbuf_free(reader->header);
+    if (reader->tail) strbuf_free(reader->tail);
+    mem_free(reader);
+}
+
+XmlBodyStatus xml_body_advance(XmlBodyReader* reader, Input* input, size_t batch_bytes, size_t batch_nodes) {
+    if (!reader || reader->failed) return XmlBodyStatus::ERROR;
+    if (reader->ended) return XmlBodyStatus::END;
+    size_t start = reader->position, count = 0, content_end = start;
+    bool done = false;
+    // The delimiter scan only finds complete units. The strict parser validates every delivered unit.
+    while (xml_body_space(reader)) {
+        if (reader->bytes->str[reader->position] != '<') break;
+        XmlBodyToken token;
+        if (!xml_body_token(reader, &token)) break;
+        if (token.closing) {
+            // Keep the actual close tags and trailing input for strict EOF validation.
+            while (xml_body_byte(reader, reader->bytes->length)) {}
+            content_end = reader->bytes->length;
+            done = true;
+            break;
+        }
+        if (!xml_body_skip_subtree(reader, token)) break;
+        content_end = reader->position;
+        if (!token.special) ++count;
+        if (count && (count >= batch_nodes || content_end - start >= batch_bytes)) break;
+    }
+    if (reader->failed || (!done && (!count || (count < batch_nodes && content_end - start < batch_bytes)))) {
+        reader->failed = true;
+        return XmlBodyStatus::ERROR;
+    }
+    StrBuf* xml = strbuf_new_cap(reader->header->length + content_end - start + reader->tail->length + 1);
+    if (!xml) return XmlBodyStatus::ERROR;
+    strbuf_append_str_n(xml, reader->header->str, reader->header->length);
+    strbuf_append_str_n(xml, reader->bytes->str + start, content_end - start);
+    if (!done) strbuf_append_str_n(xml, reader->tail->str, reader->tail->length);
+    const size_t expected = reader->header->length + content_end - start + (done ? 0 : reader->tail->length);
+    XmlParseOptions options = {};
+    options.preserve_whitespace = options.require_well_formed = options.require_namespaces = true;
+    InputAllocationContext scope = {input->pool, input->arena, input->ui_mode, input};
+    InputAllocationContext* previous = input_allocation_context;
+    input_allocation_context = &scope;
+    if (xml->length == expected && !memchr(xml->str, 0, expected))
+        parse_xml_with_options(input, xml->str, &options);
+    else input->root = ItemError;
+    input_allocation_context = previous;
+    strbuf_free(xml);
+    if (get_type_id(input->root) != LMD_TYPE_ELEMENT) {
+        reader->failed = true;
+        return XmlBodyStatus::ERROR;
+    }
+    // Compact only after parsing. Offsets, never pointers, survive buffer growth.
+    memmove(reader->bytes->str, reader->bytes->str + content_end, reader->bytes->length - content_end);
+    reader->bytes->length -= content_end;
+    reader->bytes->str[reader->bytes->length] = 0;
+    reader->consumed += content_end;
+    reader->position = 0;
+    reader->ended = done;
+    return done ? XmlBodyStatus::END : XmlBodyStatus::MORE;
+}
+
+size_t xml_body_consumed(const XmlBodyReader* reader) { return reader->consumed; }

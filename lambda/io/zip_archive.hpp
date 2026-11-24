@@ -21,6 +21,12 @@ inline bool zip_entry_bytes(ZipArchive* archive, uint32_t index, ByteSpan* bytes
     return archive_member_bytes(archive, index, bytes, error);
 }
 
+struct ZipMemberReader;
+ZipMemberReader* zip_member_open(ZipArchive* archive, uint32_t index, ZipError* error);
+// A zero-byte successful read means that size and CRC have been verified.
+bool zip_member_read(ZipMemberReader* reader, void* buffer, size_t capacity, size_t* read, ZipError* error);
+void zip_member_close(ZipMemberReader* reader);
+
 struct ZipOutputEntry {
     const char* path;
     const uint8_t* bytes;

@@ -24,6 +24,7 @@ bool input_parse_model(Input* input, const char* source, size_t length, const ch
 // binary-capable STL and PLY meshes; false when type names neither
 bool input_parse_mesh(Input* input, const char* source, size_t length, const char* type);
 void input_scene3d_asset(Input* input, const char* source, size_t length, const char* flavor);
+bool input_scene3d_glb_preview(Input* input, const char* path, bool animate);
 // FBX 7.x, binary or ASCII, as one raw <fbx> record tree (Lambda_Pkg_Motion.md §4)
 void input_fbx(Input* input, const char* source, size_t length);
 // the common <character> schema of lambda.scene3d.motion (Lambda_Pkg_Motion.md §7)
@@ -47,6 +48,14 @@ struct XmlParseOptions {
     bool track_source_lines = false;
 };
 void parse_xml_with_options(Input* input, const char* xml_string, const XmlParseOptions* options);
+struct ZipMemberReader;
+struct XmlBodyReader;
+enum class XmlBodyStatus { MORE, END, ERROR };
+// Opens a strict document/body stream and consumes the member reader.
+XmlBodyReader* xml_body_open(ZipMemberReader* member);
+void xml_body_close(XmlBodyReader* reader);
+XmlBodyStatus xml_body_advance(XmlBodyReader* reader, Input* input, size_t batch_bytes, size_t batch_nodes);
+size_t xml_body_consumed(const XmlBodyReader* reader);
 Element* parse_xhtml_document(Input* input, const char* source, size_t length,
                               bool track_source_lines = false);
 void parse_css(Input* input, const char* css_string);

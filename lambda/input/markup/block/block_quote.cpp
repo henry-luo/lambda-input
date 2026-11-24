@@ -301,17 +301,17 @@ static Item parse_rst_blockquote(MarkupParser* parser, const char* line) {
     // Collect all lines with at least base_indent spaces
     ArrayList* content_lines = arraylist_new(16);
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Empty line - could be part of blockquote or end it
         if (is_empty_line(current)) {
             // Check if next non-empty line continues the blockquote
             size_t peek = parser->current_line + 1;
-            while (peek < (size_t)parser->line_count && is_empty_line(parser->lines[peek])) {
+            while (parser->hasLine(peek) && is_empty_line(parser->lines[peek])) {
                 peek++;
             }
-            if (peek < (size_t)parser->line_count) {
+            if (parser->hasLine(peek)) {
                 const char* next = parser->lines[peek];
                 int next_indent = 0;
                 const char* np = next;
@@ -361,7 +361,7 @@ static Item parse_rst_blockquote(MarkupParser* parser, const char* line) {
 
         // For RST blockquotes, content is typically paragraph text.
         // Avoid calling full block detection to prevent infinite recursion.
-        while (parser->current_line < parser->line_count) {
+        while (parser->hasLine(parser->current_line)) {
             const char* content_line = parser->lines[parser->current_line];
 
             if (is_empty_line(content_line)) {
@@ -444,7 +444,7 @@ Item parse_blockquote(MarkupParser* parser, const char* line) {
     // Track if last content was indented code - lazy with 4+ spaces not allowed after it
     bool last_was_indented_code = false;
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
         int line_depth = count_quote_depth(current);
 
@@ -564,7 +564,7 @@ Item parse_blockquote(MarkupParser* parser, const char* line) {
         parser->state.lazy_lines_count = num_lines;
 
         // Parse block elements from the content
-        while (parser->current_line < parser->line_count) {
+        while (parser->hasLine(parser->current_line)) {
             const char* content_line = parser->lines[parser->current_line];
 
             // Skip empty lines

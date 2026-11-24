@@ -382,12 +382,12 @@ Item parse_html_block(MarkupParser* parser, const char* line) {
     StringBuf* sb = parser->sb;
     stringbuf_reset(sb);
 
-    while (parser->current_line < parser->line_count) {
+    while (parser->hasLine(parser->current_line)) {
         const char* current = parser->lines[parser->current_line];
 
         // Check if next line is blank (for type 6 and 7 end conditions)
         bool next_is_blank = false;
-        if (parser->current_line + 1 < parser->line_count) {
+        if (parser->hasLine(parser->current_line + 1)) {
             next_is_blank = is_blank(parser->lines[parser->current_line + 1]);
         } else {
             // End of document counts as blank for type 6/7
