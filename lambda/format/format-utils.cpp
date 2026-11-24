@@ -190,14 +190,6 @@ void format_markup_string_safe(StringBuf* sb, String* str, bool is_attribute,
 
     const char* s = str->chars;
     size_t len = str->len;
-    const size_t max_html_string_len = 1024 * 1024;
-    const size_t max_html_attribute_len = 32 * 1024 * 1024;
-    bool large_attr = is_attribute && len <= max_html_attribute_len;
-    if (len > max_html_string_len && !large_attr) {
-        log_error("%s_string_guard: skipping suspicious string len=%zu ptr=%p",
-            log_prefix ? log_prefix : "markup", len, (void*)s);
-        return;
-    }
 
     // Bulk-append the runs the switch below would copy one byte at a time
     // (27-30% of HTML/XML output time).

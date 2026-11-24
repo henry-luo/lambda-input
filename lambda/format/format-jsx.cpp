@@ -14,7 +14,7 @@ static void format_jsx_item(StringBuf* sb, const ItemReader& item);
 
 // Format JSX text content with proper escaping
 static void format_jsx_text_content(StringBuf* sb, String* text) {
-    if (!text || text->len == 0 || text->len > 10000) return;
+    if (!text || text->len == 0) return;
     format_escaped_string(sb, text->chars, text->len,
         JSX_TEXT_ESCAPE_RULES, JSX_TEXT_ESCAPE_RULES_COUNT);
 }
@@ -43,7 +43,7 @@ static bool try_format_js_expr(StringBuf* sb, const ElementReader& elem) {
         ItemReader first = elem.childAt(0);
         if (first.isString()) {
             String* js = first.asString();
-            if (js && js->len > 0 && js->len < 10000) {
+            if (js && js->len > 0) {
                 stringbuf_append_str(sb, js->chars);
             }
         }

@@ -53,7 +53,7 @@ static void format_latex_value(LaTeXContext& ctx, const ItemReader& value) {
 
     private:
         void write_latex_text(String* str) {
-            if (str && str->len > 0 && str->len < 65536) {
+            if (str && str->len > 0) {
                 stringbuf_append_str_n(ctx_.output(), str->chars, str->len);
             }
         }
