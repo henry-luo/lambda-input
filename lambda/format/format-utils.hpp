@@ -349,9 +349,16 @@ struct XmlNamespaceBinding {
 class XmlContext : public TagContext {
 public:
     XmlNamespaceBinding* namespaces = nullptr;
-    XmlContext(Pool* pool, StringBuf* output)
-        : TagContext(pool, output)
+    bool& contains_nul;
+    XmlContext(Pool* pool, StringBuf* output, bool& contains_nul)
+        : TagContext(pool, output), contains_nul(contains_nul)
     {}
+
+    bool admit(const char* text, size_t length) {
+        // XML cannot represent U+0000 even through a character reference.
+        if (text && length && memchr(text, 0, length)) contains_nul = true;
+        return !contains_nul;
+    }
 
     inline void write_xml_escaped_attribute(const char* text) {
         write_escaped_attribute(text);

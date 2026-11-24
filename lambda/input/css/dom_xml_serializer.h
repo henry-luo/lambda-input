@@ -22,6 +22,7 @@ typedef struct DomXmlProjection {
     bool (*append_children)(void* context, void* element, struct StrBuf* output);
 } DomXmlProjection;
 bool dom_serialize_xml(void* node, struct StrBuf* output, const DomXmlProjection* projection);
+bool dom_serialize_xml_dom_string(void* node, struct StrBuf* output);
 
 
 #ifdef __cplusplus

@@ -631,6 +631,24 @@ DomElement* dom_find_source_element_by_id(DomNode* root, const char* id) {
     return nullptr;
 }
 
+DomElement* dom_find_source_element_by_id(DomNode* root, StrView id) {
+    if (!id.str || !id.length) return nullptr;
+    // the ordinary ID cache contains selector-compatible names. Search raw values for NUL queries.
+    bool contains_nul = memchr(id.str, 0, id.length) != nullptr;
+    for (DomNode* node = root; node; node = dom_source_next_in_tree(root, node)) {
+        DomElement* element = node->as_element();
+        if (!element) continue;
+        if (!contains_nul) {
+            if (element->id && strncmp(element->id, id.str, id.length) == 0 &&
+                element->id[id.length] == '\0') return element;
+        } else if (!element->id) {
+            StrView value = element->get_attribute_view("id");
+            if (strview_eq(&value, &id)) return element;
+        }
+    }
+    return nullptr;
+}
+
 DomElement* dom_details_first_summary(DomElement* details) {
     for (DomNode* child = dom_source_child(details, true); child; child = dom_source_sibling(child, true)) {
         DomElement* element = child->as_element();
@@ -718,7 +736,8 @@ DomElement* dom_parent_element(DomElement* element) {
     return parent;
 }
 
-static const char* dom_element_stored_attribute(DomElement* element, const char* key);
+static const char* dom_element_stored_attribute(DomElement* element, const char* key,
+                                                size_t* value_length = nullptr);
 static Item extract_element_attribute_item(Element* element, const char* name);
 
 static constexpr char HTML_NAMESPACE_URI[] = "http://www.w3.org/1999/xhtml";
@@ -949,6 +968,12 @@ DomNamespacedAttribute* dom_element_namespaced_attributes(DomElement* element) {
 
 bool dom_element_record_namespaced_attribute(DomElement* element,
     const char* namespace_uri, const char* qualified_name, const char* value) {
+    return dom_element_record_namespaced_attribute(element, namespace_uri, qualified_name,
+        value ? strview_from_cstr(value) : StrView{});
+}
+
+bool dom_element_record_namespaced_attribute(DomElement* element,
+    const char* namespace_uri, const char* qualified_name, StrView value) {
     if (!element || !element->doc || !namespace_uri ||
         !qualified_name || !*qualified_name) return false;
     const char* colon = strrchr(qualified_name, ':');
@@ -962,12 +987,14 @@ bool dom_element_record_namespaced_attribute(DomElement* element,
         if (attr->active && strcmp(attr->namespace_uri, namespace_uri) == 0 &&
             strcmp(attr->local_name, local) == 0) {
             if (strcmp(attr->qualified_name, qualified_name) == 0 &&
-                ((!attr->value && !value) || (attr->value && value && strcmp(attr->value, value) == 0))) return true;
+                (bool)attr->value == (value.str != nullptr) &&
+                str_eq(attr->value, attr->value_length, value.str, value.length)) return true;
             char* name_copy = pool_strdup(pool, qualified_name);
-            char* value_copy = value ? pool_strdup(pool, value) : nullptr;
-            if (!name_copy || (value && !value_copy)) return false;
+            char* value_copy = value.str ? pool_dup_n(pool, value.str, value.length) : nullptr;
+            if (!name_copy || (value.str && !value_copy)) return false;
             attr->qualified_name = lam::own(name_copy);
             attr->value = lam::own(value_copy);
+            attr->value_length = value.length;
             attr->active = true;
             return attr->active;
         }
@@ -980,8 +1007,9 @@ bool dom_element_record_namespaced_attribute(DomElement* element,
     attr->namespace_uri = lam::up(canonical_uri);
     attr->local_name = lam::own(pool_strdup(pool, local));
     attr->qualified_name = lam::own(pool_strdup(pool, qualified_name));
-    attr->value = lam::own(value ? pool_strdup(pool, value) : nullptr);
-    if (!attr->local_name || !attr->qualified_name || (value && !attr->value)) return false;
+    attr->value = lam::own(value.str ? pool_dup_n(pool, value.str, value.length) : nullptr);
+    attr->value_length = value.length;
+    if (!attr->local_name || !attr->qualified_name || (value.str && !attr->value)) return false;
     attr->active = true;
     lam::Own<DomNamespacedAttribute>* tail = &ext->namespaced_attributes;
     while (*tail) tail = &(*tail)->next;
@@ -1002,15 +1030,21 @@ void dom_element_remove_namespaced_attribute(DomElement* element,
     }
 }
 
-const char* dom_element_get_namespaced_attribute(DomElement* element,
+static DomNamespacedAttribute* dom_element_find_namespaced_attribute(DomElement* element,
     const char* namespace_uri, const char* local_name) {
     if (!namespace_uri || !local_name) return nullptr;
     for (DomNamespacedAttribute* attr = dom_element_namespaced_attributes(element);
          attr; attr = attr->next) {
         if (attr->active && strcmp(attr->namespace_uri, namespace_uri) == 0 &&
-            strcmp(attr->local_name, local_name) == 0) return attr->value;
+            strcmp(attr->local_name, local_name) == 0) return attr;
     }
     return nullptr;
+}
+
+const char* dom_element_get_namespaced_attribute(DomElement* element,
+    const char* namespace_uri, const char* local_name) {
+    DomNamespacedAttribute* attr = dom_element_find_namespaced_attribute(element, namespace_uri, local_name);
+    return attr ? attr->value.get() : nullptr;
 }
 
 const char* dom_element_attribute_namespace_uri(DomElement* element,
@@ -1657,18 +1691,10 @@ DomText* dom_find_text_child(DomElement* parent, String* string_value) {
     return nullptr;
 }
 
-static String* dom_create_mutation_string(MarkBuilder* builder, const char* content, bool use_dom_text_string) {
-    if (!builder || !content) return nullptr;
-    size_t len = strlen(content);
-    if (use_dom_text_string) {
-        return builder->createDomTextString(content, len);
-    }
-    if (len > 0) {
-        return builder->createString(content, len);
-    }
-
-    // dom text mutations need a real empty string, while normal Lambda "" maps to null.
-    return string_from_strview_arena(strview_init("", 0), builder->arena());
+static String* dom_create_mutation_string(MarkBuilder* builder, StrView content, bool use_dom_text_string) {
+    if (!builder || !content.str) return nullptr;
+    return use_dom_text_string ? builder->createDomTextString(content.str, content.length)
+        : builder->createString(content.str, content.length);
 }
 
 // ============================================================================
@@ -2151,42 +2177,50 @@ static int dom_class_list_index(const DomClassList* classes, StrView name) {
     return -1;
 }
 
-static StrView dom_next_class_token(const char*& cursor) {
-    const char* whitespace = " \t\n\r";
-    const char* start = cursor + strspn(cursor, whitespace);
-    size_t length = strcspn(start, whitespace);
-    cursor = start + length;
-    return {start, length};
+static StrView dom_next_class_token(const char*& cursor, const char* end) {
+    auto space = [](char byte) { return str_is_html_space(byte) && byte != '\f'; };
+    while (cursor < end && space(*cursor)) cursor++;
+    const char* start = cursor;
+    while (cursor < end && !space(*cursor)) cursor++;
+    return {start, (size_t)(cursor - start)};
 }
 
 bool dom_class_attribute_has_token(const char* value, const char* name, bool case_sensitive) {
-    if (!value || !name) return false;
+    return value && dom_class_attribute_has_token(strview_from_cstr(value), name, case_sensitive);
+}
+
+bool dom_class_attribute_has_token(StrView value, const char* name, bool case_sensitive) {
+    if (!value.str || !name) return false;
     const size_t length = strlen(name);
-    const char* cursor = value;
-    for (StrView token = dom_next_class_token(cursor); token.length;
-         token = dom_next_class_token(cursor)) {
+    const char* cursor = value.str;
+    const char* end = cursor + value.length;
+    for (StrView token = dom_next_class_token(cursor, end); token.length;
+         token = dom_next_class_token(cursor, end)) {
         if (case_sensitive ? str_eq(token.str, token.length, name, length) :
             str_icmp(token.str, token.length, name, length) == 0) return true;
     }
     return false;
 }
 
-static DomClassList* dom_parse_class_list(Pool* pool, const char* value, bool unique) {
-    if (!value) return nullptr;
+static DomClassList* dom_parse_class_list(Pool* pool, StrView value, bool unique) {
+    if (!value.str) return nullptr;
 
     // use the same token boundaries for sizing and filling the trailing array.
     int capacity = 0;
-    const char* cursor = value;
-    while (dom_next_class_token(cursor).length) {
+    const char* cursor = value.str;
+    const char* end = cursor + value.length;
+    while (dom_next_class_token(cursor, end).length) {
         if (capacity == INT_MAX) return nullptr;
         capacity++;
     }
     DomClassList* classes = DomClassList::allocate(pool, capacity);
     if (!classes) return nullptr;
 
-    cursor = value;
-    for (StrView token = dom_next_class_token(cursor); token.length;
-         token = dom_next_class_token(cursor)) {
+    cursor = value.str;
+    for (StrView token = dom_next_class_token(cursor, end); token.length;
+         token = dom_next_class_token(cursor, end)) {
+        // CSS selector spelling cannot match a NUL. Keep the raw token in the attribute.
+        if (memchr(token.str, 0, token.length)) continue;
         if (unique && dom_class_list_index(classes, token) >= 0) continue;
         const char* copy = pool_dup_n(pool, token.str, token.length);
         if (copy) classes->class_names[classes->class_count++] = copy;
@@ -2430,13 +2464,13 @@ DomElement* DomElement::create_in(DomElement* element, DomDocument* doc,
         // Template-bound attributes can carry a runtime String even when their
         // shape field is not statically typed as one; the runtime lookup is the
         // authoritative source for selector caches during DOM reconstruction.
-        const char* id_attr = extract_element_attribute(native_element, "id", nullptr);
-        if (id_attr) {
-            dom_element_retain_id(element, lam::promote_to_pool(element->storage_pool(), id_attr));
-        }
+        String* id_attr = extract_element_attribute_item(native_element, "id").get_safe_string();
+        if (id_attr && !memchr(id_attr->chars, 0, id_attr->len))
+            dom_element_retain_id(element, lam::promote_to_pool(element->storage_pool(), id_attr->chars));
 
-        const char* class_str = extract_element_attribute(native_element, "class", nullptr);
-        element->classes = lam::own(dom_parse_class_list(element->storage_pool(), class_str, false));
+        String* classes = extract_element_attribute_item(native_element, "class").get_safe_string();
+        if (classes) element->classes = lam::own(dom_parse_class_list(element->storage_pool(),
+            {classes->chars, classes->len}, false));
     }
 
     if (!dom_node_registry_register(doc, element, sizeof(DomElement), true)) {
@@ -3008,20 +3042,21 @@ static int dom_element_find_synthetic_attribute(DomElement* element,
 
 static bool dom_element_set_synthetic_attribute(DomElement* element,
                                                 const char* lower_name,
-                                                const char* value) {
+                                                StrView value) {
     if (!element || !element->doc || !element->storage_pool() ||
-        !lower_name || !value) {
+        !lower_name || !value.str) {
         return false;
     }
     DomAttributeCache* data = element->ensure_attribute_cache();
     if (!data) return false;
     int index = dom_element_find_synthetic_attribute(element, lower_name);
     if (index >= 0) {
-        char* next_value = pool_strdup(element->storage_pool(), value);
+        char* next_value = pool_dup_n(element->storage_pool(), value.str, value.length);
         if (!next_value) return false;
         pool_free(element->storage_pool(),
                   (void*)data->synthetic_attributes[index].value);
         data->synthetic_attributes[index].value = lam::own((const char*)next_value);
+        data->synthetic_attributes[index].value_length = value.length;
         return true;
     }
     if (data->synthetic_attribute_count == data->synthetic_attribute_capacity) {
@@ -3031,14 +3066,14 @@ static bool dom_element_set_synthetic_attribute(DomElement* element,
                                   data->synthetic_attribute_count + 1, 4)) return false;
     }
     char* name_copy = pool_strdup(element->storage_pool(), lower_name);
-    char* value_copy = pool_strdup(element->storage_pool(), value);
+    char* value_copy = pool_dup_n(element->storage_pool(), value.str, value.length);
     if (!name_copy || !value_copy) {
         pool_free(element->storage_pool(), name_copy);
         pool_free(element->storage_pool(), value_copy);
         return false;
     }
     data->synthetic_attributes[data->synthetic_attribute_count++] = {
-        lam::own((const char*)name_copy), lam::own((const char*)value_copy)
+        lam::own((const char*)name_copy), lam::own((const char*)value_copy), value.length
     };
     return true;
 }
@@ -3073,12 +3108,13 @@ static bool dom_element_clear_inline_style_declarations(DomElement* element) {
 
 static void dom_element_attribute_did_set(DomElement* element,
                                           const char* lower_name,
-                                          const char* value, bool same_value) {
-    if (!element || !element->doc || !lower_name || !value) return;
+                                          StrView value, bool same_value) {
+    if (!element || !element->doc || !lower_name || !value.str) return;
     if (strcmp(lower_name, "id") == 0) {
         dom_element_release_cached_id(element);
-        const char* id_attr = dom_element_attribute_value_ns(element, "", "id");
-        if (id_attr) {
+        size_t length;
+        const char* id_attr = dom_element_attribute_value_ns(element, "", "id", &length);
+        if (id_attr && !memchr(id_attr, 0, length)) {
             dom_element_retain_id(element, lam::promote_to_pool(
                 element->storage_pool(), id_attr));
         }
@@ -3092,7 +3128,7 @@ static void dom_element_attribute_did_set(DomElement* element,
         if (same_value && !(block && block->updating)) return;
         dom_element_clear_inline_style_declarations(element);
         if (!(block && block->updating)) dom_element_clear_inline_declaration_block(element);
-        if (value[0] != '\0') dom_element_apply_inline_style(element, value);
+        if (value.length) dom_element_apply_inline_style(element, value);
     }
     element->advance_style_version();
     element->set_needs_style_recompute(true);
@@ -3118,20 +3154,30 @@ static void dom_element_attribute_did_remove(DomElement* element,
 // SVG and other foreign content keep their case (`viewBox`, `gradientUnits`,
 // as the parser and Lambda templates spell them), and DOM §4.9 lowercases a
 // queried name only for HTML elements, so a name stored exactly as asked wins.
-static String* dom_attribute_value(DomDocument* doc, MarkBuilder* builder, const char* value);
+static String* dom_attribute_value(DomDocument* doc, MarkBuilder* builder, StrView value);
 
-static const char* dom_element_stored_attribute(DomElement* element, const char* key) {
+static const char* dom_cstr_attribute(const char* value, size_t* length) {
+    if (length) *length = value ? strlen(value) : 0;
+    return value;
+}
+
+static const char* dom_element_stored_attribute(DomElement* element, const char* key,
+                                                size_t* value_length) {
+    if (value_length) *value_length = 0;
     bool namespace_uri = is_namespace_uri_attribute(key);
     if (namespace_uri) {
-        if (const char* uri = direct_namespace_uri(element)) return uri;
+        if (const char* uri = direct_namespace_uri(element)) return dom_cstr_attribute(uri, value_length);
     } else if (key[0] == '_' && !strcmp(key, "__lambda_ns_local_name")) {
         // keep the private getter as a projection of the tag, even for older Mark input.
-        return element->local_name();
+        return dom_cstr_attribute(element->local_name(), value_length);
     }
     // recorded public attributes do not replace the private expanded-name metadata.
     if (!dom_attribute_is_internal(key) && element->has_recorded_attributes()) {
-        for (DomNamespacedAttribute* attr = element->attribute_cache()->namespaced_attributes; attr; attr = attr->next)
-            if (attr->active && !strcmp(attr->qualified_name, key)) return attr->value;
+        for (DomNamespacedAttribute* attr = element->attribute_cache()->namespaced_attributes; attr; attr = attr->next) {
+            if (!attr->active || strcmp(attr->qualified_name, key)) continue;
+            if (value_length) *value_length = attr->value_length;
+            return attr->value;
+        }
         return nullptr;
     }
     if (!element->is_synthetic()) {
@@ -3144,8 +3190,9 @@ static const char* dom_element_stored_attribute(DomElement* element, const char*
                 const TypeElmt* type = (const TypeElmt*)dom_element_to_element(element)->type;
                 // parser-produced metadata shares the typed namespace's already interned spelling.
                 if (!type || !type->ns || type->ns->original != value->chars)
-                    return dom_resolved_namespace_uri(element, value->chars);
+                    return dom_cstr_attribute(dom_resolved_namespace_uri(element, value->chars), value_length);
             }
+            if (value_length) *value_length = value->len;
             return value->chars;
         }
         ItemReader scalar(item.to_const());
@@ -3157,13 +3204,17 @@ static const char* dom_element_stored_attribute(DomElement* element, const char*
             if (!text) return nullptr;
             format_number(text, scalar.item());
             String* stored = namespace_uri ? namespace_uri_intern(dom_name_pool(owner), text->str->chars)
-                : dom_attribute_value(owner, nullptr, text->str->chars);
+                : dom_attribute_value(owner, nullptr, {text->str->chars, text->length});
             stringbuf_free(text);
+            if (value_length && stored) *value_length = stored->len;
             return stored ? stored->chars : nullptr;
         }
     }
     int index = dom_element_find_synthetic_attribute(element, key);
-    return index >= 0 ? element->attribute_cache()->synthetic_attributes[index].value.get() : nullptr;
+    if (index < 0) return nullptr;
+    const DomSyntheticAttribute& attr = element->attribute_cache()->synthetic_attributes[index];
+    if (value_length) *value_length = attr.value_length;
+    return attr.value;
 }
 
 static const char* dom_element_attr_key(DomElement* element, const char* name,
@@ -3213,7 +3264,8 @@ static bool dom_element_record_all_attributes(DomElement* element) {
         } else {
             const char* local = nullptr;
             const char* uri = dom_element_attribute_namespace_uri(element, names[index], &local);
-            const char* value = dom_element_stored_attribute(element, names[index]);
+            StrView value = {};
+            value.str = dom_element_stored_attribute(element, names[index], &value.length);
             if (!dom_element_record_namespaced_attribute(element, uri ? uri : "", names[index], value)) {
                 *tail = remainder;
                 return false;
@@ -3245,35 +3297,47 @@ const char* dom_element_find_qualified_attribute(DomElement* element,
 }
 
 const char* dom_element_attribute_value_ns(DomElement* element,
-        const char* namespace_uri, const char* local_name) {
+        const char* namespace_uri, const char* local_name, size_t* value_length) {
+    if (value_length) *value_length = 0;
     if (!element || !local_name) return nullptr;
     const char* wanted = namespace_uri ? namespace_uri : "";
-    const char* value = dom_element_get_namespaced_attribute(element, wanted, local_name);
-    if (value || (element->has_recorded_attributes())) return value;
+    DomNamespacedAttribute* attr = dom_element_find_namespaced_attribute(element, wanted, local_name);
+    if (attr && attr->value) {
+        if (value_length) *value_length = attr->value_length;
+        return attr->value;
+    }
+    if (element->has_recorded_attributes()) return nullptr;
     if (!*wanted && !dom_element_namespaced_attributes(element) && !strchr(local_name, ':'))
-        return dom_element_stored_attribute(element, local_name);
+        return dom_element_stored_attribute(element, local_name, value_length);
     const char* qualified = dom_element_find_qualified_attribute(element, wanted, local_name);
-    return qualified ? element->get_attribute(qualified) : nullptr;
+    return qualified ? element->get_attribute(qualified, value_length) : nullptr;
 }
 
 static bool dom_attribute_name_present(const char* name) {
     return name && name[0] != '\0';
 }
 
-bool dom_attribute_node_set_value(DomAttr* attribute, const char* value) {
-    if (!attribute || !attribute->doc || !value) return false;
-    if (attribute->value && strcmp(attribute->value, value) == 0) return true;
+bool dom_attribute_node_set_value(DomAttr* attribute, StrView value) {
+    if (!attribute || !attribute->doc || !value.str) return false;
+    if (attribute->value && str_eq(attribute->value, attribute->value_length, value.str, value.length)) return true;
     Pool* pool = attribute->storage_pool;
-    char* copy = pool_strdup(pool, value);
+    char* copy = pool_dup_n(pool, value.str, value.length);
     if (!copy) return false;
     if (attribute->value) pool_free(pool, (void*)attribute->value.get());
     attribute->value = lam::own(copy);
+    attribute->value_length = value.length;
     return true;
 }
 
 DomAttr* dom_attribute_node_create(DomDocument* document, const char* namespace_uri,
     const char* qualified_name, const char* value) {
-    if (!document || !document->node_arena || !qualified_name || !value) return nullptr;
+    return dom_attribute_node_create(document, namespace_uri, qualified_name,
+        value ? strview_from_cstr(value) : StrView{});
+}
+
+DomAttr* dom_attribute_node_create(DomDocument* document, const char* namespace_uri,
+    const char* qualified_name, StrView value) {
+    if (!document || !document->node_arena || !qualified_name || !value.str) return nullptr;
     const char* uri = dom_intern_namespace_uri(document, namespace_uri);
     if (!uri) return nullptr;
     DomAttr* attribute = (DomAttr*)arena_calloc(document->node_arena, sizeof(DomAttr));
@@ -3327,6 +3391,7 @@ void dom_attribute_node_release_retired_storage(DomAttr* attribute) {
     attribute->local_name = nullptr;
     attribute->prefix = nullptr;
     attribute->value = nullptr;
+    attribute->value_length = 0;
 }
 
 void dom_attribute_node_attach(DomElement* element, DomAttr* attribute) {
@@ -3342,14 +3407,15 @@ void dom_attribute_node_attach(DomElement* element, DomAttr* attribute) {
 }
 
 static DomAttr* dom_element_attribute_node_value(DomElement* element, const char* namespace_uri,
-        const char* qualified_name, const char* local_name, const char* value) {
+        const char* qualified_name, const char* local_name, StrView value) {
     const char* uri = namespace_uri ? namespace_uri : "";
     for (DomAttr* attribute = element->rare_ext ? element->rare_ext->attribute_nodes.get() : nullptr;
          attribute; attribute = attribute->attribute_next) {
         if (strcmp(attribute->namespace_uri, uri) == 0 && strcmp(attribute->local_name, local_name) == 0)
             return attribute;
     }
-    DomAttr* attribute = dom_attribute_node_create(element->doc, uri, qualified_name, value ? value : "");
+    if (!value.str) value.str = "";
+    DomAttr* attribute = dom_attribute_node_create(element->doc, uri, qualified_name, value);
     if (attribute) dom_attribute_node_attach(element, attribute);
     return attribute;
 }
@@ -3358,8 +3424,8 @@ DomAttr* dom_element_attribute_node(DomElement* element, const char* name) {
     if (!element || !name) return nullptr;
     char lower[128];
     const char* key = dom_element_attr_key(element, name, lower, sizeof(lower));
-    const char* value = element->get_attribute(key);
-    if (!value && !element->has_attribute(key)) return nullptr;
+    StrView value = element->get_attribute_view(key);
+    if (!value.str && !element->has_attribute(key)) return nullptr;
     const char* local = nullptr;
     const char* uri = dom_element_attribute_namespace_uri(element, key, &local);
     return dom_element_attribute_node_value(element, uri, key, local ? local : key, value);
@@ -3368,11 +3434,13 @@ DomAttr* dom_element_attribute_node(DomElement* element, const char* name) {
 DomAttr* dom_element_attribute_node_ns(DomElement* element,
         const char* namespace_uri, const char* local_name) {
     const char* qualified = dom_element_find_qualified_attribute(element, namespace_uri, local_name);
-    return qualified ? dom_element_attribute_node_value(element, namespace_uri, qualified, local_name,
-        dom_element_attribute_value_ns(element, namespace_uri, local_name)) : nullptr;
+    if (!qualified) return nullptr;
+    StrView value = {};
+    value.str = dom_element_attribute_value_ns(element, namespace_uri, local_name, &value.length);
+    return dom_element_attribute_node_value(element, namespace_uri, qualified, local_name, value);
 }
 
-static void dom_attribute_nodes_did_set(DomElement* element, const char* key, const char* value,
+static void dom_attribute_nodes_did_set(DomElement* element, const char* key, StrView value,
         const char* namespace_uri = nullptr) {
     for (DomAttr* attribute = element->rare_ext ? element->rare_ext->attribute_nodes.get() : nullptr;
          attribute; attribute = attribute->attribute_next) {
@@ -3395,11 +3463,13 @@ static void dom_attribute_nodes_did_remove(DomElement* element, const char* key,
 
 struct DomAttributeValueEntry {
     const char* chars;
+    size_t length;
     String* value;
 };
 
 using DomAttributeValues = TypedHashMap<DomAttributeValueEntry,
-    HashMapCStrMemberKeyOps<DomAttributeValueEntry, &DomAttributeValueEntry::chars>>;
+    HashMapLenStrMemberKeyOps<DomAttributeValueEntry,
+        &DomAttributeValueEntry::chars, &DomAttributeValueEntry::length>>;
 
 struct DomAttributeValueCache : DomDocumentResourceData {
     Input* input;
@@ -3413,7 +3483,7 @@ static void dom_attribute_values_destroy(DomDocumentResourceData* resource) {
 }
 
 static String* dom_attribute_value(DomDocument* doc, MarkBuilder* builder,
-                                   const char* value) {
+                                   StrView value) {
     Input* input = builder ? doc->input : nullptr;
     DomAttributeValueCache* cache = nullptr;
     for (DomDocumentResource* resource = doc->resources; resource; resource = resource->next) {
@@ -3432,31 +3502,34 @@ static String* dom_attribute_value(DomDocument* doc, MarkBuilder* builder,
             return nullptr;
         }
     }
-    DomAttributeValueEntry key = {value, nullptr};
+    // attributes with the same prefix before U+0000 must have distinct cache keys.
+    DomAttributeValueEntry key = {value.str, value.length, nullptr};
     if (const auto* found = cache->values.get(key)) return found->value;
     // reads borrow document text; published Mark fields need a distinct Input-owned copy.
-    String* string = builder ? builder->createString(value)
-        : dom_document_create_string(doc, value, strlen(value));
+    String* string = builder ? builder->createString(value.str, value.length)
+        : dom_document_create_string(doc, value.str, value.length);
     if (!string) return nullptr;
-    cache->values.set({string->chars, string});
+    cache->values.set({string->chars, string->len, string});
     return cache->values.oom() ? nullptr : string;
 }
 
 static bool dom_element_store_attribute(DomElement* element, const char* key,
-        const char* value, bool remove) {
+        StrView value, bool remove) {
     bool namespace_uri = is_namespace_uri_attribute(key);
+    // internal namespace metadata is a URI consumed by C-string parsers.
+    if (namespace_uri && value.str && memchr(value.str, 0, value.length)) return false;
     if (element->is_synthetic()) {
         if (namespace_uri) return remove ? clear_direct_namespace_uri(element)
-            : set_direct_namespace_uri(element, value ? value : "");
+            : set_direct_namespace_uri(element, value.str ? value.str : "");
         return remove ? dom_element_remove_synthetic_attribute(element, key)
-            : dom_element_set_synthetic_attribute(element, key, value ? value : "");
+            : dom_element_set_synthetic_attribute(element, key, value.str ? value : StrView{"", 0});
     }
     if (!element->doc) return false;
     Element* backing = dom_element_to_element(element);
     MarkEditor editor(element->doc, EDIT_MODE_INLINE);
     Item value_item = ItemNull;
-    if (!remove && value) {
-        String* stored = namespace_uri ? namespace_uri_intern(dom_name_pool(element->doc), value)
+    if (!remove && value.str) {
+        String* stored = namespace_uri ? namespace_uri_intern(dom_name_pool(element->doc), value.str)
             : dom_attribute_value(element->doc, editor.builder(), value);
         if (!stored) return false;
         value_item.item = s2it(stored);
@@ -3499,19 +3572,20 @@ static bool dom_element_store_attribute(DomElement* element, const char* key,
 
 static bool dom_element_sync_attribute_mirror(DomElement* element, const char* name) {
     DomNamespacedAttribute* first = dom_first_recorded_attribute(element, name);
-    return dom_element_store_attribute(element, name, first ? first->value.get() : nullptr, !first);
+    StrView value = first ? StrView{first->value.get(), first->value_length} : StrView{};
+    return dom_element_store_attribute(element, name, value, !first);
 }
 
 static bool dom_element_set_attribute_value(DomElement* element, const char* name,
-        const char* value, bool preserve_case, bool invalidate_style) {
-    if (!dom_attribute_name_present(name) || !value) return false;
+        StrView value, bool preserve_case, bool invalidate_style) {
+    if (!dom_attribute_name_present(name) || !value.str) return false;
     char lower_name[128];
     const char* key = dom_element_attr_key(element, name, lower_name, sizeof(lower_name));
     if (preserve_case) key = name;
     DomNamespacedAttribute* recorded = dom_first_recorded_attribute(element, key);
     const char* uri = recorded ? recorded->namespace_uri.get() : "";
-    const char* previous = element->get_attribute(key);
-    bool same = previous && strcmp(previous, value) == 0;
+    StrView previous = element->get_attribute_view(key);
+    bool same = previous.str && strview_eq(&previous, &value);
     if (!dom_element_store_attribute(element, key, value, false)) return false;
     if (!is_namespace_uri_attribute(key) && (recorded || element->has_recorded_attributes()) &&
         !dom_element_record_namespaced_attribute(element, uri, key, value)) return false;
@@ -3524,6 +3598,10 @@ static bool dom_element_set_attribute_value(DomElement* element, const char* nam
 }
 
 bool DomElement::set_attribute(const char* name, const char* value, bool preserve_case) {
+    return value && set_attribute(name, strview_from_cstr(value), preserve_case);
+}
+
+bool DomElement::set_attribute(const char* name, StrView value, bool preserve_case) {
     return dom_element_set_attribute_value(this, name, value, preserve_case, true);
 }
 
@@ -3533,6 +3611,10 @@ bool dom_element_can_write_metadata(DomElement* element, const char* name) {
 }
 
 bool dom_element_write_attribute_without_cascade(DomElement* element, const char* name, const char* value) {
+    return value && dom_element_write_attribute_without_cascade(element, name, strview_from_cstr(value));
+}
+
+bool dom_element_write_attribute_without_cascade(DomElement* element, const char* name, StrView value) {
     return dom_element_set_attribute_value(element, name, value, false, false);
 }
 
@@ -3566,7 +3648,8 @@ bool dom_element_next_attribute(DomAttributeIterator* iterator, DomAttributeView
             DomNamespacedAttribute* record = iterator->next;
             iterator->next = record->next;
             if (!record->active) continue;
-            *attribute = {record->namespace_uri, record->qualified_name, record->local_name, record->value};
+            *attribute = {record->namespace_uri, record->qualified_name, record->local_name,
+                record->value, record->value_length};
             return true;
         }
         return false;
@@ -3576,11 +3659,14 @@ bool dom_element_next_attribute(DomAttributeIterator* iterator, DomAttributeView
         if (!name) continue;
         const char* local = name;
         const char* uri = dom_element_attribute_namespace_uri(iterator->element, name, &local);
-        *attribute = {uri ? uri : "", name, local, dom_element_stored_attribute(iterator->element, name)};
+        size_t length;
+        const char* value = dom_element_stored_attribute(iterator->element, name, &length);
+        *attribute = {uri ? uri : "", name, local, value, length};
         // partial metadata can override a legacy QName mirror before full recording.
         for (DomNamespacedAttribute* record = dom_element_namespaced_attributes(iterator->element); record; record = record->next) {
             if (record->active && !strcmp(record->qualified_name, name)) {
                 attribute->value = record->value;
+                attribute->value_length = record->value_length;
                 break;
             }
         }
@@ -3591,20 +3677,28 @@ bool dom_element_next_attribute(DomAttributeIterator* iterator, DomAttributeView
 
 bool dom_element_set_attribute_ns(DomElement* element,
         const char* namespace_uri, const char* qualified_name, const char* value, bool replace_name) {
+    return dom_element_set_attribute_ns(element, namespace_uri, qualified_name,
+        value ? strview_from_cstr(value) : StrView{}, replace_name);
+}
+
+bool dom_element_set_attribute_ns(DomElement* element,
+        const char* namespace_uri, const char* qualified_name, StrView value, bool replace_name) {
     if (!qualified_name || !*qualified_name || !dom_element_record_all_attributes(element)) return false;
     const char* uri = namespace_uri ? namespace_uri : "";
     const char* colon = *uri ? strchr(qualified_name, ':') : nullptr;
     const char* local = colon ? colon + 1 : qualified_name;
     const char* existing = dom_element_find_qualified_attribute(element, uri, local);
     const char* name = existing && !replace_name ? existing : qualified_name;
-    const char* previous = dom_element_attribute_value_ns(element, uri, local);
-    bool same = previous && value && strcmp(previous, value) == 0;
+    StrView previous = {};
+    previous.str = dom_element_attribute_value_ns(element, uri, local, &previous.length);
+    bool same = previous.str && value.str && strview_eq(&previous, &value);
     if (!dom_element_record_namespaced_attribute(element, uri, name, value)) return false;
     // a replaced Attr keeps its list position while the two QName mirrors are rebuilt independently.
     if (existing && strcmp(existing, name) && !dom_element_sync_attribute_mirror(element, existing)) return false;
     if (!dom_element_sync_attribute_mirror(element, name)) return false;
-    dom_attribute_nodes_did_set(element, name, value ? value : "", uri);
-    if (!*uri) dom_element_attribute_did_set(element, name, value ? value : "", same);
+    if (!value.str) value.str = "";
+    dom_attribute_nodes_did_set(element, name, value, uri);
+    if (!*uri) dom_element_attribute_did_set(element, name, value, same);
     else { element->advance_style_version(); element->set_needs_style_recompute(true); }
     return true;
 }
@@ -3643,9 +3737,10 @@ const char* DomElement::local_name() const {
     return literal_html ? spelling : suffix;
 }
 
-const char* DomElement::get_attribute(const char* name) {
+const char* DomElement::get_attribute(const char* name, size_t* value_length) {
     DomElement* element = this;
     if (!dom_attribute_name_present(name)) {
+        if (value_length) *value_length = 0;
         return nullptr;
     }
 
@@ -3656,7 +3751,7 @@ const char* DomElement::get_attribute(const char* name) {
     const char* key = dom_element_attr_key(element, name, lower_name, sizeof(lower_name));
 
     // namespace resolution reads stored keys directly, avoiding recursive case normalization.
-    return dom_element_stored_attribute(element, key);
+    return dom_element_stored_attribute(element, key, value_length);
 }
 
 const char* DomElement::get_attribute(NameId name_id) {
@@ -3679,7 +3774,7 @@ bool DomElement::remove_attribute(const char* name) {
         if (recorded) return dom_element_remove_attribute_ns(element, recorded->namespace_uri, recorded->local_name);
     }
 
-    if (!dom_element_store_attribute(element, key, nullptr, true)) return false;
+    if (!dom_element_store_attribute(element, key, {}, true)) return false;
     dom_attribute_nodes_did_remove(element, key);
     dom_element_attribute_did_remove(element, key);
     return true;
@@ -4066,13 +4161,17 @@ static bool dom_element_apply_inline_declaration(DomElement* element, const CssD
 #endif
 
 int dom_element_apply_inline_style(DomElement* element, const char* style_text) {
+    return style_text ? dom_element_apply_inline_style(element, strview_from_cstr(style_text)) : 0;
+}
+
+int dom_element_apply_inline_style(DomElement* element, StrView style_text) {
 #ifdef LAMBDA_NO_CSS_INPUT
     // reduced profiles retain the raw HTML style attribute without CSS parsing.
     (void)element;
     (void)style_text;
     return 0;
 #else
-    if (!element || !style_text || !element->doc) {
+    if (!element || !style_text.str || !element->doc) {
         return 0;
     }
 
@@ -4088,8 +4187,8 @@ int dom_element_apply_inline_style(DomElement* element, const char* style_text) 
     if (!parse_pool) return 0;
 
     size_t count = 0;
-    CssDeclaration** declarations = css_parse_declaration_list_text_mode(style_text,
-        strlen(style_text), parse_pool, &count, dom_element_uses_quirks_css(element));
+    CssDeclaration** declarations = css_parse_declaration_list_text_mode(style_text.str,
+        style_text.length, parse_pool, &count, dom_element_uses_quirks_css(element));
     for (size_t i = 0; i < count; i++)
         applied_count += dom_element_apply_inline_declaration(element, declarations[i]);
 
@@ -4795,85 +4894,28 @@ static const char* resolve_quote_char(DomElement* element, bool is_open_quote, i
  * Check if a CssValue represents an open-quote or close-quote content value.
  * Returns 1 for open-quote, 2 for close-quote, 0 for neither.
  */
-const char* dom_element_get_pseudo_element_content(DomElement* element, int pseudo_element) {
-    if (!element) {
-        return NULL;
-    }
-
+StrView dom_element_get_pseudo_element_content(DomElement* element, int pseudo_element) {
+    if (!element) return {};
     StyleTree* style = dom_generated_content_style(element, pseudo_element);
-    if (!style) {
-        return NULL;
+    CssDeclaration* declaration = style ? style_tree_get_declaration(style, CSS_PROPERTY_CONTENT) : nullptr;
+    const CssValue* value = declaration ? declaration->value : nullptr;
+    if (!value) return {};
+
+    if (const char* attr_name = css_content_attribute_name(value)) {
+        StrView attribute = element->get_attribute_view(attr_name);
+        return attribute.str ? attribute : StrView{"", 0};
     }
-
-    CssDeclaration* content_decl = style_tree_get_declaration(style, CSS_PROPERTY_CONTENT);
-
-    if (!content_decl || !content_decl->value) {
-        return NULL;
-    }
-
-    CssValue* value = content_decl->value;
-
-    // Return the string content
-    if (value->type == CSS_VALUE_TYPE_STRING) {
-        const char* str = value->data.string;
-        return str;
-    }
-
-    // Handle attr() function: content: attr(attribute-name)
-    if (value->type == CSS_VALUE_TYPE_FUNCTION) {
-        CssFunction* func = value->data.function;
-        if (func && func->name && strcmp(func->name, "attr") == 0 && func->arg_count > 0) {
-            // extract the attribute name from the first argument
-            const char* attr_name = NULL;
-            CssValue* arg0 = func->args[0];
-            if (arg0) {
-                if (arg0->type == CSS_VALUE_TYPE_STRING) {
-                    attr_name = arg0->data.string;
-                } else if (arg0->type == CSS_VALUE_TYPE_KEYWORD) {
-                    // known keyword used as attribute name (e.g., "class")
-                    const CssEnumInfo* info = css_enum_info(arg0->data.keyword);
-                    attr_name = info ? info->name : NULL;
-                } else if (arg0->type == CSS_VALUE_TYPE_CUSTOM) {
-                    // unknown ident parsed as custom property (e.g., "data-val")
-                    attr_name = arg0->data.custom_property.name;
-                }
-            }
-            if (attr_name) {
-                const char* attr_value = element->get_attribute(attr_name);
-                return attr_value ? attr_value : "";
-            }
-        }
-    }
-
-    // Handle attr() via CSS_VALUE_TYPE_ATTR (parsed by CSS value parser)
-    if (value->type == CSS_VALUE_TYPE_ATTR) {
-        CSSAttrRef* attr_ref = value->data.attr_ref;
-        if (attr_ref && attr_ref->name) {
-            const char* attr_value = element->get_attribute(attr_ref->name);
-            return attr_value ? attr_value : "";
-        }
-    }
-
-    // Handle open-quote / close-quote (CSS_VALUE_TYPE_CUSTOM with ident name)
     int quote_type = css_content_quote_type(value);
     if (quote_type == 1 || quote_type == 2) {
-        return resolve_quote_char(element, quote_type == 1, 0);
+        const char* quote = resolve_quote_char(element, quote_type == 1, 0);
+        return quote ? strview_from_cstr(quote) : StrView{};
     }
-    if (quote_type == 3 || quote_type == 4) {
-        return "";  // no-open-quote / no-close-quote: affect depth only, generate nothing
-    }
+    if (quote_type == 3 || quote_type == 4) return {"", 0};
 
-    // Handle list of values (for content with multiple parts)
-    if (value->type == CSS_VALUE_TYPE_LIST && value->data.list.count > 0) {
-        // For now, return the first string value
-        CssValue* first = value->data.list.values[0];
-        if (first && first->type == CSS_VALUE_TYPE_STRING) {
-            const char* str = first->data.string;
-            return str;
-        }
-    }
-
-    return NULL;
+    // this lightweight query exposes just the first string in a content list.
+    if (value->type == CSS_VALUE_TYPE_LIST && value->data.list.count > 0) value = value->data.list.values[0];
+    return value && value->type == CSS_VALUE_TYPE_STRING && value->data.string
+        ? strview_from_cstr(value->data.string) : StrView{};
 }
 
 /**
@@ -4882,8 +4924,8 @@ const char* dom_element_get_pseudo_element_content(DomElement* element, int pseu
  */
 struct DomContentBindings { DomElement* element; void* counters; DomContentFunctionHook hook; void* hook_context; };
 
-static const char* dom_content_attribute(void* context, const char* name) {
-    return ((DomContentBindings*)context)->element->get_attribute(name);
+static StrView dom_content_attribute(void* context, const char* name) {
+    return ((DomContentBindings*)context)->element->get_attribute_view(name);
 }
 static const char* dom_content_quote(void* context, bool open, int depth) {
     return resolve_quote_char(((DomContentBindings*)context)->element, open, depth);
@@ -4920,21 +4962,22 @@ bool dom_element_append_content(DomElement* element, const CssValue* value,
     return css_content_append(value, &bindings, quote_depth, text);
 }
 
-const char* dom_element_get_pseudo_element_content_with_counters(
+StrView dom_element_get_pseudo_element_content_with_counters(
         DomElement* element, int pseudo_element, void* counter_context, Arena* arena,
         int* quote_depth, DomContentFunctionHook hook, void* hook_context) {
-    if (!element || !arena) return nullptr;
+    if (!element || !arena) return {};
     StyleTree* style = dom_generated_content_style(element, pseudo_element);
     const CssDeclaration* declaration = style ? style_tree_get_declaration(style, CSS_PROPERTY_CONTENT) : nullptr;
-    if (!declaration || !declaration->value) return nullptr;
+    if (!declaration || !declaration->value) return {};
     StrBuf* text = strbuf_new();
-    if (!text) return nullptr;
+    if (!text) return {};
     int local_quote_depth = 0;
     bool ok = dom_element_append_content(element, declaration->value, counter_context,
         quote_depth ? quote_depth : &local_quote_depth, text, hook, hook_context);
     const char* result = ok ? arena_dup_n(arena, text->str ? text->str : "", text->length) : nullptr;
+    StrView content = result ? StrView{result, text->length} : StrView{};
     strbuf_free(text);
-    return result;
+    return content;
 }
 
 // ============================================================================
@@ -5681,7 +5724,7 @@ DomText* DomElement::append_text(const char* text_content) {
     // Create String item via MarkBuilder
     MarkEditor editor(parent->doc, EDIT_MODE_INLINE);
     String* s = dom_create_mutation_string(
-        editor.builder(), text_content, parent->doc->input->ui_mode);
+        editor.builder(), strview_from_cstr(text_content), parent->doc->input->ui_mode);
     if (!s) {
         log_error("dom_element_append_text: failed to create string");
         return nullptr;
@@ -5824,15 +5867,14 @@ DomComment* DomComment::create_detached(Element* native_element, DomDocument* do
     }
     if (!comment_node->content) {
         ElementReader reader(native_element);
-        const char* data_attr = reader.get_attr_string("data");
+        String* data_attr = reader.get_attr("data").asString();
         if (!data_attr) {
             ConstItem attr_value = native_element->get_attr("data");
-            String* data_string = attr_value.string();
-            if (data_string) data_attr = data_string->chars;
+            data_attr = attr_value.string();
         }
         if (data_attr) {
-            comment_node->content = lam::up(data_attr);
-            comment_node->length = strlen(data_attr);
+            comment_node->content = lam::up(data_attr->chars);
+            comment_node->length = data_attr->len;
         }
     }
 
@@ -5896,7 +5938,12 @@ bool dom_comment_set_content(DomComment* comment_node, const char* new_content) 
 
 bool dom_comment_set_content(DomComment* comment_node, const char* new_content,
                              DomDocument* document) {
-    if (!comment_node || !new_content) {
+    return new_content && dom_comment_set_content(comment_node, strview_from_cstr(new_content), document);
+}
+
+bool dom_comment_set_content(DomComment* comment_node, StrView new_content,
+                             DomDocument* document) {
+    if (!comment_node || !new_content.str) {
         log_error("dom_comment_set_content: invalid arguments");
         return false;
     }
@@ -5954,7 +6001,7 @@ bool dom_comment_set_content(DomComment* comment_node, const char* new_content,
     }
     comment_node->content = lam::up(new_string->chars);
     comment_node->length = new_string->len;
-    log_debug("dom_comment_set_content: updated content to '%s'", new_content);
+    log_debug("dom_comment_set_content: updated content to %zu bytes", new_content.length);
     return true;
 }
 

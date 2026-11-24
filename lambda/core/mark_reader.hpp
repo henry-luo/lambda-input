@@ -214,6 +214,7 @@ private:
     Container* container_;
     TypeMap* map_type_;
     void* data_;
+    lam::ShapeRef find_field(const char* key, size_t length) const;
 
 public:
     // Lifecycle (value type semantics)
@@ -236,6 +237,7 @@ public:
     // Map access
     ItemReader get(const char* key) const;
     bool has(const char* key) const;
+    bool has(const char* key, size_t length) const;
     int64_t size() const;
     bool isEmpty() const { return size() == 0; }
 
@@ -269,7 +271,7 @@ public:
 
     public:
         EntryIterator(const MapReader* reader);
-        bool next(const char** key, ItemReader* value, Target** ns = nullptr);
+        bool next(const char** key, ItemReader* value, Target** ns = nullptr, size_t* key_length = nullptr);
         void reset();
     };
 
@@ -367,6 +369,7 @@ public:
 
     // Element properties
     const char* tagName() const { return tag_.str; }
+    StrView tagView() const { return tag_; }
     Target* namespaceTarget() const { return element_type_ ? element_type_->ns : nullptr; }
     NameId tagId() const { return element_type_ ? element_type_->name_id : NAME_ID_NONE; }
     bool hasTag(const char* tag_name) const;
@@ -425,7 +428,7 @@ public:
 
     public:
         explicit AttributeIterator(const ElementReader* reader);
-        bool next(const char** key, ItemReader* value, Target** ns = nullptr);
+        bool next(const char** key, ItemReader* value, Target** ns = nullptr, size_t* key_length = nullptr);
         void reset();
     };
 

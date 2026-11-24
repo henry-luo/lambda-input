@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "lib/strview.h"
 
 typedef enum CssEnumGroup {
     CSS_VALUE_GROUP__UNDEF = 0,
@@ -655,7 +656,7 @@ bool css_function_name_is(const CssFunction* function, const char* name);
 struct StrBuf;
 struct CssContentBindings {
     void* context;
-    const char* (*attribute)(void* context, const char* name);
+    StrView (*attribute)(void* context, const char* name);
     const char* (*quote)(void* context, bool open, int depth);
     bool (*function)(void* context, const CssFunction* function, StrBuf* text);
 };

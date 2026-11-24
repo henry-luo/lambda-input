@@ -282,29 +282,32 @@ MapReader MapReader::fromItem(Item item) {
 }
 
 ItemReader MapReader::get(const char* key) const {
-    if (!container_ || !map_type_ || !data_) { return ItemReader(); }
-    lam::ShapeRef field = lam::shape_borrow(map_type_->shape);
-    while (field) {
-        if (!field->ns && field->name && field->name->str && strcmp(field->name->str, key) == 0) {
-            return ItemReader(map_shape_field_to_item(data_, field.get()).to_const());
-        }
-        field = lam::shape_next(map_type_, field);
-    }
-    return ItemReader();
+    if (!data_ || !key) return ItemReader();
+    lam::ShapeRef field = find_field(key, strlen(key));
+    return field ? ItemReader(map_shape_field_to_item(data_, field.get()).to_const()) : ItemReader();
 }
 
 bool MapReader::has(const char* key) const {
-    if (!container_ || !map_type_) { return false; }
+    return key && has(key, strlen(key));
+}
+
+bool MapReader::has(const char* key, size_t length) const {
+    return (bool)find_field(key, length);
+}
+
+lam::ShapeRef MapReader::find_field(const char* key, size_t length) const {
+    if (!container_ || !map_type_ || !key) return {};
 
     lam::ShapeRef field = lam::shape_borrow(map_type_->shape);
     while (field) {
-        if (!field->ns && field->name && field->name->str && strcmp(field->name->str, key) == 0) {
-            return true;
+        if (!field->ns && field->name && field->name->str &&
+            str_eq(field->name->str, field->name->length, key, length)) {
+            return field;
         }
         field = lam::shape_next(map_type_, field);
     }
 
-    return false;
+    return {};
 }
 
 int64_t MapReader::size() const {
@@ -382,9 +385,10 @@ MapReader::EntryIterator::EntryIterator(const MapReader* reader)
     }
 }
 
-bool MapReader::EntryIterator::next(const char** key, ItemReader* value, Target** ns) {
+bool MapReader::EntryIterator::next(const char** key, ItemReader* value, Target** ns, size_t* key_length) {
     if (!current_field_) { return false; }
     if (ns) *ns = current_field_->ns;
+    if (key_length) *key_length = current_field_->name ? current_field_->name->length : 0;
     *key = current_field_->name ? current_field_->name->str : nullptr;
     Item result = map_shape_field_to_item(reader_->data_, current_field_.get());
     *value = ItemReader(result.to_const());
@@ -761,12 +765,13 @@ ElementReader::AttributeIterator::AttributeIterator(const ElementReader* reader)
     reset();
 }
 
-bool ElementReader::AttributeIterator::next(const char** key, ItemReader* value, Target** ns) {
+bool ElementReader::AttributeIterator::next(const char** key, ItemReader* value, Target** ns, size_t* key_length) {
     if (!reader_ || !reader_->element_ || !reader_->element_->data || !current_field_) {
         return false;
     }
 
     if (ns) *ns = current_field_->ns;
+    if (key_length) *key_length = current_field_->name ? current_field_->name->length : 0;
     *key = current_field_->name ? current_field_->name->str : nullptr;
     Item result = map_shape_field_to_item(reader_->element_->data, current_field_.get());
     *value = ItemReader(result.to_const());

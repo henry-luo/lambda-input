@@ -212,24 +212,13 @@ Target* item_to_target(uint64_t item, Url* cwd) {
     }
 
     if (is_text_type_id(type_id)) {
-        // Parse as URL - extract chars from tagged pointer (high byte is type tag)
-        const char* url_str;
-        if (type_id == LMD_TYPE_SYMBOL) {
-            Symbol* sym = (Symbol*)(item & 0x00FFFFFFFFFFFFFFULL);
-            if (!sym) {
-                log_error("item_to_target: symbol is null");
-                mem_free(target);
-                return NULL;
-            }
-            url_str = sym->chars;
-        } else {
-            String* str = (String*)(item & 0x00FFFFFFFFFFFFFFULL);
-            if (!str) {
-                log_error("item_to_target: string is null");
-                mem_free(target);
-                return NULL;
-            }
-            url_str = str->chars;
+        const char* url_str = it.get_chars();
+        size_t url_length = it.get_len();
+        // A path or URL given to the host must name one complete resource.
+        if (!url_str || memchr(url_str, 0, url_length)) {
+            log_error("item_to_target: invalid resource name");
+            mem_free(target);
+            return NULL;
         }
         // RDB9: a URL may carry credentials (database URIs do); never log them
 #if !defined(LAMBDA_NO_RESOURCE_CACHE) && !defined(LAMBDA_IME_RESOURCE_IO)
@@ -245,7 +234,7 @@ Target* item_to_target(uint64_t item, Url* cwd) {
 
         // absolute namespace URLs need no filesystem lookup; retain the resolver's whitespace rules.
         const char* trimmed = url_str;
-        size_t trimmed_len = strlen(url_str);
+        size_t trimmed_len = url_length;
         str_trim(&trimmed, &trimmed_len);
         bool absolute_url = !cwd && url_is_absolute_url(trimmed);
 #ifdef _WIN32

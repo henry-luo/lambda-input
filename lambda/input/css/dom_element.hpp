@@ -813,6 +813,7 @@ DomNode* dom_source_sibling(DomNode* node, bool forward);
 DomNode* dom_source_tree_root(DomNode* node);
 DomNode* dom_source_next_in_tree(DomNode* root, DomNode* node);
 DomElement* dom_find_source_element_by_id(DomNode* root, const char* id);
+DomElement* dom_find_source_element_by_id(DomNode* root, StrView id);
 DomElement* dom_details_first_summary(DomElement* details);
 void dom_collect_text_content(DomNode* node, StrBuf* output);
 const CssCustomProp* dom_element_lookup_own_custom_property_entry(DomElement* element,
@@ -923,6 +924,7 @@ struct FragmentUnion {
 struct DomSyntheticAttribute {
     lam::Own<const char> name;   // document-pool copies
     lam::Own<const char> value;
+    size_t value_length;
 };
 
 // Highlight declarations borrow stylesheet values while preserving the
@@ -944,6 +946,7 @@ struct DomNamespacedAttribute {
     lam::Own<const char> local_name;
     lam::Own<const char> qualified_name;
     lam::Own<const char> value; // null preserves a native Mark null attribute (S2.2.3)
+    size_t value_length;
     bool active;
     lam::Own<DomNamespacedAttribute> next;
 };
@@ -958,6 +961,7 @@ struct DomAttributeView {
     const char* qualified_name;
     const char* local_name;
     const char* value;
+    size_t value_length;
 };
 struct DomAttributeIterator {
     DomElement* element;
@@ -975,25 +979,31 @@ bool dom_element_set_namespace_identity(DomElement* element,
 DomNamespacedAttribute* dom_element_namespaced_attributes(DomElement* element);
 bool dom_element_record_namespaced_attribute(DomElement* element,
     const char* namespace_uri, const char* qualified_name, const char* value);
+bool dom_element_record_namespaced_attribute(DomElement* element,
+    const char* namespace_uri, const char* qualified_name, StrView value);
 void dom_element_remove_namespaced_attribute(DomElement* element,
     const char* namespace_uri, const char* local_name);
 const char* dom_element_get_namespaced_attribute(DomElement* element,
     const char* namespace_uri, const char* local_name);
 const char* dom_element_attribute_value_ns(DomElement* element,
-    const char* namespace_uri, const char* local_name);
+    const char* namespace_uri, const char* local_name, size_t* value_length = nullptr);
 const char* dom_element_find_qualified_attribute(DomElement* element,
     const char* namespace_uri, const char* local_name);
 bool dom_element_set_attribute_ns(DomElement* element,
     const char* namespace_uri, const char* qualified_name, const char* value, bool replace_name = false);
+bool dom_element_set_attribute_ns(DomElement* element,
+    const char* namespace_uri, const char* qualified_name, StrView value, bool replace_name = false);
 bool dom_element_remove_attribute_ns(DomElement* element,
     const char* namespace_uri, const char* local_name);
 
 DomAttr* dom_attribute_node_create(DomDocument* document, const char* namespace_uri,
     const char* qualified_name, const char* value);
+DomAttr* dom_attribute_node_create(DomDocument* document, const char* namespace_uri,
+    const char* qualified_name, StrView value);
 DomAttr* dom_element_attribute_node(DomElement* element, const char* name);
 DomAttr* dom_element_attribute_node_ns(DomElement* element,
     const char* namespace_uri, const char* local_name);
-bool dom_attribute_node_set_value(DomAttr* attribute, const char* value);
+bool dom_attribute_node_set_value(DomAttr* attribute, StrView value);
 void dom_attribute_node_attach(DomElement* element, DomAttr* attribute);
 void dom_attribute_node_detach(DomAttr* attribute);
 void dom_attribute_node_release_retired_storage(DomAttr* attribute);
@@ -1499,8 +1509,14 @@ struct DomElement : DomNode {
     MultiColumnProp* ensure_multicol(LayoutContext* lycon);
 
     bool set_attribute(const char* name, const char* value, bool preserve_case = false);
+    bool set_attribute(const char* name, StrView value, bool preserve_case = false);
     bool set_attribute(NameId name_id, const char* value);
-    const char* get_attribute(const char* name);
+    const char* get_attribute(const char* name, size_t* value_length = nullptr);
+    StrView get_attribute_view(const char* name) {
+        StrView value = {};
+        value.str = get_attribute(name, &value.length);
+        return value;
+    }
     const char* get_attribute(NameId name_id);
     const char* local_name() const;
     bool remove_attribute(const char* name);
@@ -1838,8 +1854,10 @@ void dom_rebind_render_element(DomDocument* doc, Element* previous, Element* cur
 bool dom_element_can_write_metadata(DomElement* element, const char* name);
 // use the DOM class cache's token boundaries when projecting a raw attribute value.
 bool dom_class_attribute_has_token(const char* value, const char* name, bool case_sensitive);
+bool dom_class_attribute_has_token(StrView value, const char* name, bool case_sensitive);
 // The caller has ruled out CSS and native attribute dependencies on layout.
 bool dom_element_write_attribute_without_cascade(DomElement* element, const char* name, const char* value);
+bool dom_element_write_attribute_without_cascade(DomElement* element, const char* name, StrView value);
 DomElement* element_dom_map_lookup(struct hashmap* map, Element* elem);
 
 // Resolve a parsed/template Element to its live DOM wrapper. The lifecycle
@@ -2013,6 +2031,7 @@ void dom_element_borrow_specified_style(DomElement* element, StyleTree* style);
  * @return Number of declarations applied
  */
 int dom_element_apply_inline_style(DomElement* element, const char* style_text);
+int dom_element_apply_inline_style(DomElement* element, StrView style_text);
 CssRule* dom_element_inline_declaration_block(DomElement* element);
 bool dom_element_commit_inline_declarations(DomElement* element, CssRule* rule, const char* text);
 // Node-owned transient CSS values, independent of the authored Mark attributes.
@@ -2116,7 +2135,7 @@ bool dom_element_has_after_content(DomElement* element);
  * @param pseudo_element Which pseudo-element (PSEUDO_ELEMENT_BEFORE or PSEUDO_ELEMENT_AFTER)
  * @return Content string or NULL if none
  */
-const char* dom_element_get_pseudo_element_content(DomElement* element, int pseudo_element);
+StrView dom_element_get_pseudo_element_content(DomElement* element, int pseudo_element);
 struct StrBuf;
 // a layout mode may resolve content functions the DOM evaluator does not know
 // (target-counter(), content(), page counters); it sets `handled` for those
@@ -2132,7 +2151,7 @@ bool dom_element_append_content(DomElement* element, const CssValue* value,
  * @param counter_context Pointer to CounterContext (from radiant/layout_counters.hpp)
  * @param arena Arena for allocating result string
  */
-const char* dom_element_get_pseudo_element_content_with_counters(
+StrView dom_element_get_pseudo_element_content_with_counters(
     DomElement* element, int pseudo_element, void* counter_context, Arena* arena,
     int* quote_depth = nullptr, DomContentFunctionHook hook = nullptr, void* hook_context = nullptr);
 

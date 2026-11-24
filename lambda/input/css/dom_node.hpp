@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include "lib/mempool.h"
 #include "lib/strbuf.h"
+#include "lib/strview.h"
 #include "lib/mem_node.hpp"
 #include "../../core/name_identity.h"
 
@@ -164,7 +165,7 @@ struct DomNode {
     // static helper for tag name to ID conversion
     static NameId tag_name_to_id(const char* tag_name);
     NameId tag() const;
-    unsigned char* text_data() const;
+    unsigned char* text_data(size_t* byte_length = nullptr) const;
     // Get attribute for element nodes
     const char* get_attribute(const char* attr_name) const;
     // Check if attribute exists (works for boolean attrs stored as ITEM_NULL)
@@ -213,6 +214,7 @@ struct DomAttr : DomNode {
     lam::Up<DomElement> owner_element;
     lam::Up<const char> namespace_uri; // physical source Input name pool
     lam::Own<const char> qualified_name, local_name, prefix, value;
+    size_t value_length;
     lam::Up<DomAttr> attribute_next;
     void (*owner_changed)(void*);
 };
@@ -483,6 +485,8 @@ int64_t dom_comment_get_child_index(DomComment* comment_node);
  */
 bool dom_comment_set_content(DomComment* comment_node, const char* new_content);
 bool dom_comment_set_content(DomComment* comment_node, const char* new_content,
+                             DomDocument* document);
+bool dom_comment_set_content(DomComment* comment_node, StrView new_content,
                              DomDocument* document);
 
 /**

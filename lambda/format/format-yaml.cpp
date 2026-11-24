@@ -23,6 +23,7 @@ static const StrByteSet* yaml_quote_trigger_set() {
     static const StrByteSet set = [] {
         StrByteSet bytes;
         str_byteset_clear(&bytes);
+        str_byteset_add(&bytes, 0);
         for (const char* c = ":\n\"'#-[]{}|>&*!"; *c; c++) str_byteset_add(&bytes, (unsigned char)*c);
         return bytes;
     }();
@@ -32,16 +33,14 @@ static const StrByteSet* yaml_quote_trigger_set() {
 static bool yaml_scalar_needs_quotes(const char* s, size_t len) {
     if (!s) return false;
 
-    // One pass over the bytes before the first NUL -- the range sixteen
-    // strchr passes searched, one per trigger byte (string tuning §5.7-6).
-    size_t text_len = strnlen(s, len);
-    if (len == 0 || str_find_byteset(s, text_len, yaml_quote_trigger_set()) != STR_NPOS ||
+    // a NUL forces quotes so it can round-trip through the YAML escape table.
+    if (len == 0 || str_find_byteset(s, len, yaml_quote_trigger_set()) != STR_NPOS ||
         (len > 0 && (str_char_is_ascii_space(s[0]) || str_char_is_ascii_space(s[len-1])))) {
         return true;
     }
 
     // the reserved words below are all at most five bytes
-    if (text_len <= 5 && (strcmp(s, "true") == 0 || strcmp(s, "false") == 0 ||
+    if (len <= 5 && (strcmp(s, "true") == 0 || strcmp(s, "false") == 0 ||
         strcmp(s, "null") == 0 || strcmp(s, "yes") == 0 ||
         strcmp(s, "no") == 0 || strcmp(s, "on") == 0 ||
         strcmp(s, "off") == 0 || strcmp(s, "~") == 0 ||
@@ -52,11 +51,9 @@ static bool yaml_scalar_needs_quotes(const char* s, size_t len) {
     }
 
     // strtol/strtod accept only these first bytes here (leading space and
-    // '-' were quoted above); any other string stops both at offset 0. A
-    // leading NUL still goes through: the empty C string there counts as a
-    // number, as before.
+    // '-' were quoted above); any other string stops both at offset 0.
     unsigned char first = (unsigned char)s[0];
-    if (first != '\0' && !str_char_is_digit((char)first) && first != '+' &&
+    if (!str_char_is_digit((char)first) && first != '+' &&
             first != '.' && first != 'i' && first != 'I' && first != 'n' && first != 'N') {
         return false;
     }
@@ -65,6 +62,19 @@ static bool yaml_scalar_needs_quotes(const char* s, size_t len) {
     if (*end == '\0' && len > 0) return true;
     strtod(s, &end);
     return *end == '\0' && len > 0;
+}
+
+static void format_yaml_quoted(YamlContext& ctx, const char* text, size_t length) {
+    ctx.write_char('"');
+    format_escaped_string(ctx.output(), text, length, YAML_ESCAPE_RULES, YAML_ESCAPE_RULES_COUNT);
+    ctx.write_char('"');
+}
+
+static void format_yaml_key(YamlContext& ctx, const char* key, size_t length, int indent) {
+    ctx.write_indent(indent);
+    if (key && memchr(key, 0, length)) format_yaml_quoted(ctx, key, length);
+    else if (key) stringbuf_append_str_n(ctx.output(), key, length);
+    ctx.write_text(": ");
 }
 
 // format a string value for YAML - handle quoting and escaping
@@ -79,10 +89,7 @@ static void format_yaml_string(YamlContext& ctx, String* str) {
     bool needs_quotes = yaml_scalar_needs_quotes(s, len);
 
     if (needs_quotes) {
-        stringbuf_append_char(ctx.output(), '"');
-        format_escaped_string(ctx.output(), s, len,
-            YAML_ESCAPE_RULES, YAML_ESCAPE_RULES_COUNT);
-        stringbuf_append_char(ctx.output(), '"');
+        format_yaml_quoted(ctx, s, len);
     } else {
         stringbuf_append_str_n(ctx.output(), s, len);
     }
@@ -125,14 +132,16 @@ static void format_map_reader(YamlContext& ctx, const MapReader& map_reader, int
     bool first_item = true;
     auto iter = map_reader.entries();
     const char* key;
+    size_t length;
     ItemReader value;
 
-    while (iter.next(&key, &value)) {
+    while (iter.next(&key, &value, nullptr, &length)) {
         // skip null/unset fields appropriately
         if (value.isNull()) {
             if (!first_item) ctx.write_char('\n');
             first_item = false;
-            ctx.emit("%i%N: null", indent_level, key);
+            format_yaml_key(ctx, key, length, indent_level);
+            ctx.write_text("null");
             continue;
         }
 
@@ -140,7 +149,7 @@ static void format_map_reader(YamlContext& ctx, const MapReader& map_reader, int
         first_item = false;
 
         // add field name
-        ctx.emit("%i%N: ", indent_level, key);
+        format_yaml_key(ctx, key, length, indent_level);
 
         // format field value
         if (value.isMap() || value.isElement() || value.isArray() || value.isList()) {
@@ -166,15 +175,16 @@ static void format_element_reader(YamlContext& ctx, const ElementReader& elem, i
         ctx.write_char('\n');
         auto attrs = elem.attrs();
         const char* key;
+        size_t length;
         ItemReader attr_value;
         bool first_attr = true;
 
-        while (attrs.next(&key, &attr_value)) {
+        while (attrs.next(&key, &attr_value, nullptr, &length)) {
             if (!key) continue;
 
             if (!first_attr) ctx.write_char('\n');
             first_attr = false;
-            ctx.emit("%i%N: ", indent_level, key);
+            format_yaml_key(ctx, key, length, indent_level);
             format_item_reader(ctx, attr_value, 0);
         }
     }

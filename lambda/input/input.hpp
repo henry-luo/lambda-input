@@ -149,7 +149,7 @@ void skip_tab_pace(const char** text);
 
 Input* input_from_source(const char* source, Url* url, String* type, String* flavor);
 // parse captured NUL-terminated source into a caller-owned Input; no acquisition.
-bool input_parse_source_exact(const char* type, Input* input, const char* source);
+bool input_parse_source_exact(const char* type, Input* input, const char* source, size_t length);
 // parse JSON/Mark values in an explicit invocation owner; no InputManager retention.
 bool input_parse_value_n(Input* input, const char* source, size_t length,
     const char* type, const InputParseOptions* options = NULL);

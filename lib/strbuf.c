@@ -95,8 +95,7 @@ void strbuf_append_str(StrBuf *sb, const char *str) {
     sb->length += str_len;
 }
 
-// Copy N characters from a character array to the end of this StrBuf
-// strlen(__str) must be >= __n
+// Copy the supplied byte span, which can contain embedded NULs.
 void strbuf_append_str_n(StrBuf *sb, const char *str, size_t len) {
     if (!str) return;
     size_t required = 0;

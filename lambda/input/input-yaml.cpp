@@ -398,13 +398,14 @@ static bool yaml_key_equal(YamlParser* p, Item a, Item b, int depth = 0) {
         MapReader x = left.asMap(), y = right.asMap();
         if (x.size() != y.size()) return false;
         auto entries = x.entries();
-        const char* name = nullptr; ItemReader value;
-        while (entries.next(&name, &value)) {
+        const char* name = nullptr; size_t length; ItemReader value;
+        while (entries.next(&name, &value, nullptr, &length)) {
             bool found = false;
             auto candidates = y.entries();
-            const char* other_name = nullptr; ItemReader other_value;
-            while (candidates.next(&other_name, &other_value)) {
-                if (strcmp(name, other_name) == 0 && yaml_key_equal(p, value.item(), other_value.item(), depth + 1)) {
+            const char* other_name = nullptr; size_t other_length; ItemReader other_value;
+            while (candidates.next(&other_name, &other_value, nullptr, &other_length)) {
+                if (str_eq(name, length, other_name, other_length) &&
+                    yaml_key_equal(p, value.item(), other_value.item(), depth + 1)) {
                     found = true;
                     break;
                 }
@@ -436,20 +437,13 @@ static void put_key_value(YamlParser* p, MapBuilder& map, Item key_item, Item va
     String* s = key_item.get_safe_string();
     if (s) {
         // check presence independently of the old value, which may itself be null.
-        if (strcmp(s->chars, "?") == 0) {
+        if (s->len == 1 && s->chars[0] == '?') {
             if (!yaml_track_complex_key(p, map.final().map, key_item)) return;
-        } else if (MapReader(map.final().map).has(s->chars)) {
+        } else if (MapReader(map.final().map).has(s->chars, s->len)) {
             p->ctx->addError("yaml: duplicate mapping key");
             return;
         }
-        if (s->len > 0) {
-            map.put(p->ctx->builder.createName(s->chars), value_item);
-        } else {
-            // empty string key: createName("") returns null, so allocate directly
-            Arena* arena = p->ctx->builder.arena();
-            String* name = string_from_strview_arena(strview_init("", 0), arena);
-            map.put(name, value_item);
-        }
+        map.put(p->ctx->builder.createName(s->chars, s->len), value_item);
         return;
     }
     // composite key: {"?": {"key": key_item, "value": value_item}}
@@ -650,7 +644,8 @@ static Item parse_double_quoted(YamlParser* p) {
 
     if (!at_end(p) && peek(p) == '"') advance(p);
     else p->ctx->addError("yaml: unterminated double-quoted scalar");
-    Item result = (sb->length == 0) ? make_empty_string(p) : p->ctx->builder.createStringItem(sb->str);
+    // escapes such as \0 and \u0000 produce zero bytes inside the scalar.
+    Item result = p->ctx->builder.createStringItem(sb->str, sb->length);
     yaml_scratch_release(p, sb);
     return result;
 }
