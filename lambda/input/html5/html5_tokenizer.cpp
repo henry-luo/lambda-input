@@ -2053,18 +2053,25 @@ static bool html5_lex_state_is_text(int state) {
     return state == HTML5_TOK_RCDATA || state == HTML5_TOK_RAWTEXT || state == HTML5_TOK_PLAINTEXT;
 }
 
-// The tree builder switches the tokenizer for these start tags; with no tree
-// builder running, the lexer does (the tokenizer recognizes their end tags).
-static void html5_lex_after_start_tag(Html5Parser* parser, Html5Token* token) {
-    if (html5_token_is(token, MARKUP_NAME_TITLE) || html5_token_is(token, MARKUP_NAME_TEXTAREA)) {
-        html5_switch_tokenizer_state(parser, HTML5_TOK_RCDATA);
-    } else if (html5_token_is(token, MARKUP_NAME_STYLE) || html5_token_is(token, MARKUP_NAME_SCRIPT) ||
-               html5_token_is(token, MARKUP_NAME_XMP) || html5_token_is(token, MARKUP_NAME_IFRAME) ||
-               html5_token_is(token, MARKUP_NAME_NOEMBED) || html5_token_is(token, MARKUP_NAME_NOFRAMES) ||
-               html5_token_is(token, MARKUP_NAME_NOSCRIPT)) {
-        html5_switch_tokenizer_state(parser, HTML5_TOK_RAWTEXT);
-    } else if (html5_token_is(token, MARKUP_NAME_PLAINTEXT)) {
-        html5_switch_tokenizer_state(parser, HTML5_TOK_PLAINTEXT);
+// shared by fragment parsing and standalone lexing; scripts retain the document parser's raw-text mode.
+Html5TokenizerState html5_text_state_for_tag(NameId tag, bool scripting_enabled) {
+    switch (tag) {
+        case MARKUP_NAME_TITLE:
+        case MARKUP_NAME_TEXTAREA:
+            return HTML5_TOK_RCDATA;
+        case MARKUP_NAME_STYLE:
+        case MARKUP_NAME_SCRIPT:
+        case MARKUP_NAME_XMP:
+        case MARKUP_NAME_IFRAME:
+        case MARKUP_NAME_NOEMBED:
+        case MARKUP_NAME_NOFRAMES:
+            return HTML5_TOK_RAWTEXT;
+        case MARKUP_NAME_NOSCRIPT:
+            return scripting_enabled ? HTML5_TOK_RAWTEXT : HTML5_TOK_DATA;
+        case MARKUP_NAME_PLAINTEXT:
+            return HTML5_TOK_PLAINTEXT;
+        default:
+            return HTML5_TOK_DATA;
     }
 }
 
@@ -2097,7 +2104,9 @@ void html5_lex_spans(Input* input, const char* text, size_t len, Html5LexEmit em
                 name_end++;
             }
             if (name_end > name) emit(ctx, "tag-name", name, name_end);
-            if (token->type == HTML5_TOKEN_START_TAG) html5_lex_after_start_tag(parser, token);
+            if (token->type == HTML5_TOKEN_START_TAG)
+                html5_switch_tokenizer_state(parser,
+                    html5_text_state_for_tag(html5_token_tag_id(token), parser->scripting_enabled));
             break;
         }
         case HTML5_TOKEN_COMMENT:

@@ -559,3 +559,63 @@ TEST_F(HttpInputTest, FileDocumentCookiesRetainTheirEmptyHostname) {
     mem_free(remote);
     cookie_jar_destroy(jar);
 }
+
+TEST_F(HttpInputTest, CookieExpiryIsDistinctFromSessionStorage) {
+    CookieJar* jar = cookie_jar_create(nullptr);
+    ASSERT_NE(jar, nullptr);
+    const char* url = "https://example.test/page";
+    cookie_jar_store(jar, url, "keep=session; Path=/");
+    const char* expired[] = {
+        "probe=-3; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+        "probe=-3; Expires=Wed, 31 Dec 1969 23:59:59 GMT; Path=/",
+        "probe=-3; Expires=Sat, 01 Jan 2000 00:00:00 GMT; Path=/",
+    };
+    for (const char* header : expired) {
+        SCOPED_TRACE(header);
+        cookie_jar_store(jar, url, "probe=created; Path=/");
+        cookie_jar_store(jar, url, header);
+        char* visible = cookie_jar_build_document_cookie(jar, url);
+        EXPECT_STREQ(visible, "keep=session");
+        mem_free(visible);
+        char* transport = cookie_jar_build_request_cookie(jar, url);
+        EXPECT_STREQ(transport, "keep=session");
+        mem_free(transport);
+        EXPECT_EQ(cookie_jar_count(jar), 1);
+    }
+    cookie_jar_destroy(jar);
+}
+
+TEST_F(HttpInputTest, CookieExpiryAttributesKeepTheirPrecedence) {
+    const struct { const char* header; bool retained; } cases[] = {
+        {"probe=kept; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=3600", true},
+        {"probe=kept; Max-Age=3600; Expires=Thu, 01 Jan 1970 00:00:00 GMT", true},
+        {"probe=gone; Expires=Fri, 01 Jan 2100 00:00:00 GMT; Max-Age=0", false},
+        {"probe=gone; Max-Age=0; Expires=Fri, 01 Jan 2100 00:00:00 GMT", false},
+        {"probe=kept; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Expires=Fri, 01 Jan 2100 00:00:00 GMT", true},
+        {"probe=gone; Expires=Fri, 01 Jan 2100 00:00:00 GMT; Expires=Thu, 01 Jan 1970 00:00:00 GMT", false},
+        {"probe=kept; Expires=not-a-date", true},
+    };
+    for (const auto& entry : cases) {
+        SCOPED_TRACE(entry.header);
+        CookieJar* jar = cookie_jar_create(nullptr);
+        ASSERT_NE(jar, nullptr);
+        cookie_jar_store(jar, "https://example.test/page", entry.header);
+        EXPECT_EQ(cookie_jar_count(jar), entry.retained ? 1 : 0);
+        cookie_jar_destroy(jar);
+    }
+}
+
+TEST_F(HttpInputTest, ExpiredMissingCookiesDoNotCreateSessionEntries) {
+    CookieJar* jar = cookie_jar_create(nullptr);
+    ASSERT_NE(jar, nullptr);
+    cookie_jar_store(jar, "https://example.test/page",
+        "probe=-3; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+    EXPECT_EQ(cookie_jar_count(jar), 0);
+    cookie_jar_store(jar, "https://example.test/page", "probe=session");
+    EXPECT_EQ(cookie_jar_count(jar), 1);
+    cookie_jar_clear_expired(jar);
+    EXPECT_EQ(cookie_jar_count(jar), 1);
+    cookie_jar_clear_session(jar);
+    EXPECT_EQ(cookie_jar_count(jar), 0);
+    cookie_jar_destroy(jar);
+}

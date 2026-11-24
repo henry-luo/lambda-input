@@ -108,6 +108,7 @@ enum Html5TokenizerState {
 
 // Tokenizer interface
 Html5Token* html5_tokenize_next(Html5Parser* parser);
+Html5TokenizerState html5_text_state_for_tag(NameId tag, bool scripting_enabled);
 
 // Helper functions for tokenizer implementation
 void html5_emit_token(Html5Parser* parser, Html5Token* token);
