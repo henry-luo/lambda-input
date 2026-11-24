@@ -211,7 +211,7 @@ Item input_mdx(Input* input, const char* mdx_string);
 // Directory listing functions (from input_dir.cpp)
 Input* input_from_directory(const char* directory_path, const char* original_url, bool recursive, int max_depth);
 
-// HTTP/HTTPS functions (from input_http.cpp)
+// HTTP/HTTPS functions (from input-http.cpp)
 struct CookieJar;
 
 typedef struct {
@@ -293,7 +293,7 @@ FetchResponse* http_fetch2(const char* url, const FetchConfig* config, FetchFail
 void free_fetch_response(FetchResponse* response);
 const char* content_type_to_extension(const char* content_type);
 
-// System information functions (from input_sysinfo.cpp)
+// System information functions (from input-sysinfo.cpp)
 typedef struct SysInfoManager SysInfoManager;
 
 SysInfoManager* sysinfo_manager_create(void);
