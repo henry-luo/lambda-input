@@ -76,7 +76,7 @@ static Item convert_document(McpExchange& exchange, Item arguments, void*) {
     } else if (!strcmp(from->name, "text")) {
         MarkBuilder document_builder(parsed);
         parsed->root = document_builder.createStringItem(source.get_chars(), source.get_len());
-    } else if (!input_parse_source_exact(from->name, parsed, source.get_chars())) {
+    } else if (!input_parse_source_exact(from->name, parsed, source.get_chars(), source.get_len())) {
         return tool_error(builder, "Unsupported input parser");
     }
     if (parsed->parse_failed || get_type_id(parsed->root) == LMD_TYPE_ERROR) {

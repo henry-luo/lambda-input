@@ -44,7 +44,7 @@ static bool try_format_js_expr(StringBuf* sb, const ElementReader& elem) {
         if (first.isString()) {
             String* js = first.asString();
             if (js && js->len > 0 && js->len < 10000) {
-                stringbuf_append_str(sb, js->chars);
+                stringbuf_append_str_n(sb, js->chars, js->len);
             }
         }
     }
@@ -58,28 +58,31 @@ static void format_jsx_attributes(StringBuf* sb, const ElementReader& elem) {
 
     auto attrs = elem.attrs();
     const char* attr_name;
+    size_t attr_length;
     ItemReader value;
-    while (attrs.next(&attr_name, &value)) {
+    while (attrs.next(&attr_name, &value, nullptr, &attr_length)) {
         if (!attr_name) continue;
 
         // Skip internal markers
-        if (strcmp(attr_name, "is_component") == 0 || strcmp(attr_name, "self_closing") == 0) {
+        if (str_eq_const(attr_name, attr_length, "is_component") ||
+            str_eq_const(attr_name, attr_length, "self_closing")) {
             continue;
         }
 
         // Skip internal JSX type marker
-        if (strcmp(attr_name, "type") == 0 && value.isString()) {
+        if (str_eq_const(attr_name, attr_length, "type") && value.isString()) {
             String* type_value = value.asString();
-            if (type_value && strcmp(type_value->chars, "jsx_element") == 0) {
+            if (type_value && str_eq_const(type_value->chars, type_value->len, "jsx_element")) {
                 continue;
             }
         }
 
-        stringbuf_append_format(sb, " %s", attr_name);
+        stringbuf_append_char(sb, ' ');
+        stringbuf_append_str_n(sb, attr_name, attr_length);
 
         if (value.isString()) {
             String* attr_value = value.asString();
-            if (attr_value && strcmp(attr_value->chars, "true") != 0) {
+            if (attr_value && !str_eq_const(attr_value->chars, attr_value->len, "true")) {
                 stringbuf_append_char(sb, '=');
                 format_jsx_attribute_value(sb, attr_value);
             }
@@ -122,7 +125,7 @@ static void format_jsx_element(StringBuf* sb, const ElementReader& elem) {
     ItemReader sc = elem.get_attr("self_closing");
     if (sc.isString()) {
         String* scv = sc.asString();
-        if (scv && strcmp(scv->chars, "true") == 0) {
+        if (scv && str_eq_const(scv->chars, scv->len, "true")) {
             stringbuf_append_str(sb, " />");
             return;
         }

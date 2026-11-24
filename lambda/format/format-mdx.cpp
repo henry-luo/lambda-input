@@ -17,7 +17,7 @@ static void format_mdx_element_reader(StringBuf* sb, const ElementReader& elem) 
         if (content.isString()) {
             String* jsx_content = content.asString();
             if (jsx_content) {
-                stringbuf_append_str(sb, jsx_content->chars);
+                stringbuf_append_str_n(sb, jsx_content->chars, jsx_content->len);
             }
         }
     } else if (tag && strcmp(tag, "mdx_document") == 0) {
@@ -38,7 +38,7 @@ static void format_mdx_item_reader(StringBuf* sb, const ItemReader& item) {
     if (item.isString()) {
         String* text = item.asString();
         if (text && text->len > 0) {
-            stringbuf_append_str(sb, text->chars);
+            stringbuf_append_str_n(sb, text->chars, text->len);
         }
     } else if (item.isElement()) {
         format_mdx_element_reader(sb, item.asElement());

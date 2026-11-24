@@ -225,5 +225,6 @@ typedef struct LambdaError {
     uint64_t js_properties_item;
     uint8_t js_class_id;        // JS built-in class identity for unified Error values
     uint8_t js_own_flags;       // own-property bits for Error's non-enumerable fields
+    size_t message_length;     // owned message byte count, including embedded NULs
 } LambdaError;
 

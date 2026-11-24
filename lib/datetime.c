@@ -892,7 +892,12 @@ int datetime_days_in_month_dt(DateTime* dt) {
  *   A - AM/PM, Z - UTC offset (+05:30), ZZ - compact offset (+0530)
  */
 void datetime_format_pattern(StrBuf* strbuf, DateTime* dt, const char* pattern) {
+    datetime_format_pattern_n(strbuf, dt, pattern, pattern ? strlen(pattern) : 0);
+}
+
+void datetime_format_pattern_n(StrBuf* strbuf, DateTime* dt, const char* pattern, size_t length) {
     if (!strbuf || !dt || !pattern) return;
+    // literal code points, including NUL, are copied from the bounded pattern.
 
     static const char* month_names[] = {
         "", "January", "February", "March", "April", "May", "June",
@@ -917,69 +922,71 @@ void datetime_format_pattern(StrBuf* strbuf, DateTime* dt, const char* pattern) 
     if (hour12 == 0) hour12 = 12;
     int wday = datetime_weekday(dt);
 
+    const char* end = pattern + length;
     const char* p = pattern;
-    while (*p) {
+    while (p < end) {
+        size_t remaining = (size_t)(end - p);
         /* try matching multi-char tokens first */
-        if (strncmp(p, "YYYY", 4) == 0) {
+        if (remaining >= 4 && memcmp(p, "YYYY", 4) == 0) {
             strbuf_append_format(strbuf, "%04d", year);
             p += 4;
-        } else if (strncmp(p, "YY", 2) == 0) {
+        } else if (remaining >= 2 && memcmp(p, "YY", 2) == 0) {
             strbuf_append_format(strbuf, "%02d", abs(year) % 100);
             p += 2;
-        } else if (strncmp(p, "MMMM", 4) == 0) {
+        } else if (remaining >= 4 && memcmp(p, "MMMM", 4) == 0) {
             strbuf_append_str(strbuf, (month >= 1 && month <= 12) ? month_names[month] : "???");
             p += 4;
-        } else if (strncmp(p, "MMM", 3) == 0) {
+        } else if (remaining >= 3 && memcmp(p, "MMM", 3) == 0) {
             strbuf_append_str(strbuf, (month >= 1 && month <= 12) ? month_abbr[month] : "???");
             p += 3;
-        } else if (strncmp(p, "MM", 2) == 0) {
+        } else if (remaining >= 2 && memcmp(p, "MM", 2) == 0) {
             strbuf_append_format(strbuf, "%02d", month);
             p += 2;
-        } else if (*p == 'M' && *(p+1) != 'M') {
+        } else if (*p == 'M') {
             strbuf_append_format(strbuf, "%d", month);
             p += 1;
-        } else if (strncmp(p, "DD", 2) == 0) {
+        } else if (remaining >= 2 && memcmp(p, "DD", 2) == 0) {
             strbuf_append_format(strbuf, "%02d", day);
             p += 2;
-        } else if (*p == 'D' && *(p+1) != 'D') {
+        } else if (*p == 'D') {
             strbuf_append_format(strbuf, "%d", day);
             p += 1;
-        } else if (strncmp(p, "dddd", 4) == 0) {
+        } else if (remaining >= 4 && memcmp(p, "dddd", 4) == 0) {
             strbuf_append_str(strbuf, (wday >= 0 && wday <= 6) ? weekday_names[wday] : "???");
             p += 4;
-        } else if (strncmp(p, "ddd", 3) == 0) {
+        } else if (remaining >= 3 && memcmp(p, "ddd", 3) == 0) {
             strbuf_append_str(strbuf, (wday >= 0 && wday <= 6) ? weekday_abbr[wday] : "???");
             p += 3;
-        } else if (strncmp(p, "HH", 2) == 0) {
+        } else if (remaining >= 2 && memcmp(p, "HH", 2) == 0) {
             // the datetime pattern contract uses HH for 12h and hh/h for 24h.
             strbuf_append_format(strbuf, "%02d", hour12);
             p += 2;
-        } else if (strncmp(p, "hh", 2) == 0) {
+        } else if (remaining >= 2 && memcmp(p, "hh", 2) == 0) {
             strbuf_append_format(strbuf, "%02d", hour24);
             p += 2;
-        } else if (*p == 'h' && *(p+1) != 'h') {
+        } else if (*p == 'h') {
             strbuf_append_format(strbuf, "%d", hour24);
             p += 1;
-        } else if (strncmp(p, "mm", 2) == 0) {
+        } else if (remaining >= 2 && memcmp(p, "mm", 2) == 0) {
             strbuf_append_format(strbuf, "%02d", dt->minute);
             p += 2;
-        } else if (strncmp(p, "SSS", 3) == 0) {
+        } else if (remaining >= 3 && memcmp(p, "SSS", 3) == 0) {
             strbuf_append_format(strbuf, "%03d", dt->millisecond);
             p += 3;
-        } else if (strncmp(p, "ss", 2) == 0) {
+        } else if (remaining >= 2 && memcmp(p, "ss", 2) == 0) {
             strbuf_append_format(strbuf, "%02d", dt->second);
             p += 2;
         } else if (*p == 'A') {
             strbuf_append_str(strbuf, hour24 < 12 ? "AM" : "PM");
             p += 1;
-        } else if (strncmp(p, "ZZ", 2) == 0) {
+        } else if (remaining >= 2 && memcmp(p, "ZZ", 2) == 0) {
             if (DATETIME_HAS_TIMEZONE(dt)) {
                 int tz = DATETIME_GET_TZ_OFFSET(dt);
                 int h = abs(tz) / 60, m = abs(tz) % 60;
                 strbuf_append_format(strbuf, "%c%02d%02d", tz >= 0 ? '+' : '-', h, m);
             }
             p += 2;
-        } else if (*p == 'Z' && *(p+1) != 'Z') {
+        } else if (*p == 'Z') {
             if (DATETIME_HAS_TIMEZONE(dt)) {
                 int tz = DATETIME_GET_TZ_OFFSET(dt);
                 int h = abs(tz) / 60, m = abs(tz) % 60;

@@ -2323,10 +2323,21 @@ static bool markup_flavor_to_format(const char* flavor, MarkupFormat* format) {
     return false;
 }
 
-bool input_parse_source_exact(const char* effective_type, Input* input, const char* source) {
+static bool input_admit_c_string_source(Input* input, const char* source, size_t length) {
+    // legacy text parsers use the terminator as EOF and would accept only the prefix.
+    if (!length || !memchr(source, 0, length)) return true;
+    input->parse_failed = true;
+    input->parse_error_message = pool_strdup(input->pool, "Input format does not accept a literal NUL byte");
+    input->root = ItemError;
+    return false;
+}
+
+bool input_parse_source_exact(const char* effective_type, Input* input, const char* source, size_t length) {
     for (size_t i = 0; i < sizeof(INPUT_PARSER_MAPPINGS) / sizeof(INPUT_PARSER_MAPPINGS[0]); i++) {
         if (strcmp(effective_type, INPUT_PARSER_MAPPINGS[i].type) == 0) {
-            INPUT_PARSER_MAPPINGS[i].parse(input, source);
+            if (input_admit_c_string_source(input, source, length)) {
+                INPUT_PARSER_MAPPINGS[i].parse(input, source);
+            }
             return true;
         }
     }
@@ -2462,7 +2473,8 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
 
         const char* wiki_flavor = wiki_format_flavor(effective_type, flavor ? flavor->chars : nullptr);
         if (wiki_flavor) {
-            input->root = input_markup_wiki(input, source, wiki_flavor);
+            if (input_admit_c_string_source(input, source, source_len))
+                input->root = input_markup_wiki(input, source, wiki_flavor);
         }
 #ifndef LAMBDA_NO_CSS_INPUT
         else if (strcmp(effective_type, "css") == 0 && flavor && !strcmp(flavor->chars, "tokens")) {
@@ -2474,7 +2486,9 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
             const char* markup_flavor = (flavor) ? flavor->chars : "markdown";
             log_debug("input_from_source markup: flavor='%s'", markup_flavor);
             MarkupFormat markup_format;
-            if (markup_flavor_to_format(markup_flavor, &markup_format)) {
+            if (!input_admit_c_string_source(input, source, source_len)) {
+                // retain the admission error set above
+            } else if (markup_flavor_to_format(markup_flavor, &markup_format)) {
                 input->root = input_markup_with_format(input, source, markup_format);
             } else if (strcmp(markup_flavor, "commonmark") == 0) {
                 // Strict CommonMark mode - no GFM extensions
@@ -2509,7 +2523,7 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
                 input->parse_failed = true;
                 input->parse_error_message = pool_strdup(input->pool, "XML document contains a NUL byte");
                 input->root = ItemError;
-            } else {
+            } else if (strict_xml || input_admit_c_string_source(input, source, source_len)) {
                 XmlParseOptions xml_options = {};
                 xml_options.preserve_whitespace = document_xml || (options && options->xml_preserve_whitespace);
                 xml_options.require_well_formed = strict_xml;
@@ -2542,7 +2556,7 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
         else if (strcmp(effective_type, "json") == 0) {
             parse_json_n(input, source, source_len);
         }
-        else if (input_parse_source_exact(effective_type, input, source)) {}
+        else if (input_parse_source_exact(effective_type, input, source, source_len)) {}
 #ifndef LAMBDA_NO_PDF
         else if (strcmp(effective_type, "pdf") == 0) {
             // PDF is binary; use the explicit length we received instead of strlen,
@@ -2555,12 +2569,12 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
         else if (strcmp(effective_type, "math") == 0) {
             const char* math_flavor = (flavor) ? flavor->chars : "latex";
             // Both ASCII and LaTeX math use the direct cursor parser.
-            parse_math(input, source, math_flavor);
+            if (input_admit_c_string_source(input, source, source_len)) parse_math(input, source, math_flavor);
         }
         else if (strncmp(effective_type, "math-", 5) == 0) {
             // Handle compound math formats like "math-ascii", "math-latex", etc.
             const char* math_flavor = effective_type + 5; // Skip "math-" prefix
-            parse_math(input, source, math_flavor);
+            if (input_admit_c_string_source(input, source, source_len)) parse_math(input, source, math_flavor);
         }
 
 #endif
@@ -2568,7 +2582,7 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
         else if (strcmp(effective_type, "graph") == 0) {
             const char* graph_flavor = flavor ? flavor->chars
                 : (detected_graph_flavor ? detected_graph_flavor : "dot");
-            parse_graph(input, source, graph_flavor);
+            if (input_admit_c_string_source(input, source, source_len)) parse_graph(input, source, graph_flavor);
         }
 #endif
         else {

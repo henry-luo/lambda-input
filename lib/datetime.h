@@ -157,6 +157,7 @@ int datetime_days_in_month_dt(DateTime* dt); // days in the datetime's month
 
 // Custom format pattern support
 void datetime_format_pattern(StrBuf* strbuf, DateTime* dt, const char* pattern);
+void datetime_format_pattern_n(StrBuf* strbuf, DateTime* dt, const char* pattern, size_t length);
 
 #ifdef __cplusplus
 }

@@ -59,7 +59,10 @@ static Item fs_error(Input* input, const char* member, const char* message) {
     strbuf_append_format(text, "%s%s%s: %s", source, member && *member ? "!" : "",
         member ? member : "", message ? message : "Archive operation failed");
     error->message = (char*)arena_alloc(input->arena, text->length + 1);
-    if (error->message) memcpy(error->message, text->str, text->length + 1);
+    if (error->message) {
+        memcpy(error->message, text->str, text->length + 1);
+        error->message_length = text->length;
+    }
     strbuf_free(text);
     return err2it(error);
 }

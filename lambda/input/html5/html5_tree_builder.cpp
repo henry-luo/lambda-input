@@ -551,9 +551,13 @@ Html5Parser* html5_fragment_parser_create(Pool* pool, Arena* arena, Input* input
  * @return true on success, false on error
  */
 bool html5_fragment_parse(Html5Parser* parser, const char* html) {
+    return html5_fragment_parse_n(parser, html, html ? strlen(html) : 0);
+}
+
+bool html5_fragment_parse_n(Html5Parser* parser, const char* html, size_t html_len) {
     if (!parser || !html) return false;
 
-    size_t html_len = strlen(html);
+    // the tokenizer handles zero bytes according to its state, independently of EOF.
     if (html_len == 0 && parser->fragment_context_tag != MARKUP_NAME_HTML) return true;
 
     // Store the current position (we may be continuing from previous parse)

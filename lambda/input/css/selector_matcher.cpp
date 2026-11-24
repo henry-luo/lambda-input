@@ -756,7 +756,7 @@ static bool selector_matcher_matches_namespaced_attribute(
             (wanted_uri && strcmp(attr->namespace_uri, wanted_uri) != 0) ||
             (html ? str_icmp_cstr(attr->local_name, selector->attribute.name) != 0
                   : strcmp(attr->local_name, selector->attribute.name) != 0)) continue;
-        if (selector_matcher_matches_attribute_value(matcher, attr->value, true,
+        if (selector_matcher_matches_attribute_value(matcher, {attr->value, attr->value_length}, true,
                 selector->attribute.value, selector->type,
                 selector->attribute.case_insensitive,
                 selector->attribute.case_sensitive)) return true;
@@ -767,7 +767,7 @@ static bool selector_matcher_matches_namespaced_attribute(
         !dom_element_namespaced_attributes(element)) {
         const char* name = selector->attribute.name;
         return selector_matcher_matches_attribute_value(matcher,
-            element->get_attribute(name), element->has_attribute(name),
+            element->get_attribute_view(name), element->has_attribute(name),
             selector->attribute.value, selector->type,
             selector->attribute.case_insensitive,
             selector->attribute.case_sensitive);
@@ -782,7 +782,7 @@ static bool selector_matcher_matches_namespaced_attribute(
         if (html ? str_icmp_cstr(local, selector->attribute.name) != 0
                  : strcmp(local, selector->attribute.name) != 0) continue;
         if (selector_matcher_matches_attribute_value(matcher,
-                element->get_attribute(names[i]), element->has_attribute(names[i]),
+                element->get_attribute_view(names[i]), element->has_attribute(names[i]),
                 selector->attribute.value, selector->type,
                 selector->attribute.case_insensitive,
                 selector->attribute.case_sensitive)) return true;
@@ -987,108 +987,48 @@ bool selector_matcher_matches_compound(SelectorMatcher* matcher,
     return true;
 }
 bool selector_matcher_matches_attribute_value(
-    SelectorMatcher* matcher, const char* element_attr, bool exists,
+    SelectorMatcher* matcher, StrView element_attr, bool exists,
     const char* attr_value, CssSelectorType attr_type, bool case_insensitive,
     bool case_sensitive) {
     if (!matcher) return false;
-    // For existence check (no value specified), use has_attribute
-    // This handles the case where attribute exists but has empty value (stored as null)
-    if (!attr_value || attr_type == CSS_SELECTOR_ATTR_EXISTS) {
-        return exists;
-    }
+    if (!attr_value || attr_type == CSS_SELECTOR_ATTR_EXISTS) return exists;
     if (!exists) return false;
-    if (!element_attr) {
-        // Empty attributes may be stored without a value pointer; exact-empty
-        // selectors must still distinguish them from absent attributes.
-        if (attr_type == CSS_SELECTOR_ATTR_EXACT && attr_value[0] == '\0') {
-            return true;
-        }
-        return false;
-    }
+    if (!element_attr.str) return attr_type == CSS_SELECTOR_ATTR_EXACT && attr_value[0] == '\0';
 
-    // Determine comparison function - respect both parameter AND matcher configuration
-    bool use_case_insensitive = !case_sensitive &&
-        (case_insensitive || !matcher->case_sensitive_attrs);
-    int (*compare_func)(const char*, const char*) = use_case_insensitive ? str_icmp_cstr : strcmp;
-
+    // matching the stored span prevents a zero byte from impersonating the end of the attribute.
+    bool insensitive = !case_sensitive && (case_insensitive || !matcher->case_sensitive_attrs);
+    const char* text = element_attr.str;
+    size_t length = element_attr.length;
+    size_t selected_length = strlen(attr_value);
     switch (attr_type) {
         case CSS_SELECTOR_ATTR_EXACT:
-            // [attr="value"] - exact match
-            return compare_func(element_attr, attr_value) == 0;
-
-        case CSS_SELECTOR_ATTR_CONTAINS:
-            // [attr~="value"] - space-separated list contains value
-            {
-                size_t value_len = strlen(attr_value);
-                const char* pos = element_attr;
-                while (*pos) {
-                    // Skip whitespace
-                    pos = str_skip_ascii_space(pos);
-                    if (!*pos) break;
-
-                    // Check if this word matches
-                    const char* word_start = pos;
-                    while (*pos && !str_char_is_ascii_space(*pos)) pos++;
-
-                    size_t word_len = pos - word_start;
-                    if (word_len == value_len) {
-                        if (use_case_insensitive) {
-                            if (str_ieq(word_start, value_len, attr_value, value_len)) {
-                                return true;
-                            }
-                        } else {
-                            if (strncmp(word_start, attr_value, value_len) == 0) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-                return false;
+            return insensitive ? str_ieq(text, length, attr_value, selected_length)
+                               : str_eq(text, length, attr_value, selected_length);
+        case CSS_SELECTOR_ATTR_CONTAINS: {
+            const char* end = text + length;
+            while (text < end) {
+                while (text < end && str_char_is_ascii_space(*text)) text++;
+                if (text == end) break;
+                const char* word = text;
+                while (text < end && !str_char_is_ascii_space(*text)) text++;
+                size_t word_length = text - word;
+                if (insensitive ? str_ieq(word, word_length, attr_value, selected_length)
+                                : str_eq(word, word_length, attr_value, selected_length)) return true;
             }
-
+            return false;
+        }
         case CSS_SELECTOR_ATTR_BEGINS:
-            // [attr^="value"] - begins with
-            {
-                size_t value_len = strlen(attr_value);
-                if (use_case_insensitive) {
-                    return str_istarts_with(element_attr, strlen(element_attr), attr_value, value_len);
-                } else {
-                    return strncmp(element_attr, attr_value, value_len) == 0;
-                }
-            }
-
+            return insensitive ? str_istarts_with(text, length, attr_value, selected_length)
+                               : str_starts_with(text, length, attr_value, selected_length);
         case CSS_SELECTOR_ATTR_ENDS:
-            // [attr$="value"] - ends with
-            {
-                size_t attr_len = strlen(element_attr);
-                size_t value_len = strlen(attr_value);
-                if (value_len > attr_len) {
-                    return false;
-                }
-                const char* suffix = element_attr + (attr_len - value_len);
-                return compare_func(suffix, attr_value) == 0;
-            }
-
+            return insensitive ? str_iends_with(text, length, attr_value, selected_length)
+                               : str_ends_with(text, length, attr_value, selected_length);
         case CSS_SELECTOR_ATTR_SUBSTRING:
-            // [attr*="value"] - contains substring
-            if (use_case_insensitive) {
-                return str_ifind(element_attr, strlen(element_attr), attr_value,
-                                 strlen(attr_value)) != STR_NPOS;
-            } else {
-                return strstr(element_attr, attr_value) != NULL;
-            }
-
+            return (insensitive ? str_ifind(text, length, attr_value, selected_length)
+                                : str_find(text, length, attr_value, selected_length)) != STR_NPOS;
         case CSS_SELECTOR_ATTR_LANG:
-            // [attr|="value"] - language prefix match
-            {
-                size_t value_len = strlen(attr_value);
-                if (strncmp(element_attr, attr_value, value_len) == 0) {
-                    // Must be exact match or followed by hyphen
-                    return element_attr[value_len] == '\0' || element_attr[value_len] == '-';
-                }
-                return false;
-            }
-
+            return str_starts_with(text, length, attr_value, selected_length) &&
+                (length == selected_length || text[selected_length] == '-');
         default:
             return false;
     }
@@ -1102,7 +1042,7 @@ bool selector_matcher_matches_attribute(SelectorMatcher* matcher,
                                         DomElement* element) {
     if (!matcher || !attr_name || !element) return false;
     return selector_matcher_matches_attribute_value(matcher,
-        element->get_attribute(attr_name), element->has_attribute(attr_name),
+        element->get_attribute_view(attr_name), element->has_attribute(attr_name),
         attr_value, attr_type, case_insensitive, false);
 }
 
