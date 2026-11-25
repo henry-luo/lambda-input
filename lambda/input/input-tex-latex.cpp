@@ -20,8 +20,8 @@
 
 namespace tex {
 
-static const uint32_t MAX_LOCAL_FILES = 128;
-static const uint64_t MAX_LOCAL_BYTES = 16u * 1024u * 1024u;
+static const uint32_t MAX_LOCAL_FILES = INPUT_TEX_LOCAL_FILE_LIMIT;
+static const uint64_t MAX_LOCAL_BYTES = INPUT_TEX_RESOURCE_BYTE_LIMIT;
 
 // ======================================================================
 // primitive names

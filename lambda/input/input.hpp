@@ -186,6 +186,7 @@ Input* input_from_target_with_io(struct Target* target, String* type,
     const InputScriptParser* script_parser = NULL);
 
 // Resource capture shares the TeX document-directory boundary with native clients.
+enum { INPUT_TEX_LOCAL_FILE_LIMIT = 128, INPUT_TEX_RESOURCE_BYTE_LIMIT = 16 * 1024 * 1024 };
 struct SecurityIOResult;
 char* input_tex_resolve_path(const struct SecurityIOClient* io, const char* path, int32_t* kind,
     struct SecurityIOResult* result);
