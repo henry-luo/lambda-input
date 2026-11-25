@@ -115,6 +115,68 @@ TEST_F(CompoundDescendantSelectorTest, RejectAncestorBeforeCountingFilteredSibli
     EXPECT_FALSE(selector_matcher_matches(matcher, selector, &options[62], nullptr));
 }
 
+TEST_F(CompoundDescendantSelectorTest, DocumentStorageIsNotASelectorAncestor) {
+    DomElement document = {}, html = {}, target = {};
+    document.node_type = html.node_type = target.node_type = DOM_NODE_ELEMENT;
+    document.tag_id = MARKUP_NAME_DOM_DOCUMENT;
+    html.tag_id = MARKUP_NAME_HTML;
+    target.tag_id = MARKUP_NAME_P;
+    html.parent = lam::up<DomNode>(&document);
+    target.parent = lam::up<DomNode>(&html);
+    document.first_child = lam::own<DomNode>(&html);
+    html.first_child = lam::own<DomNode>(&target);
+    CssEngine* engine = CreateEngine();
+    SelectorMatcher* matcher = selector_matcher_create(pool.get());
+    const struct { const char* css; bool matches; } cases[] = {
+        {"* > html p {color:red}", false},
+        {"* html p {color:red}", false},
+        {":not(html) > html p {color:red}", false},
+        {"html > p {color:red}", true},
+        {"* > p {color:red}", true}
+    };
+    for (const auto& entry : cases) {
+        CssStylesheet* sheet = css_parse_stylesheet(engine, entry.css, nullptr);
+        ASSERT_NE(sheet, nullptr);
+        ASSERT_EQ(sheet->rule_count, 1u);
+        EXPECT_EQ(selector_matcher_matches(matcher,
+            sheet->rules[0]->data.style_rule.selector, &target, nullptr), entry.matches) << entry.css;
+    }
+}
+
+TEST_F(CompoundDescendantSelectorTest, VirtualScopesRemainFeaturelessAndCannotBeQuerySubjects) {
+    DomElement fragment = {}, target = {};
+    fragment.node_type = target.node_type = DOM_NODE_ELEMENT;
+    fragment.tag_id = MARKUP_NAME_DOM_DOCUMENT_FRAGMENT;
+    target.tag_id = MARKUP_NAME_P;
+    fragment.first_child = lam::own<DomNode>(&target);
+    fragment.last_child = lam::up<DomNode>(&target);
+    target.parent = lam::up<DomNode>(&fragment);
+    CssEngine* engine = CreateEngine();
+    SelectorMatcher* matcher = selector_matcher_create(pool.get());
+    selector_matcher_set_scope_element(matcher, &fragment);
+    const struct { const char* css; bool matches; } cases[] = {
+        {":scope > p {color:red}", true},
+        {":where(:scope) > p {color:red}", true},
+        {":is(*,:scope) > p {color:red}", true},
+        {":not(:not(:scope)) > p {color:red}", true},
+        {":scope:has(>p) > p {color:red}", true},
+        {"* > p {color:red}", false},
+        {":not([lang]) > p {color:red}", false},
+        {"*:scope > p {color:red}", false},
+        {":scope:not(:lang(en)) > p {color:red}", false}
+    };
+    for (const auto& entry : cases) {
+        CssStylesheet* sheet = css_parse_stylesheet(engine, entry.css, nullptr);
+        ASSERT_NE(sheet, nullptr);
+        ASSERT_EQ(sheet->rule_count, 1u);
+        EXPECT_EQ(selector_matcher_matches(matcher,
+            sheet->rules[0]->data.style_rule.selector, &target, nullptr), entry.matches) << entry.css;
+    }
+    CssSelectorGroup* group = css_parse_selector_group_text(":scope", 6, pool.get());
+    ASSERT_NE(group, nullptr);
+    EXPECT_EQ(selector_matcher_query_group(matcher, group, &fragment, true), nullptr);
+}
+
 TEST_F(CompoundDescendantSelectorTest, CompoundSelector_ElementWithClass) {
     auto engine = CreateEngine();
     ASSERT_NE(engine, nullptr);
