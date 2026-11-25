@@ -22,6 +22,7 @@ struct FsParsed {
     const char* flavor;
     Item value;
     bool script_enabled;
+    const char* deferred_tex_type;
     FsParsed* next;
 };
 struct FsNode {
@@ -84,7 +85,7 @@ ZipMemberReader* fs_node_open_zip_member(Item node, ZipError* error) {
 }
 
 static Item fs_parse_uncached(FsNode* node, String* type, String* flavor,
-        const InputScriptParser* script_parser) {
+        const InputScriptParser* script_parser, const char** deferred_tex_type) {
     FsTree* tree = node->tree;
     ArchiveEntry* entry = archive_entry(tree->archive, node->index);
     if (entry->directory || node->index == 0) {
@@ -127,24 +128,39 @@ static Item fs_parse_uncached(FsNode* node, String* type, String* flavor,
     InputParseOptions options = {};
     options.io = &captured_resources;
     options.script_parser = script_parser;
-    Input* parsed = input_from_source_n_with_name_parent(data, size, member_url,
-        type, flavor, nullptr, &options);
+    const char* detected_tex = nullptr;
+    Input* parsed = input_from_source_n_with_deferred_tex(data, size, member_url,
+        type, flavor, nullptr, &options, &detected_tex);
     if (!parsed) { if (member_url) url_destroy(member_url); return ItemError; }
     if (parsed->parse_failed) return fs_error(tree->input, entry->path,
         parsed->parse_error_message ? parsed->parse_error_message : "member parsing failed");
+    if (detected_tex) *deferred_tex_type = detected_tex;
     return parsed->root;
 }
 
+static Item fs_deferred_result(FsNode* node, Item value, const char* type, const char** output) {
+    if (!output) return fs_error(node->tree->input,
+        archive_entry(node->tree->archive, node->index)->path, "TeX member requires a Lambda parser host");
+    *output = type;
+    return value;
+}
+
 static Item fs_parse(FsNode* node, String* type, String* flavor,
-        const InputScriptParser* script_parser) {
+        const InputScriptParser* script_parser, const char** deferred_tex_type = nullptr) {
+    if (deferred_tex_type) *deferred_tex_type = nullptr;
     const char* type_name = type && strcmp(type->chars, "auto") ? type->chars : "auto";
     const char* flavor_name = flavor ? flavor->chars : "";
     for (FsParsed* parsed = node->parses; parsed; parsed = parsed->next) {
-        if (!strcmp(parsed->type, type_name) && !strcmp(parsed->flavor, flavor_name) &&
-                (parsed->script_enabled || !script_parser || !item_is_error(parsed->value))) {
+        if (!strcmp(parsed->type, type_name) && !strcmp(parsed->flavor, flavor_name)) {
+            if (parsed->deferred_tex_type) {
+                return fs_deferred_result(node, parsed->value, parsed->deferred_tex_type, deferred_tex_type);
+            }
+            if (!(parsed->script_enabled || (!script_parser && !deferred_tex_type) || !item_is_error(parsed->value))) continue;
             return parsed->value;
         }
     }
+    const char* detected_tex = nullptr;
+    Item value = fs_parse_uncached(node, type, flavor, script_parser, &detected_tex);
     Input* input = node->tree->input;
     FsParsed* parsed = (FsParsed*)arena_calloc(input->arena, sizeof(FsParsed));
     if (!parsed) return ItemError;
@@ -154,8 +170,13 @@ static Item fs_parse(FsNode* node, String* type, String* flavor,
     strcpy((char*)parsed->type, type_name); strcpy((char*)parsed->flavor, flavor_name);
     // Lazy reads without a provider must not cache an unavailable parser for explicit reads.
     parsed->script_enabled = script_parser != nullptr;
-    parsed->value = fs_parse_uncached(node, type, flavor, script_parser);
+    parsed->value = value;
+    parsed->deferred_tex_type = detected_tex;
     parsed->next = node->parses; node->parses = parsed;
+    if (detected_tex) {
+        // Cache the captured source, never a runtime-owned result, for both host and lazy reads.
+        return fs_deferred_result(node, value, detected_tex, deferred_tex_type);
+    }
     return parsed->value;
 }
 
@@ -163,6 +184,13 @@ Item fs_node_input(Item node, String* type, String* flavor,
         const InputScriptParser* script_parser) {
     FsNode* fs = fs_node_data(node);
     return fs ? fs_parse(fs, type, flavor, script_parser) : ItemError;
+}
+
+Item fs_node_input_deferred(Item node, String* type, String* flavor,
+        const InputScriptParser* script_parser, const char** deferred_tex_type) {
+    FsNode* fs = fs_node_data(node);
+    if (deferred_tex_type) *deferred_tex_type = nullptr;
+    return fs ? fs_parse(fs, type, flavor, script_parser, deferred_tex_type) : ItemError;
 }
 
 static VirtualOpStatus fs_prepare(void* data, Item* error) {

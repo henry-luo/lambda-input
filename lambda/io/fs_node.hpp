@@ -15,6 +15,9 @@ Item fs_node_content(Item node);
 struct InputScriptParser;
 Item fs_node_input(Item node, String* type, String* flavor,
     const InputScriptParser* script_parser = nullptr);
+// Deferred TeX source is Input-owned; the format name is static.
+Item fs_node_input_deferred(Item node, String* type, String* flavor,
+    const InputScriptParser* script_parser, const char** deferred_tex_type);
 Archive* fs_node_archive(Item node);
 ZipMemberReader* fs_node_open_zip_member(Item node, ZipError* error);
 bool fs_zip_encode(Item tree, const ZipWriteOptions* options,
