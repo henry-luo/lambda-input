@@ -2,6 +2,10 @@
 
 #include <stdint.h>
 
+// shared bitmap/readback budgets; rejected requests leave the existing surface intact.
+#define RADIANT_CANVAS_MAX_DIMENSION 4096
+#define RADIANT_CANVAS_MAX_PIXELS 4194304u
+
 // Native canvas state is copied across the host boundary, never borrowed.
 #define RADIANT_CANVAS_FONT_TEXT_MAX 512
 struct RadiantCanvasStateSnapshot {

@@ -156,7 +156,8 @@ String* MarkBuilder::createString(const char* str, size_t len) {
 }
 
 Binary* MarkBuilder::createBinary(const void* bytes, size_t len) {
-    if ((!bytes && len != 0) || len > UINT32_MAX ||
+    // S2.2.2v2: zero bytes have no binary value to construct.
+    if (!bytes || len == 0 || len > UINT32_MAX ||
         len > SIZE_MAX - sizeof(Binary)) return nullptr;
 
     // Arena objects have no individual finalizer, so their immutable byte
@@ -164,12 +165,12 @@ Binary* MarkBuilder::createBinary(const void* bytes, size_t len) {
     Binary* binary = (Binary*)arena_alloc(arena_, sizeof(Binary) + len);
     if (!binary) return nullptr;
     binary->len = (uint32_t)len;
-    binary->is_ascii = (len == 0 || str_is_ascii((const char*)bytes, len)) ? 1 : 0;
+    binary->is_ascii = str_is_ascii((const char*)bytes, len) ? 1 : 0;
     binary->flags = BINARY_FLAG_INLINE;
     binary->reserved = 0;
     binary->storage = nullptr;
     binary->offset = 0;
-    if (len != 0) memcpy(binary->inline_bytes, bytes, len);
+    memcpy(binary->inline_bytes, bytes, len);
     return binary;
 }
 

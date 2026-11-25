@@ -221,7 +221,10 @@ static void jar_ensure_capacity(CookieJar* jar) {
 // Parse Set-Cookie header (RFC 6265 §5.2)
 // ============================================================================
 
-static CookieEntry* parse_set_cookie(const char* header, const char* request_url) {
+static CookieEntry* parse_set_cookie(const char* header, const char* request_url,
+                                    bool* has_expiry) {
+    *has_expiry = false;
+    bool has_max_age = false;
     if (!header || !header[0]) return nullptr;
 
     const char* p = header;
@@ -319,7 +322,7 @@ static CookieEntry* parse_set_cookie(const char* header, const char* request_url
                 entry->path = mem_dup_n(attr_val, attr_val_len, MEM_CAT_NETWORK);
             }
         } else if (str_ieq_const(attr_start, attr_len, "Expires")) {
-            if (attr_val_len > 0 && entry->expires == 0) {
+            if (attr_val_len > 0 && !has_max_age) {
                 // parse HTTP date: "Thu, 01 Jan 2030 00:00:00 GMT"
                 struct tm tm_val = {};
                 char attr_buf[128];
@@ -327,6 +330,7 @@ static CookieEntry* parse_set_cookie(const char* header, const char* request_url
                 str_copy(attr_buf, sizeof(attr_buf), attr_val, copy_len);
                 if (strptime(attr_buf, "%a, %d %b %Y %H:%M:%S", &tm_val)) {
                     entry->expires = timegm(&tm_val);
+                    *has_expiry = true;
                 }
             }
         } else if (str_ieq_const(attr_start, attr_len, "Max-Age")) {
@@ -340,6 +344,8 @@ static CookieEntry* parse_set_cookie(const char* header, const char* request_url
                 } else {
                     entry->expires = time(NULL) + max_age;
                 }
+                has_max_age = true;
+                *has_expiry = true;
             }
         } else if (str_ieq_const(attr_start, attr_len, "Secure")) {
             entry->secure = true;
@@ -511,7 +517,8 @@ void cookie_jar_store(CookieJar* jar, const char* request_url,
                       const char* set_cookie_header) {
     if (!jar || !request_url || !set_cookie_header) return;
 
-    CookieEntry* entry = parse_set_cookie(set_cookie_header, request_url);
+    bool has_expiry = false;
+    CookieEntry* entry = parse_set_cookie(set_cookie_header, request_url, &has_expiry);
     if (!entry || !entry->name || !entry->name[0]) {
         cookie_entry_free(entry);
         return;
@@ -547,8 +554,8 @@ void cookie_jar_store(CookieJar* jar, const char* request_url,
     }
     mem_free(req_host);
 
-    // check if already expired
-    if (entry->expires > 0 && entry->expires <= time(NULL)) {
+    // an explicit epoch-zero expiry deletes the cookie; zero means session only when absent.
+    if (has_expiry && entry->expires <= time(NULL)) {
         // expired cookie — remove existing with same name/domain/path
         pthread_mutex_lock(&jar->lock);
         if (jar->closing) {

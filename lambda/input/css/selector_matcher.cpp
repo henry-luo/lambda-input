@@ -278,6 +278,45 @@ static bool selector_matcher_matches_column(SelectorMatcher* matcher,
 static bool selector_matcher_matches_complex_at(SelectorMatcher* matcher,
     CssSelector* selector, int compound_index, DomElement* element);
 
+static bool selector_is_virtual_root(const DomElement* element) {
+    const char* name = element ? element->tag_name() : nullptr;
+    return name && name[0] == '#';
+}
+
+static bool selector_compound_allows_virtual_scope(const CssCompoundSelector* compound) {
+    if (!compound) return false;
+    bool allowed = false;
+    for (size_t i = 0; i < compound->simple_selector_count; i++) {
+        const CssSimpleSelector* simple = compound->simple_selectors[i];
+        if (!simple) return false;
+        switch (simple->type) {
+        case CSS_SELECTOR_PSEUDO_SCOPE:
+            allowed = true;
+            break;
+        case CSS_SELECTOR_PSEUDO_IS:
+        case CSS_SELECTOR_PSEUDO_WHERE:
+        case CSS_SELECTOR_PSEUDO_NOT: {
+            bool argument_allowed = false;
+            for (size_t j = 0; j < simple->function_selector_count; j++) {
+                const CssSelector* argument = simple->function_selectors[j];
+                if (argument && argument->compound_selector_count &&
+                    selector_compound_allows_virtual_scope(argument->compound_selectors[
+                        argument->compound_selector_count - 1])) argument_allowed = true;
+            }
+            if (!argument_allowed) return false;
+            allowed = true;
+            break;
+        }
+        case CSS_SELECTOR_PSEUDO_HAS:
+            // a featureless root needs another allowed simple selector beside :has().
+            break;
+        default:
+            return false;
+        }
+    }
+    return allowed;
+}
+
 static DomElement* selector_relation_parent(SelectorMatcher* matcher, DomElement* element) {
     DomNode* node = dom_source_parent(element);
     DomElement* parent = node ? node->as_element() : nullptr;
@@ -618,7 +657,7 @@ DomElement* selector_matcher_query_group(SelectorMatcher* matcher, CssSelectorGr
     // HTML template content and shadow roots are separate query scopes.
     for (DomNode* node = first; node; node = dom_source_next_in_tree(root, node)) {
         DomElement* element = node->as_element();
-        if (!element || element->is_synthetic() ||
+        if (!element || element->is_synthetic() || selector_is_virtual_root(element) ||
             !selector_matcher_matches_group(matcher, group, element, nullptr)) continue;
         if (!results) return element;
         if (!arraylist_append(results, element)) break;
@@ -976,6 +1015,11 @@ bool selector_matcher_matches_compound(SelectorMatcher* matcher,
     if (!matcher || !compound_selector || !element) {
         return false;
     }
+
+    // document/fragment storage is not an element; only an explicit virtual scope can match.
+    if (selector_is_virtual_root(element) &&
+        (matcher->scope_element != element ||
+         !selector_compound_allows_virtual_scope(compound_selector))) return false;
 
     // All simple selectors in the compound must match
     for (size_t i = 0; i < compound_selector->simple_selector_count; i++) {
