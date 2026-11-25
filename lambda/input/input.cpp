@@ -2454,8 +2454,9 @@ extern "C" Input* input_from_source_n_with_deferred_tex(const char* source,
               flavor ? flavor->chars : "null",
               source_len);
     const char* effective_type = NULL;
-    const char* pathname = abs_url && abs_url->pathname
-        ? abs_url->pathname->chars : "";
+    // Archive members have relative names, which cannot be parsed as absolute URLs.
+    const char* pathname = options && options->source_name ? options->source_name :
+        abs_url && abs_url->pathname ? abs_url->pathname->chars : "";
     // Explicit `graph` inputs still need extension/content flavor detection;
     // limiting detection to `auto` silently sent flavorless .dsl files to DOT.
     const char* detected_graph_flavor = flavor ? NULL

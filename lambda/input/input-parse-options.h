@@ -41,6 +41,8 @@ typedef struct InputParseOptions {
     // Borrowed only for this synchronous parse; never retained by Input/cache.
     const struct SecurityIOClient* io;
     const InputScriptParser* script_parser;
+    // Optional source name for format detection when no absolute URL exists.
+    const char* source_name;
 } InputParseOptions;
 
 #endif

@@ -31,6 +31,51 @@ protected:
     }
 };
 
+static bool adopt_test_tex(Input* owner, Item source, const char* type, Item* result) {
+    if (strcmp(type, "latex") || get_type_id(source) != LMD_TYPE_STRING) return false;
+    MarkBuilder builder(owner);
+    String* copy = builder.createString(source.get_chars(), source.get_len());
+    *result = copy ? (Item){.item = s2it(copy)} : ItemError;
+    return true;
+}
+
+TEST_F(ZipTest, LazyTexMemberCanRetryWithAParserHost) {
+    const char source[] = "\\begin{document}Hello\\end{document}";
+    ZipOutputEntry entry = {"doc.tex", (const uint8_t*)source, sizeof(source) - 1, 0100644, 0, false};
+    ArrayList* entries = arraylist_new(1); ASSERT_NE(entries, nullptr);
+    arraylist_append(entries, &entry);
+    StrBuf* bytes = strbuf_new(); ASSERT_NE(bytes, nullptr);
+    ASSERT_TRUE(zip_write_entries(entries, nullptr, bytes, &error)) << error.message;
+    Input* archive = input_from_source_n(bytes->str, bytes->length, nullptr, nullptr, nullptr);
+    strbuf_free(bytes); arraylist_free(entries);
+    ASSERT_NE(archive, nullptr);
+    Item children = fs_node_content(archive->root);
+    ASSERT_EQ(get_type_id(children), LMD_TYPE_VARRAY);
+    Item member = varray_get(children.varray, 0);
+
+    struct ParserScope {
+        FsCapturedTexParser saved_tex = fs_captured_tex_parser;
+        FsScriptParserProvider saved_provider = fs_script_parser_provider;
+        ~ParserScope() { fs_captured_tex_parser = saved_tex; fs_script_parser_provider = saved_provider; }
+    } scope;
+    fs_captured_tex_parser = nullptr; fs_script_parser_provider = nullptr;
+    EXPECT_EQ(get_type_id(fs_node_content(member)), LMD_TYPE_ERROR);
+    const char* deferred = nullptr;
+    Item captured = fs_node_input_deferred(member, nullptr, nullptr, nullptr, &deferred);
+    ASSERT_NE(deferred, nullptr); EXPECT_STREQ(deferred, "latex");
+    ASSERT_EQ(get_type_id(captured), LMD_TYPE_STRING);
+    EXPECT_EQ(captured.get_len(), sizeof(source) - 1);
+
+    fs_captured_tex_parser = adopt_test_tex;
+    Item content = fs_node_content(member);
+    ASSERT_EQ(get_type_id(content), LMD_TYPE_VARRAY);
+    ASSERT_EQ(varray_count(content.varray), 1);
+    Item adopted = varray_get(content.varray, 0);
+    ASSERT_EQ(get_type_id(adopted), LMD_TYPE_STRING);
+    EXPECT_STREQ(adopted.get_chars(), source);
+    EXPECT_EQ(fs_node_content(member).item, content.item);
+}
+
 TEST_F(ZipTest, CapturesIndexesAndLazilyDecodesOneMember) {
     ZipArchive* archive = open("test/input/zip/sample.docx");
     ASSERT_NE(archive, nullptr) << error.message;

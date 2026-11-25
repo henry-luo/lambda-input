@@ -9,6 +9,8 @@
 #include "lib/datetime.h"
 
 thread_local const ZipLimits* input_zip_limits = nullptr;
+thread_local FsScriptParserProvider fs_script_parser_provider = nullptr;
+thread_local FsCapturedTexParser fs_captured_tex_parser = nullptr;
 static const char fs_backend_brand = 0;
 static const char* const fs_attributes[] = {
     "name", "kind", "is_file", "is_dir", "path", "entry_path", "extension",
@@ -128,6 +130,7 @@ static Item fs_parse_uncached(FsNode* node, String* type, String* flavor,
     InputParseOptions options = {};
     options.io = &captured_resources;
     options.script_parser = script_parser;
+    options.source_name = entry->path;
     const char* detected_tex = nullptr;
     Input* parsed = input_from_source_n_with_deferred_tex(data, size, member_url,
         type, flavor, nullptr, &options, &detected_tex);
@@ -199,7 +202,21 @@ static VirtualOpStatus fs_prepare(void* data, Item* error) {
     if (node->index == 0 || entry->directory) return VIRTUAL_OP_OK;
     if (!node->prepared) {
         node->prepared = true;
-        node->parsed = fs_parse(node, nullptr, nullptr, nullptr);
+        const char* deferred = nullptr;
+        InputScriptParser parser = {};
+        bool have_parser = fs_script_parser_provider && fs_script_parser_provider(&parser);
+        node->parsed = fs_parse(node, nullptr, nullptr, have_parser ? &parser : nullptr, &deferred);
+        if (deferred) {
+            Item adopted = ItemNull;
+            // A member has captured bytes only; the current runtime supplies no file grants.
+            if (!fs_captured_tex_parser || !fs_captured_tex_parser(node->tree->input, node->parsed, deferred, &adopted)) {
+                node->prepared = false;
+                *error = fs_error(node->tree->input, entry->path, "TeX member requires a Lambda parser host");
+                return VIRTUAL_OP_ERROR;
+            }
+            node->parsed = item_is_error(adopted) ? fs_error(node->tree->input, entry->path,
+                "Script TeX member parsing failed") : adopted;
+        }
         if (get_type_id(node->parsed) == LMD_TYPE_ERROR) node->error = node->parsed;
         else {
             // Reuse the ordinary element-content normalizer (S2.6.2–S2.6.4).

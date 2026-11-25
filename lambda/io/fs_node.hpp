@@ -13,6 +13,12 @@ inline void input_zip(Input* input, const void* bytes, size_t length,
 bool fs_node_is(Item item);
 Item fs_node_content(Item node);
 struct InputScriptParser;
+// Resolve a parser per call so an archive never retains a runtime pointer.
+typedef bool (*FsScriptParserProvider)(InputScriptParser* parser);
+extern thread_local FsScriptParserProvider fs_script_parser_provider;
+// A runtime may adopt a captured TeX parse into the archive's Input on this thread.
+typedef bool (*FsCapturedTexParser)(Input* owner, Item source, const char* type, Item* result);
+extern thread_local FsCapturedTexParser fs_captured_tex_parser;
 Item fs_node_input(Item node, String* type, String* flavor,
     const InputScriptParser* script_parser = nullptr);
 // Deferred TeX source is Input-owned; the format name is static.
