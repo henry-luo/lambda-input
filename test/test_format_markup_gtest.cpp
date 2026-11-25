@@ -60,6 +60,80 @@ TEST_F(FormatMarkupTest, HtmlEscapingAcceptsStringAbiAlignment) {
     EXPECT_STREQ(output->str->chars, "&lt;tag&gt;");
 }
 
+TEST_F(FormatMarkupTest, HtmlAndXmlPreserveLargeEscapedText) {
+    const size_t length = 1200000;
+    char* text = (char*)pool_alloc(pool_, length + 1);
+    ASSERT_NE(text, nullptr);
+    memset(text, 'x', length - 1);
+    text[length - 1] = '&';
+    text[length] = '\0';
+    Item doc = mb_->element("div")
+        .child(mb_->element("p").text(text).final())
+        .child(mb_->element("p").text("tail-marker").final()).final();
+
+    String* (*const writers[])(Pool*, Item) = {format_html, format_xml};
+    for (auto format : writers) {
+        String* serialized = format(pool_, doc);
+        ASSERT_NE(serialized, nullptr);
+        const char* start = strstr(serialized->chars, "<p>");
+        ASSERT_NE(start, nullptr);
+        start += 3;
+        ASSERT_GE(serialized->len, (size_t)(start - serialized->chars) + length + 8);
+        EXPECT_EQ(memcmp(start, text, length - 1), 0);
+        EXPECT_EQ(memcmp(start + length - 1, "&amp;</p>", 9), 0);
+        EXPECT_NE(strstr(start + length + 8, "<p>tail-marker</p>"), nullptr);
+    }
+}
+
+TEST_F(FormatMarkupTest, JsxPreservesLargeEscapedText) {
+    char text[10002];
+    memset(text, 'x', sizeof(text) - 2);
+    text[sizeof(text) - 2] = '&';
+    text[sizeof(text) - 1] = '\0';
+    Item doc = mb_->element("p").text(text).final();
+
+    String* serialized = format_jsx(pool_, doc);
+    ASSERT_NE(serialized, nullptr);
+    const size_t plain_length = sizeof(text) - 2;
+    ASSERT_EQ(serialized->len, 3 + plain_length + 9);
+    EXPECT_EQ(memcmp(serialized->chars, "<p>", 3), 0);
+    EXPECT_EQ(memcmp(serialized->chars + 3, text, plain_length), 0);
+    EXPECT_STREQ(serialized->chars + 3 + plain_length, "&amp;</p>");
+}
+
+TEST_F(FormatMarkupTest, JsxPreservesLargeExpression) {
+    char expression[10001];
+    memset(expression, ' ', sizeof(expression) - 1);
+    expression[sizeof(expression) - 2] = '1';
+    expression[sizeof(expression) - 1] = '\0';
+    Item node = mb_->element("js").text(expression).final();
+
+    String* serialized = format_jsx(pool_, node);
+    ASSERT_NE(serialized, nullptr);
+    const size_t length = sizeof(expression) - 1;
+    ASSERT_EQ(serialized->len, length + 2);
+    EXPECT_EQ(serialized->chars[0], '{');
+    EXPECT_EQ(memcmp(serialized->chars + 1, expression, length), 0);
+    EXPECT_STREQ(serialized->chars + length + 1, "}");
+}
+
+TEST_F(FormatMarkupTest, NativeLatexPreservesLargeText) {
+    const size_t length = 65536;
+    char* text = (char*)pool_alloc(pool_, length + 1);
+    ASSERT_NE(text, nullptr);
+    memset(text, 'x', length);
+    text[length] = '\0';
+    Item command = mb_->element("textbf").text(text).final();
+    String* serialized = format_latex(pool_, command);
+    ASSERT_NE(serialized, nullptr);
+    const char prefix[] = "\\textbf{";
+    const size_t prefix_length = sizeof(prefix) - 1;
+    ASSERT_EQ(serialized->len, prefix_length + length + 1);
+    EXPECT_EQ(memcmp(serialized->chars, prefix, prefix_length), 0);
+    EXPECT_EQ(memcmp(serialized->chars + prefix_length, text, length), 0);
+    EXPECT_STREQ(serialized->chars + prefix_length + length, "}");
+}
+
 TEST_F(FormatMarkupTest, HtmlEmptyBooleanAttributesKeepPresenceWithoutLosingOrdinaryValues) {
     Item item = mb_->element("input")
         .attr("disabled", "").attr("checked", "").attr("multiple", true)
