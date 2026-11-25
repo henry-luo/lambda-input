@@ -127,11 +127,14 @@ static TargetScheme scheme_from_path(Path* path) {
  * Compute hash for a target based on its normalized URL string.
  * Uses SipHash for fast, collision-resistant hashing.
  */
-static uint64_t target_compute_hash(Target* target) {
+static uint64_t target_compute_hash(Target* target, bool* rendered = nullptr) {
+    if (rendered) *rendered = false;
     if (!target) return 0;
 
     StrBuf* buf = strbuf_new();
-    target_to_url_string(target, buf);
+    if (!buf) return 0;
+    const char* text = target_to_url_string(target, buf);
+    if (rendered) *rendered = text != nullptr && buf->length > 0;
 
     uint64_t hash = 0;
     if (buf->length > 0) {
@@ -269,6 +272,12 @@ Target* item_to_target(uint64_t item, Url* cwd) {
             mem_free(target);
             return NULL;
         }
+        // OS and URL APIs use NUL-terminated names and must not target a prefix.
+        if (path_has_nul_name(path)) {
+            log_error("TARGET_PATH_NUL: resource path contains a NUL name byte");
+            mem_free(target);
+            return NULL;
+        }
         if (path_get_scheme(path) == PATH_SCHEME_FILE &&
                 !path_file_authority_is_available(path)) {
             log_error("item_to_target: remote file authority is not supported");
@@ -281,7 +290,13 @@ Target* item_to_target(uint64_t item, Url* cwd) {
         target->path = (pool && path_get_scheme(path) == PATH_SCHEME_LOGICAL)
             ? path_qualify_default(pool, path) : path;
         target->scheme = scheme_from_path(target->path);
-        target->url_hash = target_compute_hash(target);
+        bool rendered = false;
+        target->url_hash = target_compute_hash(target, &rendered);
+        if (!rendered) {
+            log_error("TARGET_PATH_URL: path cannot be represented as a target URL");
+            mem_free(target);
+            return NULL;
+        }
 
         log_debug("item_to_target: created Path target (scheme=%d, hash=0x%llx)", target->scheme, (unsigned long long)target->url_hash);
         return target;
@@ -304,6 +319,7 @@ Target* item_to_target(uint64_t item, Url* cwd) {
  */
 void* target_to_local_path(Target* target, Url* cwd) {
     if (!target) return NULL;
+    if (target->type == TARGET_TYPE_PATH && path_has_nul_name(target->path)) return NULL;
 
     // Remote URLs cannot be converted to local path
     if (target->scheme == TARGET_SCHEME_HTTP || target->scheme == TARGET_SCHEME_HTTPS) {
@@ -431,7 +447,9 @@ const char* target_to_url_string(Target* target, void* out_buf) {
     else if (target->type == TARGET_TYPE_PATH) {
         Path* path = target->path;
         if (path) {
-            path_to_string(path, buf);
+            if (target->scheme == TARGET_SCHEME_HTTP || target->scheme == TARGET_SCHEME_HTTPS) {
+                if (!path_to_http_url(path, buf)) return NULL;
+            } else path_to_string(path, buf);
         }
     }
 

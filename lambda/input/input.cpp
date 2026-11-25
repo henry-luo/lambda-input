@@ -2947,9 +2947,12 @@ static Input* input_from_target_impl(Target* target, String* type,
             log_error("input_from_target: network sources are unavailable in this build");
             return NULL;
 #else
-            // Convert path to URL string and handle as HTTP
+            // The target renderer preserves path keys as URL components.
             StrBuf* url_buf = strbuf_new();
-            path_to_string(path, url_buf);
+            if (!url_buf || !target_to_url_string(target, url_buf)) {
+                if (url_buf) strbuf_free(url_buf);
+                return nullptr;
+            }
             const char* type_str = type ? type->chars : NULL;
             const char* flavor_str = flavor ? flavor->chars : NULL;
             Input* input = input_from_http_with_deferred_tex(url_buf->str, type_str,

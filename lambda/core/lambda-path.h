@@ -49,6 +49,7 @@ struct Path {
         int64_t int_value;      // value for LPATH_SEG_INT
         uint64_t query_type;    // pool-owned type value Item for LPATH_SEG_QUERY
     };
+    size_t name_length;         // exact byte length of a normal NameKey
 };
 
 LAMBDA_STATIC_ASSERT(__builtin_offsetof(Path, type_id) == 0,
@@ -99,6 +100,9 @@ bool path_is_root(Path* path);                          // Check if path is a ro
 bool path_is_absolute(Path* path);                      // Check if path is absolute (not . or ..)
 int path_depth(Path* path);                             // Get path depth (segment count)
 void path_to_string(Path* path, void* out);             // Convert to string (StrBuf*)
+// Render an HTTP provider path as a URL without changing its Lambda spelling.
+bool path_to_http_url(Path* path, void* out);
+bool path_has_nul_name(Path* path);                     // cannot be projected to an OS resource
 void path_to_source(Path* path, void* out);            // Canonical Lambda reference syntax
 void path_to_os_path(Path* path, void* out);            // Convert to OS path (StrBuf*)
 void path_to_windows_path(Path* path, void* out);       // Project a path using Windows rules

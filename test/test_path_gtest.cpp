@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "lambda/core/data.hpp"
+#include "lambda/io/target.h"
 #include "lib/mempool.h"
 #include "lib/log.h"
 #include "lib/shell.h"
@@ -26,6 +27,7 @@ extern "C" {
     bool path_is_root(Path* path);
     int path_depth(Path* path);
     void path_to_string(Path* path, void* out);
+    bool path_to_http_url(Path* path, void* out);
     void path_to_os_path(Path* path, void* out);
     Path* path_get_root_by_name(const char* name);
 }
@@ -61,6 +63,62 @@ protected:
         }
     }
 };
+
+TEST_F(PathTest, HttpTargetsKeepAuthorityAndEncodeEachNameKey) {
+    Path* root = path_get_root(PATH_SCHEME_HTTP);
+    Path* authority = path_append(root, "127.0.0.1:8080");
+    Path* path = path_append(path_append(authority, "a b/?#"), "document.tex");
+    StrBuf* result = strbuf_new(); ASSERT_NE(result, nullptr);
+    ASSERT_TRUE(path_to_http_url(path, result));
+    EXPECT_STREQ(result->str, "http://127.0.0.1:8080/a%20b%2F%3F%23/document.tex");
+    strbuf_reset(result);
+    Target target = {}; target.type = TARGET_TYPE_PATH; target.scheme = TARGET_SCHEME_HTTP; target.path = path;
+    ASSERT_NE(target_to_url_string(&target, result), nullptr);
+    EXPECT_STREQ(result->str, "http://127.0.0.1:8080/a%20b%2F%3F%23/document.tex");
+    strbuf_free(result);
+}
+
+TEST_F(PathTest, HttpTargetsRejectAmbiguousAuthorityAndNavigationKeys) {
+    Path* root = path_get_root(PATH_SCHEME_HTTPS);
+    StrBuf* result = strbuf_create("unchanged"); ASSERT_NE(result, nullptr);
+    EXPECT_FALSE(path_to_http_url(root, result));
+    EXPECT_FALSE(path_to_http_url(path_append(root, "user@example.com"), result));
+    EXPECT_FALSE(path_to_http_url(path_append(root, "example.com/other"), result));
+    Path* authority = path_append(root, "example.com");
+    EXPECT_FALSE(path_to_http_url(path_append(authority, "."), result));
+    EXPECT_FALSE(path_to_http_url(path_append(authority, ".."), result));
+    const char host_with_nul[] = "example.com\0.attacker";
+    const char key_with_nul[] = "document\0other";
+    EXPECT_FALSE(path_to_http_url(path_append_len(root, host_with_nul, sizeof(host_with_nul) - 1), result));
+    EXPECT_FALSE(path_to_http_url(path_append_len(authority, key_with_nul, sizeof(key_with_nul) - 1), result));
+    EXPECT_STREQ(result->str, "unchanged");
+    strbuf_free(result);
+}
+
+TEST_F(PathTest, NameKeysPreserveEmptyAndEmbeddedNulAcrossCloning) {
+    Path* root = path_get_root(PATH_SCHEME_REL);
+    const char bytes[] = {'a', '\0', 'b'};
+    Path* full = path_append_len(root, bytes, sizeof(bytes));
+    Path* prefix = path_append(root, "a");
+    Path* empty = path_append_len(root, "", 0);
+    ASSERT_NE(full, nullptr); ASSERT_NE(empty, nullptr);
+    EXPECT_FALSE(path_equal(full, prefix));
+    EXPECT_FALSE(path_equal(empty, root));
+    EXPECT_NE(path_hash(full, 11, 29), path_hash(prefix, 11, 29));
+    Path* clone = path_clone(pool, full);
+    ASSERT_NE(clone, nullptr);
+    EXPECT_TRUE(path_equal(full, clone));
+    EXPECT_EQ(clone->name_length, sizeof(bytes));
+    EXPECT_EQ(memcmp(clone->name, bytes, sizeof(bytes)), 0);
+    EXPECT_TRUE(path_has_nul_name(clone));
+    EXPECT_EQ(item_to_target((uint64_t)(uintptr_t)clone, nullptr), nullptr);
+    Target local = {}; local.type = TARGET_TYPE_PATH; local.scheme = TARGET_SCHEME_FILE; local.path = clone;
+    EXPECT_EQ(target_to_local_path(&local, nullptr), nullptr);
+    StrBuf* output = strbuf_create("unchanged"); ASSERT_NE(output, nullptr);
+    path_to_os_path(clone, output);
+    EXPECT_STREQ(output->str, "unchanged");
+    strbuf_free(output);
+}
 
 // Test basic root scheme creation
 TEST_F(PathTest, RootsBelongToTheRequestingPoolWithoutGlobalReset) {
@@ -307,9 +365,10 @@ TEST_F(PathTest, NullAndEdgeCases) {
     Path* result = path_append(file_root, nullptr);
     EXPECT_EQ(result, file_root);
 
-    // Empty segment should return parent
+    // S8.2.1v5: the empty NameKey is distinct from its parent.
     result = path_append_len(file_root, "test", 0);
-    EXPECT_EQ(result, file_root);
+    ASSERT_NE(result, file_root);
+    EXPECT_EQ(result->name_length, 0u);
 }
 
 // Test path_append_len with explicit length

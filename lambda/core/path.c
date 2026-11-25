@@ -18,6 +18,8 @@
 #include "../lambda.h"
 #include "lambda-path.h"
 #include "lib/file.h"
+#include "lib/url.h"
+#include "lib/escape.h"
 // The active C ABI mirrors DateTime as its packed word.
 extern DateTime* datetime_from_unix(Pool* pool, int64_t unix_timestamp);
 
@@ -80,6 +82,15 @@ static Path* path_root_of(Path* path) {
     return path;
 }
 
+static ArrayList* path_collect_ops(Path* path, Path* root) {
+    ArrayList* ops = arraylist_new(8);
+    if (!ops) return NULL;
+    for (Path* p = path; p && p != root; p = p->parent) {
+        if (!arraylist_append(ops, p)) { arraylist_free(ops); return NULL; }
+    }
+    return ops;
+}
+
 static bool path_is_child(Path* path) {
     return path && path->parent && path->parent != &ROOT_SENTINEL;
 }
@@ -97,9 +108,11 @@ static Path* path_alloc_op(Pool* pool, Path* base, LPathSegmentType type,
     path->authority_kind = base->authority_kind;
     path->authority_name = base->authority_name;
     path->int_value = int_value;
-    if (name && len > 0 && type == LPATH_SEG_NORMAL) {
+    if (name && type == LPATH_SEG_NORMAL) {
         char* name_copy = pool_dup_n(pool, name, len);
+        if (!name_copy) return NULL;
         path->name = name_copy;
+        path->name_length = len;
     }
     return path;
 }
@@ -142,8 +155,8 @@ Path* path_append_len(Path* parent, const char* segment, size_t len) {
         log_error("path_append_len: NULL parent");
         return NULL;
     }
-    if (!segment || len == 0) {
-        log_error("path_append_len: empty segment");
+    if (!segment) {
+        log_error("path_append_len: NULL segment");
         return parent;
     }
 
@@ -232,24 +245,35 @@ int path_depth(Path* path) {
     return depth;
 }
 
-static void path_print_name(StrBuf* out, const char* seg) {
+static void path_print_name(StrBuf* out, const char* seg, size_t len) {
     const char* text = seg ? seg : "";
-    bool needs_quote = *text == '\0';
-    bool all_digits = *text != '\0';
-    for (const char* c = text; *c; c++) {
-        if (*c < '0' || *c > '9') all_digits = false;
-        if (*c == '.' || *c == ' ' || *c == '@' || *c == '#' ||
-            *c == '$' || *c == '%' || *c == '&' || *c == '?' ||
-            *c == '=' || *c == ':' || *c == '-' || *c == '*') {
+    bool needs_quote = len == 0;
+    bool all_digits = len != 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)text[i];
+        if (c < '0' || c > '9') all_digits = false;
+        if (c < 32 || c == 127 || c == '\'' || c == '\\' ||
+            c == '.' || c == ' ' || c == '@' || c == '#' ||
+            c == '$' || c == '%' || c == '&' || c == '?' ||
+            c == '=' || c == ':' || c == '-' || c == '*') {
             needs_quote = true;
-            break;
         }
     }
     // Numeric-looking names must stay quoted so NameKey("1") cannot
     // canonicalize into the distinct IntKey(1) spelling.
     if (all_digits) needs_quote = true;
-    strbuf_append_all(out, 2, needs_quote ? "'" : "", text);
-    if (needs_quote) strbuf_append_char(out, '\'');
+    if (!needs_quote) { strbuf_append_str_n(out, text, len); return; }
+    strbuf_append_char(out, '\'');
+    // NUL needs a source escape; the shared quoted helper handles the rest.
+    size_t start = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (text[i] != '\0') continue;
+        escape_append_c_quoted(out, text + start, i - start, '\'');
+        strbuf_append_str(out, "\\u0000");
+        start = i + 1;
+    }
+    escape_append_c_quoted(out, text + start, len - start, '\'');
+    strbuf_append_char(out, '\'');
 }
 
 static void path_print_op(StrBuf* out, Path* op) {
@@ -269,7 +293,7 @@ static void path_print_op(StrBuf* out, Path* op) {
         case LPATH_SEG_PARENT: strbuf_append_str(out, "~~"); break;
         case LPATH_SEG_ROOT: strbuf_append_char(out, '/'); break;
         case LPATH_SEG_INT: strbuf_append_int64(out, op->int_value); break;
-        default: path_print_name(out, op->name); break;
+        default: path_print_name(out, op->name, op->name_length); break;
     }
 }
 
@@ -279,10 +303,8 @@ static void path_print(Path* path, void* out_ptr, bool source) {
     if (!path || !out) return;
 
     Path* root = path_root_of(path);
-    ArrayList* ops = arraylist_new(8);
-    for (Path* p = path; p && p != root; p = p->parent) {
-        arraylist_append(ops, p);
-    }
+    ArrayList* ops = path_collect_ops(path, root);
+    if (!ops) return;
 
     PathScheme scheme = (PathScheme)root->root_scheme;
     if (scheme == PATH_SCHEME_LOGICAL) {
@@ -301,7 +323,7 @@ static void path_print(Path* path, void* out_ptr, bool source) {
         if (root->authority_kind == PATH_AUTHORITY_NAMED) {
             // Quote hostnames that are not one identifier token so a dotted or
             // hyphenated authority cannot be reparsed as path child keys.
-            path_print_name(out, root->authority_name);
+            path_print_name(out, root->authority_name, strlen(root->authority_name));
         } else {
             bool spell_localhost = source && !(root->flags & PATH_FLAG_FILE_SLASH);
             strbuf_append_str(out, spell_localhost ? "localhost" : "/");
@@ -327,6 +349,7 @@ static void path_print(Path* path, void* out_ptr, bool source) {
         Path* step = (Path*)arraylist_get(ops, i);
         if (source && scheme == PATH_SCHEME_REL && i == ops->length - 1 &&
                 PATH_GET_SEG_TYPE(step) == LPATH_SEG_NORMAL && step->name &&
+                strlen(step->name) == step->name_length &&
                 (strcmp(step->name, "file") == 0 || strcmp(step->name, "http") == 0 ||
                  strcmp(step->name, "https") == 0 || strcmp(step->name, "sys") == 0 ||
                  strcmp(step->name, "temp") == 0)) {
@@ -340,6 +363,54 @@ static void path_print(Path* path, void* out_ptr, bool source) {
 
 void path_to_string(Path* path, void* out) { path_print(path, out, false); }
 void path_to_source(Path* path, void* out) { path_print(path, out, true); }
+
+bool path_to_http_url(Path* path, void* out_ptr) {
+    StrBuf* out = (StrBuf*)out_ptr;
+    if (!path || !out) return false;
+    Path* root = path_root_of(path);
+    PathScheme scheme = (PathScheme)root->root_scheme;
+    if (scheme != PATH_SCHEME_HTTP && scheme != PATH_SCHEME_HTTPS) return false;
+    ArrayList* ops = path_collect_ops(path, root);
+    if (!ops || !ops->length) { if (ops) arraylist_free(ops); return false; }
+    Path* host = (Path*)arraylist_get(ops, ops->length - 1);
+    const char* authority = host->name;
+    bool valid = PATH_GET_SEG_TYPE(host) == LPATH_SEG_NORMAL && authority && host->name_length;
+    for (size_t i = 0; valid && i < host->name_length; i++) {
+        unsigned char c = (unsigned char)authority[i];
+        // An authority key cannot introduce credentials or URL delimiters.
+        if (c <= 32 || c == 127 || strchr("/@?#\\%", c)) valid = false;
+    }
+    StrBuf* url = valid ? strbuf_new() : NULL;
+    if (!url) valid = false;
+    if (valid) {
+        strbuf_append_str(url, scheme == PATH_SCHEME_HTTP ? "http://" : "https://");
+        strbuf_append_str(url, authority);
+        for (int i = ops->length - 2; valid && i >= 0; i--) {
+            Path* step = (Path*)arraylist_get(ops, i);
+            const char* name = step->name ? step->name : "";
+            // URL dot segments navigate, so they cannot represent literal path keys.
+            if (PATH_GET_SEG_TYPE(step) != LPATH_SEG_NORMAL ||
+                memchr(name, '\0', step->name_length) ||
+                (step->name_length == 1 && name[0] == '.') ||
+                (step->name_length == 2 && name[0] == '.' && name[1] == '.')) {
+                valid = false; break;
+            }
+            char* encoded = url_encode_component(name, step->name_length);
+            if (!encoded) { valid = false; break; }
+            strbuf_append_char(url, '/'); strbuf_append_str(url, encoded); mem_free(encoded);
+        }
+    }
+    if (valid) {
+        Url* parsed = url_parse(url->str);
+        valid = parsed && url_is_valid(parsed) && parsed->host && parsed->host->len &&
+            (!parsed->username || !parsed->username->len) && (!parsed->password || !parsed->password->len);
+        if (parsed) url_destroy(parsed);
+    }
+    if (valid) strbuf_append_str(out, url->str);
+    if (url) strbuf_free(url);
+    arraylist_free(ops);
+    return valid;
+}
 
 bool path_equal(Path* left, Path* right) {
     if (left == right) return true;
@@ -398,13 +469,22 @@ static bool path_unc_authority_valid(const char* host) {
 
 static bool path_file_authority_local_for_platform(Path* path, bool windows);
 
+bool path_has_nul_name(Path* path) {
+    Path* root = path_root_of(path);
+    for (Path* step = path; step && step != root; step = step->parent) {
+        if (PATH_GET_SEG_TYPE(step) == LPATH_SEG_NORMAL && step->name &&
+                memchr(step->name, '\0', step->name_length)) return true;
+    }
+    return false;
+}
+
 /**
  * Convert path to OS file path (e.g., "/etc/hosts" or "C:\Users\name").
  * Handles wildcards properly using segment type flags.
  */
 static void path_to_platform_path(Path* path, void* out_ptr, bool windows) {
     StrBuf* out = (StrBuf*)out_ptr;
-    if (!path || !out) return;
+    if (!path || !out || path_has_nul_name(path)) return;
     bool remote_file = path_get_scheme(path) == PATH_SCHEME_FILE &&
         !path_file_authority_local_for_platform(path, windows);
     if (remote_file && !windows) {
@@ -421,10 +501,8 @@ static void path_to_platform_path(Path* path, void* out_ptr, bool windows) {
     }
 
     Path* root = path_root_of(path);
-    ArrayList* ops = arraylist_new(8);
-    for (Path* p = path; p && p != root; p = p->parent) {
-        arraylist_append(ops, p);
-    }
+    ArrayList* ops = path_collect_ops(path, root);
+    if (!ops) return;
     PathScheme scheme = (PathScheme)root->root_scheme;
     bool skip_drive_component = false;
 
@@ -546,6 +624,7 @@ Path* path_new(Pool* pool, int scheme) {
     if (!root) return NULL;
     root->type_id = LMD_TYPE_PATH;
     root->name = scheme_names[scheme];
+    root->name_length = strlen(root->name);
     root->parent = &ROOT_SENTINEL;
     root->root_scheme = (uint8_t)scheme;
     root->authority_kind = (scheme == PATH_SCHEME_FILE) ? PATH_AUTHORITY_LOCAL : PATH_AUTHORITY_NONE;
@@ -591,8 +670,8 @@ Path* path_extend_len(Pool* pool, Path* base, const char* segment, size_t len) {
         log_error("path_extend_len: NULL base path");
         return NULL;
     }
-    if (!segment || !len) {
-        log_error("path_extend_len: empty segment");
+    if (!segment) {
+        log_error("path_extend_len: NULL segment");
         return base;
     }
     if (!pool) {
@@ -702,6 +781,7 @@ Path* path_append_op(Pool* pool, Path* base, Path* op) {
     if (type == LPATH_SEG_PARENT) return path_select_parent(pool, base);
     if (type == LPATH_SEG_ROOT) return path_select_root(pool, base);
     if (type == LPATH_SEG_INT) return path_extend_int(pool, base, op->int_value);
+    if (type == LPATH_SEG_NORMAL) return path_alloc_op(pool, base, type, op->name, op->name_length, 0);
     return path_append_segment_typed(pool, base, op->name, type);
 }
 
