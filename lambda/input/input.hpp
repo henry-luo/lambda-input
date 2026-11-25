@@ -185,6 +185,12 @@ Input* input_from_target_with_io(struct Target* target, String* type,
     String* flavor, NamePool* name_parent, const struct SecurityIOClient* io,
     const InputScriptParser* script_parser = NULL);
 
+// Resource capture shares the TeX document-directory boundary with native clients.
+struct SecurityIOResult;
+char* input_tex_resolve_path(const struct SecurityIOClient* io, const char* path, int32_t* kind,
+    struct SecurityIOResult* result);
+bool input_tex_path_inside(const char* root, const char* path);
+
 // Math parsing functions (from input-math.cpp)
 void parse_math(Input* input, const char* math_string, const char* flavor_str);
 void cleanup_math_parser();  // Compatibility no-op; direct parser owns per-call state

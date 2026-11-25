@@ -6,6 +6,7 @@
 #ifndef LAMBDA_NO_LATEX
 
 #include "input-tex-internal.hpp"
+#include "input.hpp"
 #include "input-latex-tables.h"
 #include "input-latex-scanner.h"
 #include "lib/str.h"
@@ -312,25 +313,13 @@ static bool list_contains(Engine* e, const char* list, const char* item) {
 // ======================================================================
 
 
-static char* tex_resolve_path(Engine* e, const char* path, int32_t* kind) {
-    if (!e->opts.io) {
-        char* resolved = file_realpath(path);
-        if (resolved) *kind = file_is_dir(resolved) ? SECURITY_OBJECT_DIRECTORY : SECURITY_OBJECT_FILE;
-        return resolved;
-    }
-    char normalized[4096];
-    if (path_str_normalize_lexical_posix(path, normalized, sizeof(normalized), true) < 0 ||
-        !security_io_input_kind(e->opts.io, normalized, kind, nullptr)) return nullptr;
-    return mem_strdup(normalized, MEM_CAT_INPUT_OTHER);
-}
-
 static bool ensure_base_dir(Engine* e) {
     if (e->base_dir) return true;
     const char* base = e->opts.base_path;
     if (!base || !*base) return false;
     if (strncmp(base, "file://", 7) == 0) base += 7;
     int32_t kind = -1;
-    char* canonical = tex_resolve_path(e, base, &kind);
+    char* canonical = input_tex_resolve_path(e->opts.io, base, &kind, nullptr);
     if (e->opts.io && !canonical) return false;
     char* dir = nullptr;
     if (canonical && kind == SECURITY_OBJECT_DIRECTORY) {
@@ -343,15 +332,6 @@ static bool ensure_base_dir(Engine* e) {
     e->base_dir = (char*)arena_copy(e, dir, strlen(dir));
     mem_free(dir);
     return true;
-}
-
-static bool path_inside(const char* root, const char* path) {
-    // A scoped client's relative "." names its default directory. Normalized
-    // relative children stay inside it; a parent or absolute path does not.
-    if (!strcmp(root, ".")) return *path != '/' && strcmp(path, "..") && strncmp(path, "../", 3);
-    size_t n = strlen(root);
-    return n && strncmp(root, path, n) == 0 &&
-        (root[n - 1] == '/' || path[n] == '/' || path[n] == '\0');
 }
 
 // a file this run already read from beside the document (or from the bundle), or -1
@@ -382,9 +362,9 @@ bool open_local_file(Engine* e, const char* name, const char* const* exts, int e
         strbuf_append_str(rel, exts[k]);
         char* joined = file_path_join(e->base_dir, rel->str);
         int32_t kind = -1;
-        char* canonical = joined ? tex_resolve_path(e, joined, &kind) : nullptr;
+        char* canonical = joined ? input_tex_resolve_path(e->opts.io, joined, &kind, nullptr) : nullptr;
         if (joined) mem_free(joined);
-        bool ok = canonical && kind == SECURITY_OBJECT_FILE && path_inside(e->base_dir, canonical);
+        bool ok = canonical && kind == SECURITY_OBJECT_FILE && input_tex_path_inside(e->base_dir, canonical);
         if (ok) {
             // a run sees each file once: reopening reuses the loaded text
             int32_t loaded = find_loaded_file(e, rel->str, false);
@@ -526,8 +506,8 @@ static bool local_file_exists(Engine* e, const char* name, const char* ext) {
     strbuf_append_str(rel, ext);
     char* joined = file_path_join(e->base_dir, rel->str);
     int32_t kind = -1;
-    char* canonical = joined ? tex_resolve_path(e, joined, &kind) : nullptr;
-    bool ok = canonical && kind == SECURITY_OBJECT_FILE && path_inside(e->base_dir, canonical);
+    char* canonical = joined ? input_tex_resolve_path(e->opts.io, joined, &kind, nullptr) : nullptr;
+    bool ok = canonical && kind == SECURITY_OBJECT_FILE && input_tex_path_inside(e->base_dir, canonical);
     if (joined) mem_free(joined);
     if (canonical) mem_free(canonical);
     strbuf_free(rel);

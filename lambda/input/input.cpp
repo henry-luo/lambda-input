@@ -17,12 +17,14 @@
 #include "lib/log.h"  // add logging support
 #include "lib/memtrack.h"
 #include "lib/file.h"
+#include "lib/path_str.h"
 #include "lib/str.h"
 #include "../io/resource_policy.h"
 #include "../io/security_io.h"
 #include "lib/hashmap.h"
 #include "lib/hash.h"
 #include <limits.h>
+#include <errno.h>
 #include <new>
 #include <pthread.h>
 #include <stdlib.h>
@@ -52,6 +54,33 @@ bool input_resource_policy_admits(InputResourcePolicy policy, const char* source
         case URL_SCHEME_WS: case URL_SCHEME_WSS: return false;
         default: return true;
     }
+}
+
+char* input_tex_resolve_path(const SecurityIOClient* io, const char* path, int32_t* kind,
+        SecurityIOResult* result) {
+    if (!io) {
+        char* resolved = file_realpath(path);
+        if (result) *result = {SECURITY_ALLOWED, resolved ? 0 : errno, false, {}};
+        if (resolved) *kind = file_is_dir(resolved) ? SECURITY_OBJECT_DIRECTORY : SECURITY_OBJECT_FILE;
+        return resolved;
+    }
+    char normalized[4096];
+    if (path_str_normalize_lexical_posix(path, normalized, sizeof(normalized), true) < 0) {
+        if (result) *result = {SECURITY_INVALID_REQUEST, EINVAL, false, {}};
+        return nullptr;
+    }
+    if (!security_io_input_kind(io, normalized, kind, result)) return nullptr;
+    char* copy = mem_strdup(normalized, MEM_CAT_INPUT_OTHER);
+    if (!copy && result) result->system_error = ENOMEM;
+    return copy;
+}
+
+bool input_tex_path_inside(const char* root, const char* path) {
+    // Scoped clients name their default directory with a relative dot.
+    if (!strcmp(root, ".")) return *path != '/' && strcmp(path, "..") && strncmp(path, "../", 3);
+    size_t n = strlen(root);
+    return n && strncmp(root, path, n) == 0 &&
+        (root[n - 1] == '/' || path[n] == '/' || path[n] == '\0');
 }
 
 __thread Context* input_context = NULL;
