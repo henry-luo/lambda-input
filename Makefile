@@ -166,7 +166,7 @@ MIGRATED_LIB_TESTS = atomic base64 binsearch color datetime digest signature end
   arena hashmap_helpers byte_storage checked_alloc file_module font_config font_context fts grep mail_imap mail_mime mem_context \
   mem_factory mem_factory_once mem_vm mempool memtrack mime_detect scratch_arena shell span thread_pool uv_loop woff2
 MIGRATED_TEST_SOURCES = $(addprefix test/lib/test_,$(addsuffix _gtest.cpp,$(MIGRATED_LIB_TESTS))) \
-  test/test_physics_gtest.cpp test/test_input_sourcepos_gtest.cpp test/test_tex_engine_gtest.cpp \
+  test/test_physics_gtest.cpp test/test_input_sourcepos_gtest.cpp \
   test/css/test_css_tokenizer_gtest.cpp test/css/test_css_parser_gtest.cpp \
   test/css/test_css_engine_unit.cpp test/css/test_css_formatter_unit.cpp \
   test/css/test_css_parser_unit.cpp test/css/test_css_tokenizer_unit.cpp test/lib/test_avl_tree.cpp \

@@ -57,7 +57,7 @@ bool input_resource_policy_admits(InputResourcePolicy policy, const char* source
 }
 
 char* input_tex_resolve_path(const SecurityIOClient* io, const char* path, int32_t* kind,
-        SecurityIOResult* result) {
+        SecurityIOResult* result, bool metadata_directory) {
     if (!io) {
         char* resolved = file_realpath(path);
         if (result) *result = {SECURITY_ALLOWED, resolved ? 0 : errno, false, {}};
@@ -69,7 +69,20 @@ char* input_tex_resolve_path(const SecurityIOClient* io, const char* path, int32
         if (result) *result = {SECURITY_INVALID_REQUEST, EINVAL, false, {}};
         return nullptr;
     }
-    if (!security_io_input_kind(io, normalized, kind, result)) return nullptr;
+    if (metadata_directory) {
+        // Resolving a known resource root requires metadata, not directory enumeration.
+        FileStat metadata = {};
+        SecurityIOResult status = {};
+        bool ok = security_io_stat(io, normalized, &metadata, &status);
+        if (ok && (!metadata.exists || !metadata.is_dir)) {
+            status.system_error = metadata.exists ? ENOTDIR : ENOENT;
+            ok = false;
+        }
+        if (result) *result = status;
+        if (!ok) return nullptr;
+        *kind = SECURITY_OBJECT_DIRECTORY;
+    }
+    else if (!security_io_input_kind(io, normalized, kind, result)) return nullptr;
     char* copy = mem_strdup(normalized, MEM_CAT_INPUT_OTHER);
     if (!copy && result) result->system_error = ENOMEM;
     return copy;
@@ -2109,6 +2122,12 @@ Input* input_from_url_with_options(String* url, String* type, String* flavor, Ur
     return input_from_url(url, type, flavor, cwd);
 }
 
+Input* input_from_url_with_options_deferred(String* url, String* type, String* flavor, Url* cwd,
+        const InputParseOptions* options, const char** deferred_tex_type) {
+    if (deferred_tex_type) *deferred_tex_type = nullptr;
+    return input_from_url_with_options(url, type, flavor, cwd, options);
+}
+
 static Input* ime_input_from_target(Target* target, String* type,
         String* flavor, NamePool* name_parent) {
     if (!target || target->scheme != TARGET_SCHEME_FILE) {
@@ -2169,16 +2188,6 @@ static void parse_typst_input(Input* input, const char* source) {
 static void parse_textile_input(Input* input, const char* source) {
     input->root = input_markup_with_format(input, source, MARKUP_TEXTILE);
 }
-
-#ifndef LAMBDA_NO_LATEX
-static void parse_latex_input(Input* input, const char* source) {
-    parse_latex_direct(input, source);
-}
-
-static void parse_tex_input(Input* input, const char* source) {
-    parse_tex_expansion(input, source);
-}
-#endif
 
 static void parse_mdx_input(Input* input, const char* source) {
     input->root = input_mdx(input, source);
@@ -2252,11 +2261,6 @@ static const InputParserMapping INPUT_PARSER_MAPPINGS[] = {
     {"xml", parse_xml},
     {"markdown", parse_markdown_input},
     {"rst", parse_rst_input},
-#ifndef LAMBDA_NO_LATEX
-    {"latex", parse_latex_input},
-    {"latex-ts", parse_latex_input},
-    {"tex", parse_tex_input},
-#endif
     {"wiki", parse_wiki_input},
     {"asciidoc", parse_asciidoc_input},
     {"adoc", parse_asciidoc_input},
@@ -2378,6 +2382,14 @@ static void input_read_script(Input* input, const char* type, const char* flavor
 
 bool input_parse_source_exact(const char* effective_type, Input* input, const char* source, size_t length) {
 #ifndef LAMBDA_NO_LATEX
+    if (!strcmp(effective_type, "tex") || !strcmp(effective_type, "latex") ||
+            !strcmp(effective_type, "latex-ts")) {
+        // Input cannot call the runtime; native hosts must request its document parser.
+        input->parse_failed = true;
+        input->parse_error_message = pool_strdup(input->pool, "TeX input requires a Lambda runtime host");
+        input->root = ItemError;
+        return true;
+    }
     if (!strcmp(effective_type, "tikz")) {
         input_read_script(input, effective_type, nullptr, source, length);
         return true;
@@ -2481,6 +2493,7 @@ extern "C" Input* input_from_source_n_with_deferred_tex(const char* source,
     log_debug("input_from_source: effective_type='%s'", effective_type ? effective_type : "null");
 
     Input* input = NULL;
+    bool defer_math = deferred_tex_type && input_math_is_tex(effective_type, flavor ? flavor->chars : nullptr);
     bool defer_tex = deferred_tex_type && effective_type &&
         (!strcmp(effective_type, "tex") || !strcmp(effective_type, "latex") ||
          !strcmp(effective_type, "latex-ts"));
@@ -2496,7 +2509,7 @@ extern "C" Input* input_from_source_n_with_deferred_tex(const char* source,
             input->parse_failed = get_type_id(input->root) == LMD_TYPE_ERROR;
         }
     }
-    else if (!effective_type || strcmp(effective_type, "text") == 0 || defer_tex) {
+    else if (!effective_type || strcmp(effective_type, "text") == 0 || defer_tex || defer_math) {
         // Use InputManager to properly set up the Input with a pool
         input = InputManager::create_input_with_name_parent(abs_url, name_parent);
         if (!input) {
@@ -2508,9 +2521,9 @@ extern "C" Input* input_from_source_n_with_deferred_tex(const char* source,
         String *str = builder.createString(source, source_len);
         input->root = str ? (Item){.item = s2it(str)} : ItemError;
         if (!str) input->parse_failed = true;
-        else if (defer_tex) {
+        else if (defer_tex || defer_math) {
             // The source is Input-owned; the host must copy it before invoking Script.
-            *deferred_tex_type = !strcmp(effective_type, "tex") ? "tex" : "latex";
+            *deferred_tex_type = defer_math ? "math" : !strcmp(effective_type, "tex") ? "tex" : "latex";
         }
     }
     else {
@@ -2625,6 +2638,11 @@ extern "C" Input* input_from_source_n_with_deferred_tex(const char* source,
 
 #endif
 #if !defined(LAMBDA_NO_LATEX) && !defined(LAMBDA_NO_MATH_INPUT)
+        else if (input_math_is_tex(effective_type, flavor ? flavor->chars : nullptr)) {
+            input->parse_failed = true;
+            input->parse_error_message = pool_strdup(input->pool, "TeX math requires a Lambda runtime host");
+            input->root = ItemError;
+        }
         else if (strcmp(effective_type, "math") == 0) {
             const char* math_flavor = (flavor) ? flavor->chars : "latex";
             // Both ASCII and LaTeX math use the direct cursor parser.
@@ -2724,8 +2742,9 @@ static Input* input_from_local_path(const char* pathname, Url* abs_url,
     return input;
 }
 
-Input* input_from_url_with_options(String* url, String* type, String* flavor, Url* cwd,
-        const InputParseOptions* options) {
+Input* input_from_url_with_options_deferred(String* url, String* type, String* flavor, Url* cwd,
+        const InputParseOptions* options, const char** deferred_tex_type) {
+    if (deferred_tex_type) *deferred_tex_type = nullptr;
     log_debug("input_from_url: ENTRY url='%s', type='%s'", url ? url->chars : "null", type ? type->chars : "null");
     log_debug("input_data at: %s, type: %s, cwd: %p", url ? url->chars : "null", type ? type->chars : "null", cwd);
 
@@ -2774,7 +2793,7 @@ Input* input_from_url_with_options(String* url, String* type, String* flavor, Ur
         // URL points to a file - read as normal
         log_debug("reading file from path: %s", pathname);
 
-        Input* input = input_from_local_path(pathname, abs_url, type, flavor, nullptr, options);
+        Input* input = input_from_local_path(pathname, abs_url, type, flavor, nullptr, options, deferred_tex_type);
         mem_free(pathname);
         // on success the Input owns abs_url (stored as input->url, freed by
         // ~InputManager); only free it here if no input was created.
@@ -2793,8 +2812,8 @@ Input* input_from_url_with_options(String* url, String* type, String* flavor, Ur
         const char* type_str = type ? type->chars : NULL;
         const char* flavor_str = flavor ? flavor->chars : NULL;
 
-        Input* input = input_from_http_with_name_parent(url->chars, type_str, flavor_str,
-            host_path_dir(HOST_PATH_CACHE, "cache"), nullptr, options);
+        Input* input = input_from_http_with_deferred_tex(url->chars, type_str, flavor_str,
+            host_path_dir(HOST_PATH_CACHE, "cache"), nullptr, options, deferred_tex_type);
         url_destroy(abs_url);
         return input;
 #endif
@@ -2825,6 +2844,11 @@ Input* input_from_url_with_options(String* url, String* type, String* flavor, Ur
         url_destroy(abs_url);
         return NULL;
     }
+}
+
+Input* input_from_url_with_options(String* url, String* type, String* flavor, Url* cwd,
+        const InputParseOptions* options) {
+    return input_from_url_with_options_deferred(url, type, flavor, cwd, options, nullptr);
 }
 
 Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {

@@ -178,6 +178,8 @@ Input* input_from_directory_with_io(const char* directory_path,
 Input* input_from_url(String* url, String* type, String* flavor, Url* cwd);
 Input* input_from_url_with_options(String* url, String* type, String* flavor, Url* cwd,
     const InputParseOptions* options);
+Input* input_from_url_with_options_deferred(String* url, String* type, String* flavor, Url* cwd,
+    const InputParseOptions* options, const char** deferred_tex_type);
 
 // Target-based input (unified I/O target handling)
 // Uses Target struct from lambda.h for unified URL/Path handling
@@ -196,7 +198,7 @@ Input* input_from_target_with_io_deferred(struct Target* target, String* type,
 enum { INPUT_TEX_LOCAL_FILE_LIMIT = 128, INPUT_TEX_RESOURCE_BYTE_LIMIT = 16 * 1024 * 1024 };
 struct SecurityIOResult;
 char* input_tex_resolve_path(const struct SecurityIOClient* io, const char* path, int32_t* kind,
-    struct SecurityIOResult* result);
+    struct SecurityIOResult* result, bool metadata_directory = false);
 bool input_tex_path_inside(const char* root, const char* path);
 
 // Math parsing functions (from input-math.cpp)

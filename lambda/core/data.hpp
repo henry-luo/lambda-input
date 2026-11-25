@@ -1702,9 +1702,8 @@ typedef struct Input {
     // status bit instead of being inferred from the parsed root value.
     bool parse_failed;
     char* parse_error_message;   // formatted parser diagnostic, owned by pool (nullable)
-    // InputParseOptions::embedded_math: markup lists its <math> elements here in
-    // document order, each with a parse-time `ast`, so a display renders them
-    // without walking the tree (pool-owned; null when the document has no math)
+    // InputParseOptions::embedded_math lists <math> nodes in document order.
+    // TeX nodes retain source for the runtime; AsciiMath may already have an AST.
     bool parse_embedded_math;
     Array* embedded_math;
     // Markdown Mermaid fences, retained as source nodes until document presentation.

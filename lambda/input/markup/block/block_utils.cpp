@@ -6,6 +6,7 @@
  */
 #include "block_common.hpp"
 #include "../../input-parsers.h"
+#include <string.h>
 
 namespace lambda {
 namespace markup {
@@ -40,11 +41,14 @@ void finish_math_element(MarkupParser* parser, Element* math,
 #else
     Input* input = parser ? parser->input() : nullptr;
     if (!input || !input->parse_embedded_math || !math || !source) return;
-    Item ast = parse_math_direct_to_ast(input, source, length, flavor ? flavor : "latex");
-    TypeId ast_type = get_type_id(ast);
-    if (ast_type != LMD_TYPE_NULL && ast_type != LMD_TYPE_ERROR) {
-        String* key = parser->builder.createString("ast");
-        if (key) parser->builder.putToElement(lam::gc_borrow(math), key, ast);
+    // TeX math is retained as source for the runtime; AsciiMath remains native.
+    if (flavor && (!strcmp(flavor, "ascii") || !strcmp(flavor, "asciimath"))) {
+        Item ast = parse_math_direct_to_ast(input, source, length, flavor);
+        TypeId ast_type = get_type_id(ast);
+        if (ast_type != LMD_TYPE_NULL && ast_type != LMD_TYPE_ERROR) {
+            String* key = parser->builder.createString("ast");
+            if (key) parser->builder.putToElement(lam::gc_borrow(math), key, ast);
+        }
     }
     if (!input->embedded_math) input->embedded_math = array_pooled(input->pool);
     if (input->embedded_math) {
