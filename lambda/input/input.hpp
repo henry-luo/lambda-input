@@ -158,6 +158,10 @@ Input* input_from_source_n(const char* source, size_t source_len, Url* url,
 Input* input_from_source_n_with_name_parent(const char* source, size_t source_len,
     Url* url, String* type, String* flavor, NamePool* name_parent,
     const InputParseOptions* options = NULL);
+// The optional synchronous handoff returns an Input-owned source and a static format name.
+Input* input_from_source_n_with_deferred_tex(const char* source, size_t source_len,
+    Url* url, String* type, String* flavor, NamePool* name_parent,
+    const InputParseOptions* options, const char** deferred_tex_type);
 Input* input_from_source_with_name_parent(const char* source, Url* url,
     String* type, String* flavor, NamePool* name_parent);
 // parse({sourcepos: true}): markup parsers tag each top-level block with the
@@ -184,6 +188,9 @@ Input* input_from_target_with_name_parent(struct Target* target, String* type,
 Input* input_from_target_with_io(struct Target* target, String* type,
     String* flavor, NamePool* name_parent, const struct SecurityIOClient* io,
     const InputScriptParser* script_parser = NULL);
+Input* input_from_target_with_io_deferred(struct Target* target, String* type,
+    String* flavor, NamePool* name_parent, const struct SecurityIOClient* io,
+    const InputScriptParser* script_parser, const char** deferred_tex_type);
 
 // Resource capture shares the TeX document-directory boundary with native clients.
 enum { INPUT_TEX_LOCAL_FILE_LIMIT = 128, INPUT_TEX_RESOURCE_BYTE_LIMIT = 16 * 1024 * 1024 };

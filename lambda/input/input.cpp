@@ -2037,6 +2037,13 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
     return input;
 }
 
+extern "C" Input* input_from_source_n_with_deferred_tex(const char* source,
+        size_t source_len, Url* abs_url, String* type, String* flavor,
+        NamePool* name_parent, const InputParseOptions* options, const char** deferred_tex_type) {
+    if (deferred_tex_type) *deferred_tex_type = nullptr;
+    return input_from_source_n_with_name_parent(source, source_len, abs_url, type, flavor, name_parent, options);
+}
+
 extern "C" Input* input_from_source_n(const char* source, size_t source_len,
         Url* abs_url, String* type, String* flavor) {
     return input_from_source_n_with_name_parent(source, source_len, abs_url,
@@ -2426,9 +2433,10 @@ bool input_path_is_ebook(const char* path) {
     return file_path_has_ext_ci(path, "epub");
 }
 
-extern "C" Input* input_from_source_n_with_name_parent(const char* source,
+extern "C" Input* input_from_source_n_with_deferred_tex(const char* source,
         size_t source_len, Url* abs_url, String* type, String* flavor,
-        NamePool* name_parent, const InputParseOptions* options) {
+        NamePool* name_parent, const InputParseOptions* options, const char** deferred_tex_type) {
+    if (deferred_tex_type) *deferred_tex_type = nullptr;
     log_debug("input_from_source_n: ENTRY type='%s', flavor='%s', len=%zu",
               type ? type->chars : "null",
               flavor ? flavor->chars : "null",
@@ -2473,6 +2481,9 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
     log_debug("input_from_source: effective_type='%s'", effective_type ? effective_type : "null");
 
     Input* input = NULL;
+    bool defer_tex = deferred_tex_type && effective_type &&
+        (!strcmp(effective_type, "tex") || !strcmp(effective_type, "latex") ||
+         !strcmp(effective_type, "latex-ts"));
     ArchiveFormat archive_format = archive_format_parse(effective_type);
     if (effective_type && (archive_format != ARCHIVE_UNKNOWN || !strcmp(effective_type, "binary"))) {
         input = InputManager::create_input_with_name_parent(abs_url, name_parent);
@@ -2485,7 +2496,7 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
             input->parse_failed = get_type_id(input->root) == LMD_TYPE_ERROR;
         }
     }
-    else if (!effective_type || strcmp(effective_type, "text") == 0) { // treat as plain text
+    else if (!effective_type || strcmp(effective_type, "text") == 0 || defer_tex) {
         // Use InputManager to properly set up the Input with a pool
         input = InputManager::create_input_with_name_parent(abs_url, name_parent);
         if (!input) {
@@ -2495,7 +2506,12 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
         // Allocate string from the pool instead of malloc
         MarkBuilder builder(input);
         String *str = builder.createString(source, source_len);
-        input->root = {.item = s2it(str)};
+        input->root = str ? (Item){.item = s2it(str)} : ItemError;
+        if (!str) input->parse_failed = true;
+        else if (defer_tex) {
+            // The source is Input-owned; the host must copy it before invoking Script.
+            *deferred_tex_type = !strcmp(effective_type, "tex") ? "tex" : "latex";
+        }
     }
     else {
         InputAllocationContext allocation_context = {};
@@ -2640,6 +2656,13 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
     return input;
 }
 
+extern "C" Input* input_from_source_n_with_name_parent(const char* source,
+        size_t source_len, Url* abs_url, String* type, String* flavor,
+        NamePool* name_parent, const InputParseOptions* options) {
+    return input_from_source_n_with_deferred_tex(source, source_len, abs_url, type, flavor,
+        name_parent, options, nullptr);
+}
+
 extern "C" Input* input_from_source_n(const char* source, size_t source_len,
         Url* abs_url, String* type, String* flavor) {
     return input_from_source_n_with_name_parent(source, source_len, abs_url,
@@ -2674,7 +2697,7 @@ extern "C" Input* input_from_source_with_options(const char* source,
 // preserve the byte count for length-aware parsers, including HTML and PDF.
 static Input* input_from_local_path(const char* pathname, Url* abs_url,
         String* type, String* flavor, NamePool* name_parent = NULL,
-        const InputParseOptions* options = nullptr) {
+        const InputParseOptions* options = nullptr, const char** deferred_tex_type = nullptr) {
     const SecurityIOClient* io = options ? options->io : nullptr;
     size_t src_len = 0;
     char* source = nullptr;
@@ -2686,8 +2709,8 @@ static Input* input_from_local_path(const char* pathname, Url* abs_url,
         return nullptr;
     }
 
-    Input* input = input_from_source_n_with_name_parent(source, src_len,
-        abs_url, type, flavor, name_parent, options);
+    Input* input = input_from_source_n_with_deferred_tex(source, src_len,
+        abs_url, type, flavor, name_parent, options, deferred_tex_type);
 #ifndef LAMBDA_NO_GRAPH_INPUT
     const bool explicit_structurizr = flavor &&
         (strcmp(flavor->chars, "structurizr") == 0 || strcmp(flavor->chars, "c4") == 0);
@@ -2818,7 +2841,8 @@ Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {
  * @return Input* on success, NULL on failure
  */
 static Input* input_from_target_impl(Target* target, String* type,
-        String* flavor, NamePool* name_parent, const InputParseOptions* options = nullptr) {
+        String* flavor, NamePool* name_parent, const InputParseOptions* options = nullptr,
+        const char** deferred_tex_type = nullptr) {
     if (!target) {
         log_error("input_from_target: target is NULL");
         return NULL;
@@ -2878,7 +2902,7 @@ static Input* input_from_target_impl(Target* target, String* type,
             // Create a copy of the URL for the input (input owns lifecycle of url_copy via Input)
             Url* url_copy = url_parse(url->href->chars);
             Input* input = input_from_local_path(pathname, url_copy, type, flavor,
-                name_parent, options);
+                name_parent, options, deferred_tex_type);
             mem_free(pathname);
             if (!input && url_copy) url_destroy(url_copy);
             return input;
@@ -2949,7 +2973,7 @@ static Input* input_from_target_impl(Target* target, String* type,
         if (file_url_str) mem_free(file_url_str);
 
         Input* input = input_from_local_path(pathname, file_url, type, flavor,
-            name_parent, options);
+            name_parent, options, deferred_tex_type);
         strbuf_free(path_buf);
         if (!input && file_url) url_destroy(file_url);
         return input;
@@ -3015,16 +3039,19 @@ bool input_parse_value_n(Input* input, const char* source, size_t length,
 }
 
 
-Input* input_from_target_with_io(Target* target, String* type, String* flavor,
-        NamePool* name_parent, const SecurityIOClient* io, const InputScriptParser* script_parser) {
+Input* input_from_target_with_io_deferred(Target* target, String* type, String* flavor,
+        NamePool* name_parent, const SecurityIOClient* io, const InputScriptParser* script_parser,
+        const char** deferred_tex_type) {
     InputParseOptions options = {};
     options.io = io;
     options.script_parser = script_parser;
+    if (deferred_tex_type) *deferred_tex_type = nullptr;
     if (!io) {
 #ifdef LAMBDA_IME_RESOURCE_IO
         return input_from_target_with_name_parent(target, type, flavor, name_parent);
 #else
-        return input_from_target_impl(target, type, flavor, name_parent, script_parser ? &options : nullptr);
+        return input_from_target_impl(target, type, flavor, name_parent,
+            (script_parser || deferred_tex_type) ? &options : nullptr, deferred_tex_type);
 #endif
     }
     // D11.2.1: classify only through the broker, before directory, database,
@@ -3049,7 +3076,7 @@ Input* input_from_target_with_io(Target* target, String* type, String* flavor,
 #ifdef LAMBDA_IME_RESOURCE_IO
                 input = ime_input_from_local_path(path->str, url, type, flavor, name_parent, io);
 #else
-                input = input_from_local_path(path->str, url, type, flavor, name_parent, &options);
+                input = input_from_local_path(path->str, url, type, flavor, name_parent, &options, deferred_tex_type);
 #endif
                 if (!input) url_destroy(url);
             }
@@ -3057,6 +3084,11 @@ Input* input_from_target_with_io(Target* target, String* type, String* flavor,
     }
     strbuf_free(path);
     return input;
+}
+
+Input* input_from_target_with_io(Target* target, String* type, String* flavor,
+        NamePool* name_parent, const SecurityIOClient* io, const InputScriptParser* script_parser) {
+    return input_from_target_with_io_deferred(target, type, flavor, name_parent, io, script_parser, nullptr);
 }
 
 static void input_pool_cleanup(void* arg);
