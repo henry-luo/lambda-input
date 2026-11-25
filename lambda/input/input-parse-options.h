@@ -2,7 +2,17 @@
 #define LAMBDA_INPUT_PARSE_OPTIONS_H
 
 #include <stdbool.h>
+#include <stddef.h>
 struct SecurityIOClient;
+struct Input;
+struct Item;
+
+typedef struct InputScriptParser {
+    void* context;
+    // The result belongs to input, including when it is a fragment of another root.
+    bool (*read)(void* context, struct Input* input, const char* type,
+        const char* flavor, const char* source, size_t length, struct Item* result);
+} InputScriptParser;
 
 // Parse options beyond type and flavor.
 typedef struct InputParseOptions {
@@ -21,6 +31,7 @@ typedef struct InputParseOptions {
     int tex_chaptered_count;
     // Borrowed only for this synchronous parse; never retained by Input/cache.
     const struct SecurityIOClient* io;
+    const InputScriptParser* script_parser;
 } InputParseOptions;
 
 #endif

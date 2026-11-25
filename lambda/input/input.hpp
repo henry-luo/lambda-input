@@ -172,6 +172,8 @@ Input* input_from_directory_with_name_parent(const char* directory_path,
 Input* input_from_directory_with_io(const char* directory_path,
     const char* original_url, NamePool* name_parent, const struct SecurityIOClient* io);
 Input* input_from_url(String* url, String* type, String* flavor, Url* cwd);
+Input* input_from_url_with_options(String* url, String* type, String* flavor, Url* cwd,
+    const InputParseOptions* options);
 
 // Target-based input (unified I/O target handling)
 // Uses Target struct from lambda.h for unified URL/Path handling
@@ -180,7 +182,8 @@ Input* input_from_target(struct Target* target, String* type, String* flavor);
 Input* input_from_target_with_name_parent(struct Target* target, String* type,
     String* flavor, NamePool* name_parent);
 Input* input_from_target_with_io(struct Target* target, String* type,
-    String* flavor, NamePool* name_parent, const struct SecurityIOClient* io);
+    String* flavor, NamePool* name_parent, const struct SecurityIOClient* io,
+    const InputScriptParser* script_parser = NULL);
 
 // Math parsing functions (from input-math.cpp)
 void parse_math(Input* input, const char* math_string, const char* flavor_str);
@@ -286,7 +289,8 @@ char* download_http_content_cached_typed(const char* url, size_t* content_size,
 
 Input* input_from_http(const char* url, const char* type, const char* flavor, const char* cache_dir);
 Input* input_from_http_with_name_parent(const char* url, const char* type,
-    const char* flavor, const char* cache_dir, NamePool* name_parent);
+    const char* flavor, const char* cache_dir, NamePool* name_parent,
+    const InputParseOptions* options = NULL);
 FetchResponse* http_fetch(const char* url, const FetchConfig* config);
 // http_fetch that also says why it returned NULL (failure may be NULL).
 FetchResponse* http_fetch2(const char* url, const FetchConfig* config, FetchFailure* failure);
@@ -302,13 +306,9 @@ Input* input_from_sysinfo(Url* url, Pool* pool);
 Input* input_from_sysinfo_with_name_parent(Url* url, Pool* pool, NamePool* name_parent);
 bool is_sys_url(const char* url);
 
-// Graph parsing functions (from input-graph.cpp)
-void parse_graph(Input* input, const char* graph_string, const char* flavor);
-void parse_graph_dot(Input* input, const char* dot_string);
-void parse_graph_mermaid(Input* input, const char* mermaid_string);
-void parse_graph_structurizr(Input* input, const char* structurizr_string);
+// Native graph detection and admitted Structurizr resource resolution.
 void resolve_graph_structurizr_local_includes(Input* input, const char* root_path,
-    const struct SecurityIOClient* io = nullptr);
+    const struct SecurityIOClient* io = nullptr, const InputScriptParser* parser = nullptr);
 const char* input_detect_structurizr_flavor(const char* pathname,
                                             const char* source,
                                             size_t source_len);

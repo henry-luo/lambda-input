@@ -514,7 +514,8 @@ char* download_http_content_cached_typed(const char* url, size_t* content_size,
 
 // Returns an Input* for HTTP/HTTPS URL, using memory and file cache
 Input* input_from_http_with_name_parent(const char* url, const char* type,
-        const char* flavor, const char* cache_dir, NamePool* name_parent) {
+        const char* flavor, const char* cache_dir, NamePool* name_parent,
+        const InputParseOptions* options) {
     if (!url) {
         return NULL;
     }
@@ -557,7 +558,7 @@ Input* input_from_http_with_name_parent(const char* url, const char* type,
     // Parse content using existing input system
     // Preserve binary lengths across both fresh downloads and cache hits.
     Input* input = input_from_source_n_with_name_parent(content, content_size, abs_url,
-        type_str, flavor_str, name_parent);
+        type_str, flavor_str, name_parent, options);
 
     // Cleanup
     mem_free(content); // from lib - uses mem_alloc

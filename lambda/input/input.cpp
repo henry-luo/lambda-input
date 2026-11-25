@@ -2068,6 +2068,11 @@ Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {
     return input;
 }
 
+Input* input_from_url_with_options(String* url, String* type, String* flavor, Url* cwd,
+        const InputParseOptions*) {
+    return input_from_url(url, type, flavor, cwd);
+}
+
 static Input* ime_input_from_target(Target* target, String* type,
         String* flavor, NamePool* name_parent) {
     if (!target || target->scheme != TARGET_SCHEME_FILE) {
@@ -2136,12 +2141,6 @@ static void parse_latex_input(Input* input, const char* source) {
 
 static void parse_tex_input(Input* input, const char* source) {
     parse_tex_expansion(input, source);
-}
-#endif
-
-#ifndef LAMBDA_NO_LATEX
-static void parse_tikz_input(Input* input, const char* source) {
-    parse_tikz_direct(input, source);
 }
 #endif
 
@@ -2221,9 +2220,6 @@ static const InputParserMapping INPUT_PARSER_MAPPINGS[] = {
     {"latex", parse_latex_input},
     {"latex-ts", parse_latex_input},
     {"tex", parse_tex_input},
-#endif
-#ifndef LAMBDA_NO_LATEX
-    {"tikz", parse_tikz_input},
 #endif
     {"wiki", parse_wiki_input},
     {"asciidoc", parse_asciidoc_input},
@@ -2332,7 +2328,25 @@ static bool input_admit_c_string_source(Input* input, const char* source, size_t
     return false;
 }
 
+#if !defined(LAMBDA_NO_LATEX) || !defined(LAMBDA_NO_GRAPH_INPUT)
+static void input_read_script(Input* input, const char* type, const char* flavor,
+        const char* source, size_t length) {
+    if (!input_admit_c_string_source(input, source, length)) return;
+    const InputScriptParser* parser = input->parse_options ? input->parse_options->script_parser : nullptr;
+    if (parser && parser->read(parser->context, input, type, flavor, source, length, &input->root)) return;
+    input->parse_failed = true;
+    input->parse_error_message = pool_strdup(input->pool, "Input format requires a Lambda parser host");
+    input->root = ItemError;
+}
+#endif
+
 bool input_parse_source_exact(const char* effective_type, Input* input, const char* source, size_t length) {
+#ifndef LAMBDA_NO_LATEX
+    if (!strcmp(effective_type, "tikz")) {
+        input_read_script(input, effective_type, nullptr, source, length);
+        return true;
+    }
+#endif
     for (size_t i = 0; i < sizeof(INPUT_PARSER_MAPPINGS) / sizeof(INPUT_PARSER_MAPPINGS[0]); i++) {
         if (strcmp(effective_type, INPUT_PARSER_MAPPINGS[i].type) == 0) {
             if (input_admit_c_string_source(input, source, length)) {
@@ -2582,7 +2596,7 @@ extern "C" Input* input_from_source_n_with_name_parent(const char* source,
         else if (strcmp(effective_type, "graph") == 0) {
             const char* graph_flavor = flavor ? flavor->chars
                 : (detected_graph_flavor ? detected_graph_flavor : "dot");
-            if (input_admit_c_string_source(input, source, source_len)) parse_graph(input, source, graph_flavor);
+            input_read_script(input, effective_type, graph_flavor, source, source_len);
         }
 #endif
         else {
@@ -2631,7 +2645,8 @@ extern "C" Input* input_from_source_with_options(const char* source,
 // preserve the byte count for length-aware parsers, including HTML and PDF.
 static Input* input_from_local_path(const char* pathname, Url* abs_url,
         String* type, String* flavor, NamePool* name_parent = NULL,
-        const SecurityIOClient* io = nullptr) {
+        const InputParseOptions* options = nullptr) {
+    const SecurityIOClient* io = options ? options->io : nullptr;
     size_t src_len = 0;
     char* source = nullptr;
     // Acquire exact bytes once; ZIP detection must never depend on strlen().
@@ -2642,24 +2657,23 @@ static Input* input_from_local_path(const char* pathname, Url* abs_url,
         return nullptr;
     }
 
-    InputParseOptions options = {};
-    options.io = io;
     Input* input = input_from_source_n_with_name_parent(source, src_len,
-        abs_url, type, flavor, name_parent, io ? &options : nullptr);
+        abs_url, type, flavor, name_parent, options);
 #ifndef LAMBDA_NO_GRAPH_INPUT
     const bool explicit_structurizr = flavor &&
         (strcmp(flavor->chars, "structurizr") == 0 || strcmp(flavor->chars, "c4") == 0);
     const bool detected_structurizr = !flavor &&
         input_detect_structurizr_flavor(pathname, source, src_len) != NULL;
     if (input && (explicit_structurizr || detected_structurizr)) {
-        resolve_graph_structurizr_local_includes(input, pathname, io);
+        resolve_graph_structurizr_local_includes(input, pathname, io, options ? options->script_parser : nullptr);
     }
 #endif
     mem_free(source);
     return input;
 }
 
-Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {
+Input* input_from_url_with_options(String* url, String* type, String* flavor, Url* cwd,
+        const InputParseOptions* options) {
     log_debug("input_from_url: ENTRY url='%s', type='%s'", url ? url->chars : "null", type ? type->chars : "null");
     log_debug("input_data at: %s, type: %s, cwd: %p", url ? url->chars : "null", type ? type->chars : "null", cwd);
 
@@ -2708,7 +2722,7 @@ Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {
         // URL points to a file - read as normal
         log_debug("reading file from path: %s", pathname);
 
-        Input* input = input_from_local_path(pathname, abs_url, type, flavor);
+        Input* input = input_from_local_path(pathname, abs_url, type, flavor, nullptr, options);
         mem_free(pathname);
         // on success the Input owns abs_url (stored as input->url, freed by
         // ~InputManager); only free it here if no input was created.
@@ -2727,7 +2741,8 @@ Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {
         const char* type_str = type ? type->chars : NULL;
         const char* flavor_str = flavor ? flavor->chars : NULL;
 
-        Input* input = input_from_http(url->chars, type_str, flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"));
+        Input* input = input_from_http_with_name_parent(url->chars, type_str, flavor_str,
+            host_path_dir(HOST_PATH_CACHE, "cache"), nullptr, options);
         url_destroy(abs_url);
         return input;
 #endif
@@ -2760,6 +2775,10 @@ Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {
     }
 }
 
+Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {
+    return input_from_url_with_options(url, type, flavor, cwd, nullptr);
+}
+
 /**
  * Load input from a Target (unified I/O target).
  * This function dispatches to appropriate handlers based on target scheme.
@@ -2770,7 +2789,7 @@ Input* input_from_url(String* url, String* type, String* flavor, Url* cwd) {
  * @return Input* on success, NULL on failure
  */
 static Input* input_from_target_impl(Target* target, String* type,
-        String* flavor, NamePool* name_parent) {
+        String* flavor, NamePool* name_parent, const InputParseOptions* options = nullptr) {
     if (!target) {
         log_error("input_from_target: target is NULL");
         return NULL;
@@ -2830,7 +2849,7 @@ static Input* input_from_target_impl(Target* target, String* type,
             // Create a copy of the URL for the input (input owns lifecycle of url_copy via Input)
             Url* url_copy = url_parse(url->href->chars);
             Input* input = input_from_local_path(pathname, url_copy, type, flavor,
-                name_parent);
+                name_parent, options);
             mem_free(pathname);
             if (!input && url_copy) url_destroy(url_copy);
             return input;
@@ -2844,7 +2863,7 @@ static Input* input_from_target_impl(Target* target, String* type,
             const char* type_str = type ? type->chars : NULL;
             const char* flavor_str = flavor ? flavor->chars : NULL;
             return input_from_http_with_name_parent(url->href->chars, type_str,
-                flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"), name_parent);
+                flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"), name_parent, options);
 #endif
         }
         else if (target->scheme == TARGET_SCHEME_SYS) {
@@ -2881,7 +2900,7 @@ static Input* input_from_target_impl(Target* target, String* type,
             const char* type_str = type ? type->chars : NULL;
             const char* flavor_str = flavor ? flavor->chars : NULL;
             Input* input = input_from_http_with_name_parent(url_buf->str, type_str,
-                flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"), name_parent);
+                flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"), name_parent, options);
             strbuf_free(url_buf);
             return input;
 #endif
@@ -2901,7 +2920,7 @@ static Input* input_from_target_impl(Target* target, String* type,
         if (file_url_str) mem_free(file_url_str);
 
         Input* input = input_from_local_path(pathname, file_url, type, flavor,
-            name_parent);
+            name_parent, options);
         strbuf_free(path_buf);
         if (!input && file_url) url_destroy(file_url);
         return input;
@@ -2968,8 +2987,17 @@ bool input_parse_value_n(Input* input, const char* source, size_t length,
 
 
 Input* input_from_target_with_io(Target* target, String* type, String* flavor,
-        NamePool* name_parent, const SecurityIOClient* io) {
-    if (!io) return input_from_target_with_name_parent(target, type, flavor, name_parent);
+        NamePool* name_parent, const SecurityIOClient* io, const InputScriptParser* script_parser) {
+    InputParseOptions options = {};
+    options.io = io;
+    options.script_parser = script_parser;
+    if (!io) {
+#ifdef LAMBDA_IME_RESOURCE_IO
+        return input_from_target_with_name_parent(target, type, flavor, name_parent);
+#else
+        return input_from_target_impl(target, type, flavor, name_parent, script_parser ? &options : nullptr);
+#endif
+    }
     // D11.2.1: classify only through the broker, before directory, database,
     // system-info or network dispatch can inspect an ambient resource.
     if (!target || target->scheme != TARGET_SCHEME_FILE) return nullptr;
@@ -2992,7 +3020,7 @@ Input* input_from_target_with_io(Target* target, String* type, String* flavor,
 #ifdef LAMBDA_IME_RESOURCE_IO
                 input = ime_input_from_local_path(path->str, url, type, flavor, name_parent, io);
 #else
-                input = input_from_local_path(path->str, url, type, flavor, name_parent, io);
+                input = input_from_local_path(path->str, url, type, flavor, name_parent, &options);
 #endif
                 if (!input) url_destroy(url);
             }

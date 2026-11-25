@@ -1,4 +1,4 @@
-#include "input-graph.h"
+#include "input.hpp"
 #include "lib/arraylist.h"
 #include "lib/file.h"
 #include "lib/memtrack.h"
@@ -7,8 +7,6 @@
 #include "../io/mark_builder.hpp"
 #include "../core/mark_reader.hpp"
 #include <string.h>
-
-using namespace lambda;
 
 static const size_t STRUCTURIZR_INCLUDE_MAX_DEPTH = 32;
 static const size_t STRUCTURIZR_INCLUDE_MAX_FILES = 256;
@@ -22,11 +20,22 @@ struct StructurizrIncludeResolver {
     size_t file_count;
     size_t byte_count;
     const SecurityIOClient* io;
+    const InputScriptParser* parser;
 
     StructurizrIncludeResolver(Input* source_input, Element* source_root, char* source_dir,
-            const SecurityIOClient* client)
+            const SecurityIOClient* client, const InputScriptParser* script_parser)
         : input(source_input), root(source_root), root_dir(source_dir),
-          stack(arraylist_new(8)), file_count(0), byte_count(0), io(client) {}
+          stack(arraylist_new(8)), file_count(0), byte_count(0), io(client), parser(script_parser) {}
+
+    void append_child(Element* owner, Item child) {
+        array_append((Array*)owner, child, input->pool, input->arena);
+    }
+
+    void set_attribute(Element* owner, const char* name, Item value) {
+        MarkBuilder builder(input);
+        String* key = builder.createString(name);
+        if (key) builder.putToElement(lam::gc_borrow(owner), key, value);
+    }
 
     static char* resolve_path(const SecurityIOClient* io, const char* path) {
         if (!path) return nullptr;
@@ -85,8 +94,8 @@ struct StructurizrIncludeResolver {
             .attr("source-line", source_reader.get_int_attr("source-line", 0))
             .attr("source-column", source_reader.get_int_attr("source-column", 0));
         Element* diagnostics = builder.element("diagnostics").final().element;
-        add_node_to_graph(input, diagnostics, value.final().element);
-        add_node_to_graph(input, root, diagnostics);
+        append_child(diagnostics, value.final());
+        append_child(root, (Item){.element = diagnostics});
     }
 
     bool within_root(const char* path) const {
@@ -112,7 +121,8 @@ struct StructurizrIncludeResolver {
     }
 
     void annotate(Element* value, const char* source_file) {
-        add_graph_attribute(input, value, "source-file", source_file);
+        MarkBuilder builder(input);
+        set_attribute(value, "source-file", builder.createStringItem(source_file, strlen(source_file)));
         ElementReader reader(value);
         int64_t child_count = reader.childCount();
         for (int64_t i = 0; i < child_count; i++) {
@@ -165,7 +175,22 @@ struct StructurizrIncludeResolver {
         arraylist_append(stack, mem_strdup(path, MEM_CAT_TEMP));
         ElementReader before(directive);
         int64_t first_new_child = before.childCount();
-        parse_graph_structurizr_fragment(input, directive, source, context);
+        if (memchr(source, 0, size)) {
+            diagnostic("structurizr.syntax", "Structurizr include contains a literal NUL byte", directive, path);
+        } else {
+            Item fragment = ItemNull;
+            if (parser && parser->read(parser->context, input, "structurizr-fragment",
+                    context, source, size, &fragment)) {
+                // The provider has already copied the fragment into the workspace owner.
+                if (fragment.type_id() == LMD_TYPE_ELEMENT) {
+                    ElementReader parsed(fragment.element);
+                    for (int64_t i = 0; i < parsed.childCount(); i++) {
+                        ItemReader child = parsed.childAt(i);
+                        if (child.isElement()) append_child(directive, child.item());
+                    }
+                }
+            } else diagnostic("structurizr.syntax", "Structurizr include requires a Lambda parser host", directive, path);
+        }
         mem_free(source);
 
         char* containing = file_path_dirname(path);
@@ -255,18 +280,19 @@ struct StructurizrIncludeResolver {
         arraylist_append(stack, canonical_root);
         resolve_children(root, "workspace", root_dir, 0);
         mem_free(arraylist_pop(stack));
-        add_graph_integer_attribute(input, root, "include-file-count", (int64_t)file_count);
-        add_graph_integer_attribute(input, root, "include-byte-count", (int64_t)byte_count);
+        MarkBuilder builder(input);
+        set_attribute(root, "include-file-count", builder.createInt((int64_t)file_count));
+        set_attribute(root, "include-byte-count", builder.createInt((int64_t)byte_count));
     }
 };
 
 void resolve_graph_structurizr_local_includes(Input* input, const char* root_path,
-        const SecurityIOClient* io) {
+        const SecurityIOClient* io, const InputScriptParser* parser) {
     if (!input || !root_path || input->root.type_id() != LMD_TYPE_ELEMENT) return;
     char* canonical_root = StructurizrIncludeResolver::resolve_path(io, root_path);
     if (!canonical_root) return;
     char* root_dir = file_path_dirname(canonical_root);
     if (!root_dir) { mem_free(canonical_root); return; }
-    StructurizrIncludeResolver resolver(input, input->root.element, root_dir, io);
+    StructurizrIncludeResolver resolver(input, input->root.element, root_dir, io, parser);
     resolver.resolve(canonical_root);
 }

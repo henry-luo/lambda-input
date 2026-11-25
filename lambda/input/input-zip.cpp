@@ -21,6 +21,7 @@ struct FsParsed {
     const char* type;
     const char* flavor;
     Item value;
+    bool script_enabled;
     FsParsed* next;
 };
 struct FsNode {
@@ -82,7 +83,8 @@ ZipMemberReader* fs_node_open_zip_member(Item node, ZipError* error) {
     return fs ? zip_member_open(fs->tree->archive, fs->index, error) : nullptr;
 }
 
-static Item fs_parse_uncached(FsNode* node, String* type, String* flavor) {
+static Item fs_parse_uncached(FsNode* node, String* type, String* flavor,
+        const InputScriptParser* script_parser) {
     FsTree* tree = node->tree;
     ArchiveEntry* entry = archive_entry(tree->archive, node->index);
     if (entry->directory || node->index == 0) {
@@ -124,6 +126,7 @@ static Item fs_parse_uncached(FsNode* node, String* type, String* flavor) {
     static const SecurityIOClient captured_resources = {1};
     InputParseOptions options = {};
     options.io = &captured_resources;
+    options.script_parser = script_parser;
     Input* parsed = input_from_source_n_with_name_parent(data, size, member_url,
         type, flavor, nullptr, &options);
     if (!parsed) { if (member_url) url_destroy(member_url); return ItemError; }
@@ -132,11 +135,15 @@ static Item fs_parse_uncached(FsNode* node, String* type, String* flavor) {
     return parsed->root;
 }
 
-static Item fs_parse(FsNode* node, String* type, String* flavor) {
+static Item fs_parse(FsNode* node, String* type, String* flavor,
+        const InputScriptParser* script_parser) {
     const char* type_name = type && strcmp(type->chars, "auto") ? type->chars : "auto";
     const char* flavor_name = flavor ? flavor->chars : "";
     for (FsParsed* parsed = node->parses; parsed; parsed = parsed->next) {
-        if (!strcmp(parsed->type, type_name) && !strcmp(parsed->flavor, flavor_name)) return parsed->value;
+        if (!strcmp(parsed->type, type_name) && !strcmp(parsed->flavor, flavor_name) &&
+                (parsed->script_enabled || !script_parser || !item_is_error(parsed->value))) {
+            return parsed->value;
+        }
     }
     Input* input = node->tree->input;
     FsParsed* parsed = (FsParsed*)arena_calloc(input->arena, sizeof(FsParsed));
@@ -145,14 +152,17 @@ static Item fs_parse(FsNode* node, String* type, String* flavor) {
     parsed->flavor = (const char*)arena_alloc(input->arena, strlen(flavor_name) + 1);
     if (!parsed->type || !parsed->flavor) return ItemError;
     strcpy((char*)parsed->type, type_name); strcpy((char*)parsed->flavor, flavor_name);
-    parsed->value = fs_parse_uncached(node, type, flavor);
+    // Lazy reads without a provider must not cache an unavailable parser for explicit reads.
+    parsed->script_enabled = script_parser != nullptr;
+    parsed->value = fs_parse_uncached(node, type, flavor, script_parser);
     parsed->next = node->parses; node->parses = parsed;
     return parsed->value;
 }
 
-Item fs_node_input(Item node, String* type, String* flavor) {
+Item fs_node_input(Item node, String* type, String* flavor,
+        const InputScriptParser* script_parser) {
     FsNode* fs = fs_node_data(node);
-    return fs ? fs_parse(fs, type, flavor) : ItemError;
+    return fs ? fs_parse(fs, type, flavor, script_parser) : ItemError;
 }
 
 static VirtualOpStatus fs_prepare(void* data, Item* error) {
@@ -161,7 +171,7 @@ static VirtualOpStatus fs_prepare(void* data, Item* error) {
     if (node->index == 0 || entry->directory) return VIRTUAL_OP_OK;
     if (!node->prepared) {
         node->prepared = true;
-        node->parsed = fs_parse(node, nullptr, nullptr);
+        node->parsed = fs_parse(node, nullptr, nullptr, nullptr);
         if (get_type_id(node->parsed) == LMD_TYPE_ERROR) node->error = node->parsed;
         else {
             // Reuse the ordinary element-content normalizer (S2.6.2–S2.6.4).

@@ -12,7 +12,9 @@ inline void input_zip(Input* input, const void* bytes, size_t length,
 }
 bool fs_node_is(Item item);
 Item fs_node_content(Item node);
-Item fs_node_input(Item node, String* type, String* flavor);
+struct InputScriptParser;
+Item fs_node_input(Item node, String* type, String* flavor,
+    const InputScriptParser* script_parser = nullptr);
 Archive* fs_node_archive(Item node);
 ZipMemberReader* fs_node_open_zip_member(Item node, ZipError* error);
 bool fs_zip_encode(Item tree, const ZipWriteOptions* options,

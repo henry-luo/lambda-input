@@ -174,13 +174,13 @@ MIGRATED_TEST_SOURCES = $(addprefix test/lib/test_,$(addsuffix _gtest.cpp,$(MIGR
   test/css/test_css_roundtrip_unit.cpp test/css/test_compound_descendant_selectors.cpp \
   test/css/test_selector_groups.cpp test/css/test_css_integration_gtest.cpp \
   test/css/test_css_files_safe_gtest.cpp test/css/test_css_frameworks_gtest.cpp test/css/test_css_to_mark_gtest.cpp \
-  test/test_mark_builder_gtest.cpp test/test_mark_builder_deepcopy_gtest.cpp test/test_mark_editor_gtest.cpp test/test_name_pool_gtest.cpp test/test_namespace_gtest.cpp test/test_path_gtest.cpp test/test_mark_reader_gtest.cpp test/test_entity_emoji_gtest.cpp test/test_input_rdb_gtest.cpp test/test_input_eps_gtest.cpp test/test_input_pdf_gtest.cpp test/test_html_gtest.cpp test/test_html_negative_gtest.cpp test/test_graph_formatter_gtest.cpp test/test_mdx_roundtrip_gtest.cpp test/test_jsx_roundtrip_gtest.cpp \
+  test/test_mark_builder_gtest.cpp test/test_mark_builder_deepcopy_gtest.cpp test/test_mark_editor_gtest.cpp test/test_name_pool_gtest.cpp test/test_namespace_gtest.cpp test/test_path_gtest.cpp test/test_mark_reader_gtest.cpp test/test_entity_emoji_gtest.cpp test/test_input_rdb_gtest.cpp test/test_input_eps_gtest.cpp test/test_input_pdf_gtest.cpp test/test_html_gtest.cpp test/test_html_negative_gtest.cpp test/test_mdx_roundtrip_gtest.cpp test/test_jsx_roundtrip_gtest.cpp \
   test/test_error_tracking.cpp test/test_markup_roundtrip_gtest.cpp test/test_zip_gtest.cpp \
   test/test_radiant_agent_state_gtest.cpp test/test_network_scheduler_gtest.cpp test/parser/test_parser_robustness_gtest.cpp \
   test/test_navigation_gtest.cpp test/test_priority_queue_gtest.cpp test/test_recursion_guard_gtest.cpp test/test_security_policy_gtest.cpp \
   test/test_rdb_query_gtest.cpp test/markup/test_rst_functional_gtest.cpp \
   test/test_input_model_gtest.cpp test/test_input_roundtrip_gtest.cpp test/test_markup_modular_gtest.cpp \
-  test/test_format_markup_gtest.cpp test/test_dir_gtest.cpp test/test_graph_mermaid_gtest.cpp \
+  test/test_format_markup_gtest.cpp test/test_dir_gtest.cpp \
   test/wpt/test_wpt_html_parser_gtest.cpp test/markup/test_markdown_gtest.cpp test/test_yaml_suite_gtest.cpp
 MIGRATED_TEST_BINS = $(patsubst %.cpp,build/%,$(MIGRATED_TEST_SOURCES))
 
@@ -251,12 +251,10 @@ test-input-baseline: test-native
 test-native: test-api-headers setup-test-data check-native-test-deps build-all-internal native-deps $(MIGRATED_TEST_BINS) build/test/test_http_gtest build/test/test_runtime_scalar_storage_gtest
 	@mkdir -p build/test
 	$(call LINK_NATIVE_TEST,$(NATIVE_TEST_SOURCES),build/test/test_input_native)
-	$(call LINK_NATIVE_TEST,test/test_graph_parser_gtest.cpp,build/test/test_graph_parser_native)
 	$(call LINK_NATIVE_TEST,test/test_input_https_pull_gtest.cpp lib/https_pull.cpp,build/test/test_input_https_pull_native,-DLAMBDA_HTTPS_PULL_TESTING,build/lib/$(PROFILE)/liblambda-input.a build/lib/$(PROFILE)/liblambda-lib.a)
 	@rc=0; $(PYTHON) test/run_native_tests.py ./build/test/test_input_native || rc=1; \
 	  ./build/test/test_runtime_scalar_storage_gtest || rc=1; \
 	  $(PYTHON) test/run_native_tests.py ./build/test/test_input_https_pull_native || rc=1; \
-	  ./build/test/test_graph_parser_native || rc=1; \
 	  ./build/test/test_http_gtest --gtest_filter=HttpInputTest.EmptyPostDoesNotReadStdin:HttpInputTest.SendsBrowserNavigationHeadersForDocumentDownloads:HttpInputTest.ResourceDownloadsKeepRefererAndNavigationLanguage:HttpInputTest.KeepsRedirectCookiesWithoutSessionJar:HttpInputTest.DecodesBrotliDocumentResponses:HttpInputTest.ErrorDocumentsRetainFinalResponseMetadataButResourcesReject:HttpInputTest.TruncatedErrorDocumentRemainsTransportFailure:HttpInputTest.TopLevelNavigationUsesPageLoadTimeout:HttpInputTest.DocumentCookiesKeepFinalPathAndHttpOnlyAttributes:HttpInputTest.CookiesShareAHostnameAcrossPorts:HttpInputTest.FileDocumentCookiesRetainTheirEmptyHostname || rc=1; \
 	  for test_bin in $(MIGRATED_TEST_BINS); do ./$$test_bin || rc=1; done; exit $$rc
 
