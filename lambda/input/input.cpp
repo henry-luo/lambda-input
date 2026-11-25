@@ -2915,8 +2915,8 @@ static Input* input_from_target_impl(Target* target, String* type,
             log_debug("input_from_target: HTTP/HTTPS URL detected");
             const char* type_str = type ? type->chars : NULL;
             const char* flavor_str = flavor ? flavor->chars : NULL;
-            return input_from_http_with_name_parent(url->href->chars, type_str,
-                flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"), name_parent, options);
+            return input_from_http_with_deferred_tex(url->href->chars, type_str,
+                flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"), name_parent, options, deferred_tex_type);
 #endif
         }
         else if (target->scheme == TARGET_SCHEME_SYS) {
@@ -2952,8 +2952,8 @@ static Input* input_from_target_impl(Target* target, String* type,
             path_to_string(path, url_buf);
             const char* type_str = type ? type->chars : NULL;
             const char* flavor_str = flavor ? flavor->chars : NULL;
-            Input* input = input_from_http_with_name_parent(url_buf->str, type_str,
-                flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"), name_parent, options);
+            Input* input = input_from_http_with_deferred_tex(url_buf->str, type_str,
+                flavor_str, host_path_dir(HOST_PATH_CACHE, "cache"), name_parent, options, deferred_tex_type);
             strbuf_free(url_buf);
             return input;
 #endif

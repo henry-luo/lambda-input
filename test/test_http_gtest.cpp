@@ -8,6 +8,9 @@
 #include "lib/string.h"
 #include "lib/mempool.h"
 #include "lib/log.h"
+#include "lib/strbuf.h"
+#include "lib/file.h"
+#include "lib/file_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -137,6 +140,39 @@ protected:
         }
     }
 };
+
+TEST_F(HttpInputTest, DeferredTexUsesTheSameDownloadedAndCachedBytes) {
+    const char* source = "\\begin{document}Hello\\end{document}";
+    StrBuf* response = strbuf_new(); ASSERT_NE(response, nullptr);
+    strbuf_append_format(response, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",
+        strlen(source), source);
+    HttpHeaderCaptureServer server;
+    ASSERT_TRUE(http_header_capture_server_start(&server, 0, response->str, response->length));
+    StrBuf* url = strbuf_new(); ASSERT_NE(url, nullptr);
+    strbuf_append_format(url, "http://127.0.0.1:%d/document.tex", server.port);
+    char* cache = dir_temp_create("tex_http_cache"); ASSERT_NE(cache, nullptr);
+
+    const char* detected = nullptr;
+    Input* first = input_from_http_with_deferred_tex(url->str, "latex", nullptr, cache, nullptr, nullptr, &detected);
+    char request[8192] = {};
+    http_header_capture_server_finish(&server, request, sizeof(request));
+    ASSERT_NE(first, nullptr); ASSERT_NE(detected, nullptr); EXPECT_STREQ(detected, "latex");
+    ASSERT_EQ(get_type_id(first->root), LMD_TYPE_STRING);
+    EXPECT_STREQ(first->root.get_chars(), source);
+
+    // A cache hit must keep the same detection and source without another request.
+    detected = nullptr;
+    Input* second = input_from_http_with_deferred_tex(url->str, nullptr, nullptr, cache, nullptr, nullptr, &detected);
+    ASSERT_NE(second, nullptr); ASSERT_NE(detected, nullptr); EXPECT_STREQ(detected, "latex");
+    ASSERT_EQ(get_type_id(second->root), LMD_TYPE_STRING);
+    EXPECT_STREQ(second->root.get_chars(), source);
+    detected = "stale";
+    Input* text = input_from_http_with_deferred_tex(url->str, "text", nullptr, cache, nullptr, nullptr, &detected);
+    ASSERT_NE(text, nullptr); EXPECT_EQ(detected, nullptr);
+    ASSERT_EQ(get_type_id(text->root), LMD_TYPE_STRING);
+    EXPECT_STREQ(text->root.get_chars(), source);
+    dir_delete(cache); mem_free(cache); strbuf_free(url); strbuf_free(response);
+}
 
 TEST_F(HttpInputTest, EmptyPostDoesNotReadStdin) {
     const char* bodies[] = {nullptr, ""};

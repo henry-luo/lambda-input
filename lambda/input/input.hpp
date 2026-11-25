@@ -305,6 +305,9 @@ Input* input_from_http(const char* url, const char* type, const char* flavor, co
 Input* input_from_http_with_name_parent(const char* url, const char* type,
     const char* flavor, const char* cache_dir, NamePool* name_parent,
     const InputParseOptions* options = NULL);
+Input* input_from_http_with_deferred_tex(const char* url, const char* type,
+    const char* flavor, const char* cache_dir, NamePool* name_parent,
+    const InputParseOptions* options, const char** deferred_tex_type);
 FetchResponse* http_fetch(const char* url, const FetchConfig* config);
 // http_fetch that also says why it returned NULL (failure may be NULL).
 FetchResponse* http_fetch2(const char* url, const FetchConfig* config, FetchFailure* failure);

@@ -513,9 +513,10 @@ char* download_http_content_cached_typed(const char* url, size_t* content_size,
 }
 
 // Returns an Input* for HTTP/HTTPS URL, using memory and file cache
-Input* input_from_http_with_name_parent(const char* url, const char* type,
+Input* input_from_http_with_deferred_tex(const char* url, const char* type,
         const char* flavor, const char* cache_dir, NamePool* name_parent,
-        const InputParseOptions* options) {
+        const InputParseOptions* options, const char** deferred_tex_type) {
+    if (deferred_tex_type) *deferred_tex_type = nullptr;
     if (!url) {
         return NULL;
     }
@@ -557,8 +558,8 @@ Input* input_from_http_with_name_parent(const char* url, const char* type,
 
     // Parse content using existing input system
     // Preserve binary lengths across both fresh downloads and cache hits.
-    Input* input = input_from_source_n_with_name_parent(content, content_size, abs_url,
-        type_str, flavor_str, name_parent, options);
+    Input* input = input_from_source_n_with_deferred_tex(content, content_size, abs_url,
+        type_str, flavor_str, name_parent, options, deferred_tex_type);
 
     // Cleanup
     mem_free(content); // from lib - uses mem_alloc
@@ -566,6 +567,12 @@ Input* input_from_http_with_name_parent(const char* url, const char* type,
     mem_free(type_str);
     mem_free(flavor_str);
     return input;
+}
+
+Input* input_from_http_with_name_parent(const char* url, const char* type,
+        const char* flavor, const char* cache_dir, NamePool* name_parent,
+        const InputParseOptions* options) {
+    return input_from_http_with_deferred_tex(url, type, flavor, cache_dir, name_parent, options, nullptr);
 }
 
 Input* input_from_http(const char* url, const char* type, const char* flavor,
