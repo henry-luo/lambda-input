@@ -20,8 +20,53 @@
 // Register
 // ============================================================================
 
+static bool font_face_equal_string(const char* a, const char* b) {
+    return a == b || (a && b && strcmp(a, b) == 0);
+}
+
+static bool font_face_same_resource(const FontFaceEntry* entry, const FontFaceDesc* desc) {
+    if (entry->weight != desc->weight || entry->slant != desc->slant ||
+        entry->has_pending_sources != desc->has_pending_sources ||
+        entry->source_count != desc->source_count ||
+        entry->unicode_range_count != desc->unicode_range_count) return false;
+    for (int i = 0; i < entry->source_count; i++) {
+        const FontFaceSource* a = &entry->sources[i];
+        const FontFaceSource* b = &desc->sources[i];
+        if (!font_face_equal_string(a->path, b->path) ||
+            !font_face_equal_string(a->format, b->format) ||
+            !font_face_equal_string(a->local_name, b->local_name) ||
+            a->data_length != b->data_length ||
+            (a->data_length && (!b->data || memcmp(a->data, b->data, a->data_length) != 0))) return false;
+    }
+    for (int i = 0; i < entry->unicode_range_count; i++) {
+        if (entry->unicode_ranges[i].start_codepoint != desc->unicode_ranges[i].start_codepoint ||
+            entry->unicode_ranges[i].end_codepoint != desc->unicode_ranges[i].end_codepoint) return false;
+    }
+    return true;
+}
+
 bool font_face_register(FontContext* ctx, const FontFaceDesc* desc) {
     if (!ctx || !desc || !desc->family) return false;
+    if ((desc->source_count && !desc->sources) ||
+        (desc->unicode_range_count && !desc->unicode_ranges)) return false;
+
+    int last_family = -1;
+    for (int i = ctx->face_descriptor_count - 1; i >= 0; i--) {
+        FontFaceEntry* entry = ctx->face_descriptors[i];
+        if (str_icmp_cstr(entry->family, desc->family) != 0) continue;
+        if (last_family < 0) last_family = i;
+        if (!font_face_same_resource(entry, desc)) continue;
+
+        // generated math repeatedly references the same font URLs. Reuse the
+        // resource and its loaded handle while preserving last-rule precedence.
+        if (i != last_family) {
+            memmove(&ctx->face_descriptors[i], &ctx->face_descriptors[i + 1],
+                (size_t)(last_family - i) * sizeof(FontFaceEntry*));
+            ctx->face_descriptors[last_family] = entry;
+            ctx->resource_generation = generation_next(ctx->resource_generation);
+        }
+        return true;
+    }
 
     // grow the array if needed
     if (ctx->face_descriptor_count >= ctx->face_descriptor_capacity) {
@@ -93,7 +138,7 @@ bool font_face_register(FontContext* ctx, const FontFaceDesc* desc) {
     ctx->face_descriptors[ctx->face_descriptor_count++] = entry;
     ctx->resource_generation = generation_next(ctx->resource_generation);
 
-    // Retain distinct rules: unicode-range and source order select a face per glyph.
+    // retain distinct resources: unicode-range and source order select a face per glyph.
     log_info("font_face: registered '%s' (weight=%d, slant=%d, sources=%d, ranges=%d)",
              desc->family, (int)desc->weight, (int)desc->slant, desc->source_count,
              desc->unicode_range_count);

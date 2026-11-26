@@ -479,7 +479,7 @@ typedef struct FontFaceUnicodeRange {
     uint32_t end_codepoint;
 } FontFaceUnicodeRange;
 
-// descriptor for a registered font face (one @font-face rule = one descriptor)
+// descriptor for a registered font resource
 typedef struct FontFaceDesc {
     const char*   family;       // font-family value
     FontWeight    weight;       // font-weight (100–900), or FONT_WEIGHT_AUTO for an unclamped descriptor
@@ -492,7 +492,8 @@ typedef struct FontFaceDesc {
 } FontFaceDesc;
 
 // register a font face descriptor (called by Radiant after parsing @font-face).
-// the descriptor is copied into the font module's pool/arena.
+// equivalent descriptors share one resource with the latest registration precedence.
+// new descriptors are copied into the font module's pool/arena.
 // returns true on success.
 bool font_face_register(FontContext* ctx, const FontFaceDesc* desc);
 bool font_face_family_registered(FontContext* ctx, const char* family);

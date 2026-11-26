@@ -736,6 +736,32 @@ TEST_F(FontFaceStyleTest, AutoDescriptorMatchesAsNormalRatherThanZero) {
     ASSERT_NE(face,nullptr); EXPECT_EQ(face->weight,FONT_WEIGHT_LIGHT);
 }
 
+TEST_F(FontFaceStyleTest, RepeatedRegistrationSharesResourcesAndPreservesPrecedence) {
+    const char* first = "test/fixtures/fonts/FreeSans.woff";
+    const char* second = "test/fixtures/fonts/FreeSerif.woff";
+    register_face("RepeatedFace", FONT_WEIGHT_NORMAL, first);
+    register_face("RepeatedFace", FONT_WEIGHT_NORMAL, second);
+    size_t warm_arena = arena_total_used(context->arena);
+    FontStyleDesc style = {};
+    style.family = "RepeatedFace";
+    style.weight = FONT_WEIGHT_NORMAL;
+
+    for (int pass = 0; pass < 20; pass++) {
+        register_face("RepeatedFace", FONT_WEIGHT_NORMAL, first);
+        const FontFaceDesc* face = font_face_find(context, &style);
+        ASSERT_NE(face, nullptr);
+        EXPECT_STREQ(face->sources[0].path, first);
+        register_face("RepeatedFace", FONT_WEIGHT_NORMAL, second);
+        face = font_face_find(context, &style);
+        ASSERT_NE(face, nullptr);
+        EXPECT_STREQ(face->sources[0].path, second);
+    }
+
+    const FontFaceDesc* faces[3] = {};
+    EXPECT_EQ(font_face_list(context, "RepeatedFace", faces, 3), 2);
+    EXPECT_EQ(arena_total_used(context->arena), warm_arena);
+}
+
 #ifdef __APPLE__
 TEST_F(FontFaceStyleTest, AutoVariableWeightsUseSelectedNativeAdvances) {
     register_face("VariableFace",FONT_WEIGHT_AUTO,"/System/Library/Fonts/SFNS.ttf");
