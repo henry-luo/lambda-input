@@ -889,8 +889,8 @@ static uint64_t fingerprint_mix(uint64_t h, const void* data, size_t len) {
 }
 
 static uint64_t fingerprint_mix_ptr(uint64_t h, const void* ptr) {
-    uintptr_t value = (uintptr_t)ptr;
-    return fingerprint_mix(h, &value, sizeof(value));
+    // pointer identity is already a word; bytewise hashing made shape transitions costly.
+    return hash_combine_u64(h, (uintptr_t)ptr);
 }
 
 // Hashes exactly what external_child_matches_parent compares.
