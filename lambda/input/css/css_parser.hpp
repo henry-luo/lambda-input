@@ -302,7 +302,8 @@ typedef enum CssSelectorType {
     // CSS Nesting
     CSS_SELECTOR_NESTING,                    // &
     CSS_SELECTOR_NESTING_PARENT,             // & (parent selector)
-    CSS_SELECTOR_NESTING_DESCENDANT          // & (descendant context)
+    CSS_SELECTOR_NESTING_DESCENDANT,         // & (descendant context)
+    CSS_SELECTOR_PSEUDO_HOST                // :host or :host(...)
 } CssSelectorType;
 
 static inline CssSelectorType css_selector_type_for_pseudo(PseudoElementType type) {

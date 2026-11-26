@@ -212,7 +212,7 @@ static void dom_disown_root(DomNodeRegistry* registry, DomNode* node) {
     }
 }
 
-// Attribute and shadow ownership edges are independent of the DOM child chain.
+// Attributes, shadow roots and template contents have separate ownership edges.
 template <typename Inspect>
 static bool dom_visit_owned_tree(DomNode* root, const Inspect& inspect) {
     if (inspect(root)) return true;
@@ -223,6 +223,8 @@ static bool dom_visit_owned_tree(DomNode* root, const Inspect& inspect) {
             if (inspect(attr)) return true;
         DomElement* shadow = element->shadow_root_element();
         if (shadow && dom_visit_owned_tree(shadow, inspect)) return true;
+        DomElement* content = element->template_contents();
+        if (content && dom_visit_owned_tree(content, inspect)) return true;
     }
     for (DomNode* child = element->first_child; child; child = child->next_sibling)
         if (dom_visit_owned_tree(child, inspect)) return true;
@@ -569,11 +571,15 @@ static bool dom_prepare_adoption_subtree(DomAdoptionBatch* batch, DomNode* node)
     for (DomNode* child = element->first_child; child; child = child->next_sibling)
         if (!dom_prepare_adoption_subtree(batch, child)) return false;
     DomElement* shadow = element->shadow_root_element();
-    return !shadow || dom_prepare_adoption_subtree(batch, shadow);
+    if (shadow && !dom_prepare_adoption_subtree(batch, shadow)) return false;
+    DomElement* content = element->template_contents();
+    return !content || dom_prepare_adoption_subtree(batch, content);
 }
 
 bool dom_adopt_detached_subtree(DomDocument* source, DomDocument* destination, DomNode* node) {
     if (!source || !destination || !node || node->parent || !dom_registry(destination)) return false;
+    // Move template-owned nodes as part of the host's native ownership tree.
+    if (DomElement* element = node->as_element(); element && element->template_content_host()) return false;
     DomAdoptionBatch batch = {source, destination};
     bool prepared = dom_reserve_roots(dom_registry(destination), dom_registry(destination)->root_count + 1) &&
         dom_prepare_adoption_subtree(&batch, node);
@@ -775,7 +781,8 @@ bool dom_node_unpin(DomDocument* doc, DomNodeRef ref, DomNodePinReason reason) {
 
 static DomNode* dom_retirement_parent(DomNode* node) {
     DomAttr* attr = node->as_attribute();
-    return attr ? static_cast<DomNode*>(attr->owner_element) : dom_shadow_including_parent(node);
+    return attr ? static_cast<DomNode*>(attr->owner_element) :
+        const_cast<DomNode*>(dom_host_including_parent(node));
 }
 
 static bool dom_node_is_within(DomNode* node, DomNode* ancestor) {
@@ -850,10 +857,12 @@ static bool dom_subtree_can_retire(DomDocument* doc, DomNode* node,
         return false;
     }
     if (bytes) *bytes += dom_node_allocation_size(node);
-    if (node->is_element()) {
-        DomElement* shadow = node->as_element()->shadow_root_element();
+    if (DomElement* element = node->as_element()) {
+        DomElement* shadow = element->shadow_root_element();
         if (shadow && !dom_subtree_can_retire(doc, shadow, allow_wrappers, bytes)) return false;
-        for (DomAttr* attribute = node->as_element()->rare_ext ? node->as_element()->rare_ext->attribute_nodes.get() : nullptr;
+        DomElement* content = element->template_contents();
+        if (content && !dom_subtree_can_retire(doc, content, allow_wrappers, bytes)) return false;
+        for (DomAttr* attribute = element->rare_ext ? element->rare_ext->attribute_nodes.get() : nullptr;
              attribute; attribute = attribute->attribute_next) {
             if (!dom_subtree_can_retire(doc, attribute, allow_wrappers, bytes)) return false;
         }
@@ -902,6 +911,11 @@ static size_t dom_retire_subtree(DomDocument* doc, DomNode* node) {
             shadow->set_shadow_host_element(nullptr);
             element->set_shadow_root_element(nullptr);
             retired += dom_retire_subtree(doc, shadow);
+        }
+        if (DomElement* content = element->template_contents()) {
+            element->rare_ext->template_contents = nullptr;
+            content->rare_ext->template_content_host = nullptr;
+            retired += dom_retire_subtree(doc, content);
         }
         while (node->as_element()->rare_ext && node->as_element()->rare_ext->attribute_nodes) {
             DomAttr* attribute = node->as_element()->rare_ext->attribute_nodes;

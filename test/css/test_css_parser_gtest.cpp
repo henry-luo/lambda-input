@@ -53,6 +53,35 @@ TEST_F(CssParserTest, WhiteSpaceRejectsInvalidDeclarationsBeforeTheCascade) {
         EXPECT_EQ(css_parse_declaration_text(source, strlen(source), pool), nullptr) << source;
 }
 
+TEST_F(CssParserTest, MaskShorthandRetainsImageAndGeometryComponents) {
+    const char* source = "mask: url(mask.webp) bottom/100% no-repeat";
+    CssDeclaration* declaration = css_parse_declaration_text(source, strlen(source), pool);
+    ASSERT_NE(declaration, nullptr);
+    ASSERT_EQ(declaration->property_code, CSS_PROPERTY_MASK);
+    CssMaskLayerParts parts = {};
+    ASSERT_TRUE(css_mask_layer_components(declaration->value, &parts));
+    EXPECT_NE(parts.geometry.image, nullptr);
+    EXPECT_EQ(parts.geometry.position_count, 1);
+    EXPECT_EQ(parts.geometry.size_count, 1);
+    EXPECT_EQ(parts.geometry.repeat_count, 1);
+    EXPECT_TRUE(css_value_keyword_equals(parts.geometry.position[0], CSS_VALUE_BOTTOM));
+    EXPECT_TRUE(css_value_keyword_equals(parts.geometry.repeat[0], CSS_VALUE_NO_REPEAT));
+
+    // Vendor fallback is resolved through the selected CSS property registry.
+    CssEngine* engine = css_engine_create(pool);
+    ASSERT_NE(engine, nullptr);
+    const char* size = "-webkit-mask-size: contain";
+    CssDeclaration* prefixed = css_parse_declaration_text(size, strlen(size), pool);
+    EXPECT_NE(prefixed, nullptr);
+    if (prefixed) EXPECT_EQ(prefixed->property_code, CSS_PROPERTY_MASK_SIZE);
+
+    const char* invalid[] = {"mask: red", "mask: url(mask.svg) fixed",
+        "mask: url(a.svg) url(b.svg)", "mask: bottom / -1px", "mask-mode: alpha luminance"};
+    for (const char* text : invalid)
+        EXPECT_EQ(css_parse_declaration_text(text, strlen(text), pool), nullptr) << text;
+    css_engine_destroy(engine);
+}
+
 TEST_F(CssParserTest, LegacyPropertyAliasesSerializeAsStandardCss) {
     CssEngine* engine = css_engine_create(pool);
     ASSERT_NE(engine, nullptr);

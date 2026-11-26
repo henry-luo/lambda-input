@@ -145,7 +145,7 @@ bool font_face_register(FontContext* ctx, const FontFaceDesc* desc) {
     return true;
 }
 
-static int slant_distance(FontSlant a, FontSlant b) {
+int font_face_slant_distance(FontSlant a, FontSlant b) {
     if (a == b) return 0;
     return 100; // penalty for slant mismatch
 }
@@ -179,7 +179,7 @@ static const FontFaceEntry* font_face_find_matching(FontContext* ctx, const char
         if (str_icmp_cstr(entry->family, family) != 0) continue;
         if (filter_codepoint && !font_face_range_includes(entry, codepoint)) continue;
 
-        int entry_slant_distance = slant_distance(entry->slant, slant);
+        int entry_slant_distance = font_face_slant_distance(entry->slant, slant);
         if (!best || entry_slant_distance < best_slant_distance ||
             (entry_slant_distance == best_slant_distance &&
              font_css_weight_is_better((int)weight, (int)font_face_matching_weight(entry->weight),
@@ -328,6 +328,31 @@ static FontHandle* font_face_load_local(FontContext* ctx, const char* name,
     return handle;
 }
 
+FontHandle* font_face_load_source(FontContext* ctx, const FontFaceSource* source,
+                                  const FontStyleDesc* style) {
+    if (!ctx || !source || !style) return NULL;
+    float physical_size = style->size_px * ctx->config.pixel_ratio;
+    const char* path = source->path;
+    FontHandle* handle = NULL;
+    if (source->local_name) {
+        handle = font_face_load_local(ctx, source->local_name, style, physical_size);
+    } else if (source->data) {
+        handle = font_load_from_memory(ctx, source->data, source->data_length, style);
+    } else if (path && strncmp(path, "data:", 5) == 0) {
+        handle = font_load_from_data_uri(ctx, path, style);
+    } else if (path) {
+        handle = font_load_face_internal(ctx, path, 0, style->size_px, physical_size,
+                                         style->weight, style->slant);
+    }
+    // A platform font handle without readable tables cannot supply glyphs.
+    if (handle && !handle->tables) {
+        font_handle_release(handle);
+        return NULL;
+    }
+    if (handle) handle->is_document_font = true;
+    return handle;
+}
+
 static FontHandle* font_face_load_entry(FontContext* ctx, const FontFaceEntry* entry,
                                         float size_px, FontWeight requested_weight) {
     if (!ctx || !entry) return NULL;
@@ -357,36 +382,9 @@ static FontHandle* font_face_load_entry(FontContext* ctx, const FontFaceEntry* e
         const FontFaceSource* source = &entry->sources[i];
         if (!src_path && !source->data && !source->local_name) continue;
 
-        FontHandle* handle = NULL;
-
-        // check if it's a data URI
-        if (source->local_name) {
-            handle = font_face_load_local(ctx, source->local_name, &style, physical_size);
-        } else if (source->data || strncmp(src_path, "data:", 5) == 0) {
-            handle = source->data
-                ? font_load_from_memory(ctx, source->data, source->data_length, &style)
-                : font_load_from_data_uri(ctx, src_path, &style);
-        } else {
-            // local file path
-            handle = font_load_face_internal(ctx, src_path, 0,
-                                              size_px, physical_size,
-                                              style.weight, style.slant);
-        }
-
+        FontHandle* handle = font_face_load_source(ctx, source, &style);
         if (handle) {
-            // reject sources whose font tables couldn't be parsed (e.g. EOT
-            // wrappers or unsupported containers). Without
-            // `tables` we can't look up cmap/glyphs, so the font would
-            // render as empty boxes. Try the next source instead.
-            if (!handle->tables) {
-                log_debug("font_face: source %d for '%s' has no parsable tables, trying next",
-                          i, entry->family);
-                font_handle_release(handle);
-                continue;
-            }
-
             // cache in entry for future loads (mutable cast is safe here)
-            handle->is_document_font = true; // @font-face: cleared between documents
             if (entry) {
                 FontFaceEntry* mutable_entry = (FontFaceEntry*)entry;
                 if (!mutable_entry->loaded_handle) ctx->resource_generation = generation_next(ctx->resource_generation);

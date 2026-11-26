@@ -105,6 +105,9 @@ typedef struct SelectorMatcher {
     // matching deliberately leaves this null because it has no query root.
     DomElement* scope_element;
 
+    // The stylesheet's source shadow tree, independent of :scope binding.
+    DomElement* shadow_tree;
+
     // Dynamic pseudo-state resolution
     SelectorPseudoStateResolver pseudo_state_resolver;
     void* pseudo_state_context;

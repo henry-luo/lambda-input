@@ -433,6 +433,14 @@
     X(position_anchor) \
     X(position_area) \
     X(color_scheme) \
+    X(mask) \
+    X(mask_position) \
+    X(mask_size) \
+    X(mask_repeat) \
+    X(mask_origin) \
+    X(mask_clip) \
+    X(mask_mode) \
+    X(mask_composite) \
     X(css_float)
 
 #define CSS_STYLE_PROPERTIES_ATTRIBUTES(X) \
@@ -1235,6 +1243,21 @@
     X(position_area, "position-area", "position-area") \
     X(color_scheme, "colorScheme", "color-scheme") \
     X(color_scheme, "color-scheme", "color-scheme") \
+    X(mask, "mask", "mask") \
+    X(mask_position, "maskPosition", "mask-position") \
+    X(mask_position, "mask-position", "mask-position") \
+    X(mask_size, "maskSize", "mask-size") \
+    X(mask_size, "mask-size", "mask-size") \
+    X(mask_repeat, "maskRepeat", "mask-repeat") \
+    X(mask_repeat, "mask-repeat", "mask-repeat") \
+    X(mask_origin, "maskOrigin", "mask-origin") \
+    X(mask_origin, "mask-origin", "mask-origin") \
+    X(mask_clip, "maskClip", "mask-clip") \
+    X(mask_clip, "mask-clip", "mask-clip") \
+    X(mask_mode, "maskMode", "mask-mode") \
+    X(mask_mode, "mask-mode", "mask-mode") \
+    X(mask_composite, "maskComposite", "mask-composite") \
+    X(mask_composite, "mask-composite", "mask-composite") \
     X(css_float, "cssFloat", "float")
 
 #define CSS_FONT_FACE_DESCRIPTORS_FIELDS(X) \

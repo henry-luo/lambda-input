@@ -219,7 +219,7 @@ static void css_query_consider_declaration(CssElementDeclarationQuery* query,
     candidate.specificity.important = declaration->important;
     candidate.origin = origin;
     candidate.source_order = query->order++;
-    candidate.scope_proximity = query->scope_proximity;
+    candidate.scope.proximity = query->scope_proximity;
     if (!css_declaration_cascade_eligible(&candidate, query->ceiling, query->filters)) return;
     if (!query->found || css_declaration_cascade_compare(&candidate, &query->best) >= 0) {
         query->best = candidate;

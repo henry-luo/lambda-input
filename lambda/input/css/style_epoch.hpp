@@ -60,7 +60,7 @@ void style_epoch_cascade_end(DomDocument* doc);
 
 // Returns true when the rule was recorded and must not be cloned per element.
 bool style_epoch_record_rule(DomElement* element, CssRule* rule,
-                             CssSpecificity specificity, uint32_t scope_proximity = 0);
+                             CssSpecificity specificity, CssCascadeScope scope = {});
 
 bool style_epoch_ensure_owned(DomElement* element);
 void style_epoch_unbind_element(DomElement* element);

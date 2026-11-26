@@ -191,7 +191,8 @@ static bool dom_serialize_xml_impl(void* opaque, StrBuf* output,
         opened->parent = frame;
         opened->inherited_bindings = context.bindings;
         opened->default_namespace = frame ? frame->default_namespace : "";
-        opened->child = dom_source_child(element, true);
+        DomElement* content = element->template_contents();
+        opened->child = dom_source_child(content ? content : element, true);
         opened->fragment = !strcmp(element->tag_name(), "#document-fragment");
         if (opened->fragment) { frame = opened; continue; }
 

@@ -920,6 +920,15 @@ typedef enum CssPropertyCode {
 
     CSS_PROPERTY_COLOR_SCHEME,
 
+    CSS_PROPERTY_MASK,
+    CSS_PROPERTY_MASK_POSITION,
+    CSS_PROPERTY_MASK_SIZE,
+    CSS_PROPERTY_MASK_REPEAT,
+    CSS_PROPERTY_MASK_ORIGIN,
+    CSS_PROPERTY_MASK_CLIP,
+    CSS_PROPERTY_MASK_MODE,
+    CSS_PROPERTY_MASK_COMPOSITE,
+
     // Custom Properties (CSS Variables)
     CSS_PROPERTY_CUSTOM,
 
@@ -1202,6 +1211,11 @@ struct CssBackgroundParts {
     const CssValue* clip;
     const CssValue* color;
 };
+struct CssMaskLayerParts {
+    CssBackgroundParts geometry;
+    const CssValue* mode;
+    const CssValue* composite;
+};
 enum RadialShape { RADIAL_SHAPE_ELLIPSE = 0, RADIAL_SHAPE_CIRCLE };
 enum RadialSize {
     RADIAL_SIZE_FARTHEST_CORNER = 0, RADIAL_SIZE_CLOSEST_SIDE,
@@ -1220,6 +1234,7 @@ bool css_radial_gradient_components(const CssValue* value, CssRadialGradientPart
 bool css_gradient_position_components(const CssValue* prelude, int at_index, CssPositionAxis axes[2]);
 // grouped tokens remain borrowed; consumers materialize their scratch lists before computation.
 bool css_background_layer_components(const CssValue* value, bool final_layer, CssBackgroundParts* parts);
+bool css_mask_layer_components(const CssValue* value, CssMaskLayerParts* parts);
 bool css_background_repeat_components(const CssValue* value, CssEnum axes[2]);
 
 typedef struct CssBorderImageComponents {
@@ -1282,6 +1297,11 @@ typedef enum CssOrigin {
 typedef void (*CssDeclarationPayloadRetainFn)(void* owner);
 typedef void (*CssDeclarationPayloadReleaseFn)(void* owner);
 
+typedef struct CssCascadeScope {
+    uint32_t proximity; // zero is unscoped; scoped values store ancestor hops plus one
+    bool shadow_host;   // declaration comes from the element's own shadow tree
+} CssCascadeScope;
+
 // CSS Declaration with metadata
 typedef struct CssDeclaration {
     CssPropertyCode property_code;
@@ -1291,7 +1311,7 @@ typedef struct CssDeclaration {
     CssOrigin origin;
     uint32_t source_order;    // Declaration order within stylesheet
     uint32_t layer_order;     // zero is unlayered; named layers follow declaration order
-    uint32_t scope_proximity; // zero is unscoped; scoped values store ancestor hops plus one
+    CssCascadeScope scope;
     bool important;           // !important flag
     bool pending_identity_shorthand; // projected var()/env() longhands serialize as pending
     CssPropertyCode pending_shorthand_code; // original grammar needed after substituting a projected longhand

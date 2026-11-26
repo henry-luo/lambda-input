@@ -195,6 +195,7 @@ typedef enum DomJsMutationAttribute {
     // a data/ARIA attribute absent from relational selector dependencies
     DOM_JS_MUTATION_ATTRIBUTE_LOCAL,
     DOM_JS_MUTATION_ATTRIBUTE_SLOT_DISTRIBUTION,
+    DOM_JS_MUTATION_ATTRIBUTE_SHADOW_SELECTOR,
 } DomJsMutationAttribute;
 
 // tier-1: document-owned journal, survives relayout
@@ -933,7 +934,7 @@ struct CssSelectionCascadeValue {
     lam::Up<CssDeclaration> source;
     CssSpecificity specificity;
     CssOrigin origin;
-    uint32_t scope_proximity;
+    CssCascadeScope scope;
 };
 
 struct CssSelectionStyle {
@@ -1140,6 +1141,8 @@ struct DomStyleRareExt {
     DisplayValue animated_display; // fills the gap before the animation pointer
     lam::Own<CssWebAnimationState> web_animation_state;  // head of the element's effect list
     lam::ViewProp<ShadowStyle, DomViewSlot::shadow> shadow;
+    lam::Own<DomElement> template_contents;
+    lam::Up<DomElement> template_content_host;
     lam::Own<DomManualSlotLink> manual_slot_first;
     lam::Up<DomManualSlotLink> manual_slot_last;
     lam::OwnArr<DomNodeRef> signaled_slot_assignment;
@@ -1688,6 +1691,8 @@ struct DomElement : DomNode {
         ShadowStyle* state = value ? ensure_shadow_style() : shadow_style();
         if (state) state->root = lam::own(value);
     }
+    DomElement* template_contents() const { return rare_ext ? rare_ext->template_contents.get() : nullptr; }
+    DomElement* template_content_host() const { return rare_ext ? rare_ext->template_content_host.get() : nullptr; }
     float pending_scroll_x() const { return rare_ext ? rare_ext->pending_element_scroll_x : 0.0f; }
     void set_pending_scroll_x(float value) { ensure_rare_ext()->pending_element_scroll_x = value; }
     float pending_scroll_y() const { return rare_ext ? rare_ext->pending_element_scroll_y : 0.0f; }
@@ -1746,6 +1751,20 @@ inline DomNode* dom_shadow_including_parent(DomNode* node) {
 
 inline bool dom_shadow_including_contains(const DomNode* root, const DomNode* node) {
     for (; node; node = dom_shadow_including_parent(node)) {
+        if (node == root) return true;
+    }
+    return false;
+}
+
+// Template contents have a host for ownership and insertion checks only.
+inline const DomNode* dom_host_including_parent(const DomNode* node) {
+    if (const DomNode* parent = dom_shadow_including_parent(node)) return parent;
+    const DomElement* element = node->as_element();
+    return element ? element->template_content_host() : nullptr;
+}
+
+inline bool dom_host_including_contains(const DomNode* root, const DomNode* node) {
+    for (; node; node = dom_host_including_parent(node)) {
         if (node == root) return true;
     }
     return false;
@@ -2002,6 +2021,7 @@ bool dom_insert_prepared_backed_text(DomElement* parent, DomText* text, DomNode*
 bool dom_insert_detached_backed_element(DomElement* parent, DomElement* child, DomNode* reference);
 // detached, unbacked fragment nodes share the document lifetime (D5.5.1).
 extern "C" DomElement* dom_document_fragment_create(DomDocument* doc);
+DomElement* dom_attach_template_contents(DomElement* host);
 DomElement* build_dom_tree_from_element(Element* element, DomDocument* document, DomElement* parent);
 
 /**
@@ -2082,7 +2102,7 @@ void log_dom_element_timing();
  * @return Number of declarations applied
  */
 int dom_element_apply_rule(DomElement* element, CssRule* rule, CssSpecificity specificity,
-                            uint32_t scope_proximity = 0);
+                            CssCascadeScope scope = {});
 
 /**
  * Apply a CSS rule to a pseudo-element (::before or ::after)
@@ -2094,7 +2114,7 @@ int dom_element_apply_rule(DomElement* element, CssRule* rule, CssSpecificity sp
  */
 int dom_element_apply_pseudo_element_rule(DomElement* element, CssRule* rule,
                                           CssSpecificity specificity, int pseudo_element,
-                                          uint32_t scope_proximity = 0, const CssSelector* selector = nullptr);
+                                          CssCascadeScope scope = {}, const CssSelector* selector = nullptr);
 
 /**
  * Get the specified value for a CSS property

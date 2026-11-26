@@ -283,16 +283,25 @@ static bool selector_is_virtual_root(const DomElement* element) {
     return name && name[0] == '#';
 }
 
-static bool selector_compound_allows_virtual_scope(const CssCompoundSelector* compound) {
+static DomElement* selector_shadow_host(SelectorMatcher* matcher) {
+    return matcher->shadow_tree ? matcher->shadow_tree->shadow_host_element() : nullptr;
+}
+
+static bool selector_compound_allows_featureless(const CssCompoundSelector* compound,
+                                                 CssSelectorType allowed_type) {
     if (!compound) return false;
     bool allowed = false;
     for (size_t i = 0; i < compound->simple_selector_count; i++) {
         const CssSimpleSelector* simple = compound->simple_selectors[i];
         if (!simple) return false;
-        switch (simple->type) {
-        case CSS_SELECTOR_PSEUDO_SCOPE:
+        if (simple->type == allowed_type) {
             allowed = true;
-            break;
+            continue;
+        }
+        // A pseudo-element can originate on an explicitly selected host.
+        if (allowed_type == CSS_SELECTOR_PSEUDO_HOST &&
+            css_pseudo_from_selector_type(simple->type) != PSEUDO_ELEMENT_NONE) continue;
+        switch (simple->type) {
         case CSS_SELECTOR_PSEUDO_IS:
         case CSS_SELECTOR_PSEUDO_WHERE:
         case CSS_SELECTOR_PSEUDO_NOT: {
@@ -300,8 +309,8 @@ static bool selector_compound_allows_virtual_scope(const CssCompoundSelector* co
             for (size_t j = 0; j < simple->function_selector_count; j++) {
                 const CssSelector* argument = simple->function_selectors[j];
                 if (argument && argument->compound_selector_count &&
-                    selector_compound_allows_virtual_scope(argument->compound_selectors[
-                        argument->compound_selector_count - 1])) argument_allowed = true;
+                    selector_compound_allows_featureless(argument->compound_selectors[
+                        argument->compound_selector_count - 1], allowed_type)) argument_allowed = true;
             }
             if (!argument_allowed) return false;
             allowed = true;
@@ -318,10 +327,12 @@ static bool selector_compound_allows_virtual_scope(const CssCompoundSelector* co
 }
 
 static DomElement* selector_relation_parent(SelectorMatcher* matcher, DomElement* element) {
+    if (element == selector_shadow_host(matcher)) return nullptr;
     DomNode* node = dom_source_parent(element);
     DomElement* parent = node ? node->as_element() : nullptr;
-    // A shadow fragment is a boundary, except for an explicitly bound query scope.
-    return parent && (!parent->shadow_host_element() || matcher->scope_element == parent) ? parent : nullptr;
+    if (!parent || !parent->shadow_host_element() || matcher->scope_element == parent) return parent;
+    // Only a stylesheet in this shadow tree can select its host as an ancestor.
+    return parent == matcher->shadow_tree ? parent->shadow_host_element() : nullptr;
 }
 
 static bool selector_matcher_matches_complex_relation(SelectorMatcher* matcher,
@@ -344,6 +355,7 @@ static bool selector_matcher_matches_complex_relation(SelectorMatcher* matcher,
                 matcher, selector, compound_index - 1, parent);
         }
         case CSS_COMBINATOR_NEXT_SIBLING: {
+            if (element == selector_shadow_host(matcher)) return false;
             DomNode* sibling = dom_source_sibling(element, false);
             while (sibling && !dom_is_css_element_child(sibling)) sibling = dom_source_sibling(sibling, false);
             return sibling && selector_matcher_matches_complex_at(
@@ -351,6 +363,7 @@ static bool selector_matcher_matches_complex_relation(SelectorMatcher* matcher,
                 static_cast<DomElement*>(sibling));
         }
         case CSS_COMBINATOR_SUBSEQUENT_SIBLING: {
+            if (element == selector_shadow_host(matcher)) return false;
             for (DomNode* sibling = dom_source_sibling(element, false); sibling;
                  sibling = dom_source_sibling(sibling, false)) {
                 if (dom_is_css_element_child(sibling) && selector_matcher_matches_complex_at(
@@ -941,6 +954,17 @@ bool selector_matcher_matches_simple(SelectorMatcher* matcher,
                 element);
         case CSS_SELECTOR_PSEUDO_SLOTTED:
             return selector_matcher_matches_slotted(matcher, simple_selector, element);
+        case CSS_SELECTOR_PSEUDO_HOST: {
+            if (element != selector_shadow_host(matcher)) return false;
+            if (!simple_selector->function_selector_count) return true;
+            // The argument sees the real host and its features in the enclosing tree.
+            DomElement* saved_tree = matcher->shadow_tree;
+            matcher->shadow_tree = nullptr;
+            bool matches = selector_matcher_matches(matcher,
+                simple_selector->function_selectors[0], element, nullptr);
+            matcher->shadow_tree = saved_tree;
+            return matches;
+        }
         case CSS_SELECTOR_PSEUDO_LANG:
             return selector_matcher_matches_language_ranges(simple_selector, element);
 
@@ -1019,7 +1043,9 @@ bool selector_matcher_matches_compound(SelectorMatcher* matcher,
     // document/fragment storage is not an element; only an explicit virtual scope can match.
     if (selector_is_virtual_root(element) &&
         (matcher->scope_element != element ||
-         !selector_compound_allows_virtual_scope(compound_selector))) return false;
+         !selector_compound_allows_featureless(compound_selector, CSS_SELECTOR_PSEUDO_SCOPE))) return false;
+    if (element == selector_shadow_host(matcher) &&
+        !selector_compound_allows_featureless(compound_selector, CSS_SELECTOR_PSEUDO_HOST)) return false;
 
     // All simple selectors in the compound must match
     for (size_t i = 0; i < compound_selector->simple_selector_count; i++) {
@@ -1764,14 +1790,17 @@ static bool selector_matcher_relative_from(SelectorMatcher* matcher,
     CssCombinator relation = index == 0 ? selector->leading_combinator
         : selector->combinators[index - 1];
     if (relation == CSS_COMBINATOR_NONE) relation = CSS_COMBINATOR_DESCENDANT;
+    bool at_host = anchor == selector_shadow_host(matcher);
     if (relation == CSS_COMBINATOR_CHILD) {
-        for (DomNode* child = anchor->first_child; child; child = child->next_sibling) {
+        DomElement* parent = at_host ? matcher->shadow_tree : anchor;
+        for (DomNode* child = parent->first_child; child; child = child->next_sibling) {
             if (selector_matcher_relative_candidate(matcher, selector, child, index)) return true;
         }
         return false;
     }
     if (relation == CSS_COMBINATOR_NEXT_SIBLING ||
         relation == CSS_COMBINATOR_SUBSEQUENT_SIBLING) {
+        if (at_host) return false;
         for (DomNode* sibling = anchor->next_sibling; sibling;
              sibling = sibling->next_sibling) {
             if (!sibling->is_element()) continue;
@@ -1781,6 +1810,7 @@ static bool selector_matcher_relative_from(SelectorMatcher* matcher,
         return false;
     }
     if (relation != CSS_COMBINATOR_DESCENDANT) return false;
+    if (at_host) anchor = matcher->shadow_tree;
     // Walk the anchored subtree so a compound before a descendant combinator
     // cannot match an ancestor outside the :has() candidate.
     for (DomNode* node = anchor->first_child; node;) {
@@ -1867,13 +1897,14 @@ CssSpecificity selector_matcher_calculate_specificity(SelectorMatcher* matcher,
 
                 case CSS_SELECTOR_PSEUDO_NOT:
                 case CSS_SELECTOR_PSEUDO_IS:
+                case CSS_SELECTOR_PSEUDO_HOST:
                 case CSS_SELECTOR_PSEUDO_HAS: {
                     CssSpecificity argument_spec = selector_matcher_function_max_specificity(
                         matcher, simple);
                     // Selectors 4: these functional pseudo-classes take the
                     // specificity of their most specific complex argument.
                     spec.ids += argument_spec.ids;
-                    spec.classes += argument_spec.classes;
+                    spec.classes += argument_spec.classes + (simple->type == CSS_SELECTOR_PSEUDO_HOST);
                     spec.elements += argument_spec.elements;
                     break;
                 }

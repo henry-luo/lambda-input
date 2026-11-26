@@ -164,11 +164,9 @@ bool dom_child_links_valid(DomElement* parent) {
 
 static bool dom_insertion_would_cycle(DomNode* parent, DomNode* child) {
     if (parent == child) return true;
-    if (child->is_element() && child->as_element()->first_child) {
-        for (DomNode* ancestor = parent->parent; ancestor; ancestor = ancestor->parent)
-            if (ancestor == child) return true;
-    }
-    return false;
+    const DomElement* element = child->as_element();
+    return element && (element->first_child || element->shadow_root_element() || element->template_contents()) &&
+        dom_host_including_contains(child, parent);
 }
 
 bool dom_append_to_sibling_chain(DomElement* parent, DomNode* child) {

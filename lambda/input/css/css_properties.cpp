@@ -61,6 +61,11 @@ static CssPropertyCode background_longhands[] = {
     CSS_PROPERTY_BACKGROUND_POSITION, CSS_PROPERTY_BACKGROUND_SIZE, CSS_PROPERTY_BACKGROUND_ATTACHMENT,
     CSS_PROPERTY_BACKGROUND_ORIGIN, CSS_PROPERTY_BACKGROUND_CLIP
 };
+static CssPropertyCode mask_longhands[] = {
+    CSS_PROPERTY_MASK_IMAGE, CSS_PROPERTY_MASK_MODE, CSS_PROPERTY_MASK_POSITION,
+    CSS_PROPERTY_MASK_SIZE, CSS_PROPERTY_MASK_REPEAT, CSS_PROPERTY_MASK_ORIGIN,
+    CSS_PROPERTY_MASK_CLIP, CSS_PROPERTY_MASK_COMPOSITE
+};
 static CssPropertyCode text_emphasis_longhands[] = {
     CSS_PROPERTY_TEXT_EMPHASIS_STYLE, CSS_PROPERTY_TEXT_EMPHASIS_COLOR
 };
@@ -568,6 +573,14 @@ static CssProperty property_definitions[] = {
     {CSS_PROPERTY_IMAGE_RENDERING, "image-rendering", PROP_TYPE_KEYWORD, PROP_INHERIT_YES, "auto", false, false, NULL, 0, validate_keyword, NULL},
     {CSS_PROPERTY_MARKER_OFFSET, "marker-offset", PROP_TYPE_LENGTH, PROP_INHERIT_NO, "auto", true, false, NULL, 0, validate_length, NULL},
     {CSS_PROPERTY_MASK_IMAGE, "mask-image", PROP_TYPE_STRING, PROP_INHERIT_NO, "none", false, false, NULL, 0, validate_string, NULL},
+    {CSS_PROPERTY_MASK, "mask", PROP_TYPE_STRING, PROP_INHERIT_NO, "none", false, true, mask_longhands, 8, validate_string, NULL},
+    {CSS_PROPERTY_MASK_POSITION, "mask-position", PROP_TYPE_LENGTH, PROP_INHERIT_NO, "0% 0%", true, false, NULL, 0, validate_length, NULL},
+    {CSS_PROPERTY_MASK_SIZE, "mask-size", PROP_TYPE_LENGTH, PROP_INHERIT_NO, "auto", true, false, NULL, 0, validate_length, NULL},
+    {CSS_PROPERTY_MASK_REPEAT, "mask-repeat", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "repeat", false, false, NULL, 0, validate_keyword, NULL},
+    {CSS_PROPERTY_MASK_ORIGIN, "mask-origin", PROP_TYPE_STRING, PROP_INHERIT_NO, "border-box", false, false, NULL, 0, validate_string, NULL},
+    {CSS_PROPERTY_MASK_CLIP, "mask-clip", PROP_TYPE_STRING, PROP_INHERIT_NO, "border-box", false, false, NULL, 0, validate_string, NULL},
+    {CSS_PROPERTY_MASK_MODE, "mask-mode", PROP_TYPE_STRING, PROP_INHERIT_NO, "match-source", false, false, NULL, 0, validate_string, NULL},
+    {CSS_PROPERTY_MASK_COMPOSITE, "mask-composite", PROP_TYPE_STRING, PROP_INHERIT_NO, "add", false, false, NULL, 0, validate_string, NULL},
     {CSS_PROPERTY_MASK_TYPE, "mask-type", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "luminance", false, false, NULL, 0, validate_keyword, NULL},
     {CSS_PROPERTY_NESTING, "nesting", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "none", false, false, NULL, 0, validate_keyword, NULL},
     {CSS_PROPERTY_OVERFLOW_BLOCK, "overflow-block", PROP_TYPE_KEYWORD, PROP_INHERIT_NO, "visible", false, false, NULL, 0, validate_keyword, NULL},
@@ -3023,14 +3036,31 @@ bool css_radial_gradient_components(const CssValue* value, CssRadialGradientPart
     return value->data.function->arg_count > 1;
 }
 
-bool css_background_layer_components(const CssValue* value, bool final_layer, CssBackgroundParts* parts) {
+static bool css_mask_mode_valid(const CssValue* value) {
+    return css_value_identifier_is(value, "match-source") || css_value_identifier_is(value, "alpha") ||
+           css_value_identifier_is(value, "luminance");
+}
+
+static bool css_mask_composite_valid(const CssValue* value) {
+    return css_value_identifier_is(value, "add") || css_value_identifier_is(value, "subtract") ||
+           css_value_identifier_is(value, "intersect") || css_value_identifier_is(value, "exclude");
+}
+
+static bool css_mask_box_valid(const CssValue* value) {
+    return (value && value->type == CSS_VALUE_TYPE_KEYWORD && css_background_box_keyword(value->data.keyword)) ||
+           css_value_identifier_is(value, "fill-box") || css_value_identifier_is(value, "stroke-box") ||
+           css_value_identifier_is(value, "view-box");
+}
+
+static bool css_image_layer_components(const CssValue* value, bool final_layer,
+                                       CssBackgroundParts* parts, CssMaskLayerParts* mask) {
     if (!value || !parts || (value->type == CSS_VALUE_TYPE_LIST &&
             (value->data.list.count <= 0 || !value->data.list.values))) return false;
     *parts = {};
     size_t count = css_space_list_count(value);
     if (!count) return false;
     int box_count = 0;
-    bool text_clip = false;
+    bool clip_only = false;
     for (size_t index = 0; index < count;) {
         const CssValue* item = css_space_list_item(value, index);
         if (!item || css_value_is_global_keyword(item)) return false;
@@ -3072,24 +3102,40 @@ bool css_background_layer_components(const CssValue* value, bool final_layer, Cs
         if (css_value_is_supported_image(item, true)) {
             if (parts->image) return false;
             parts->image = item;
-        } else if (keyword == CSS_VALUE_SCROLL || keyword == CSS_VALUE_FIXED || keyword == CSS_VALUE_LOCAL) {
+        } else if (!mask && (keyword == CSS_VALUE_SCROLL || keyword == CSS_VALUE_FIXED || keyword == CSS_VALUE_LOCAL)) {
             if (parts->attachment) return false;
             parts->attachment = item;
-        } else if (css_background_box_keyword(keyword)) {
-            if (++box_count > (text_clip ? 1 : 2)) return false;
+        } else if (css_background_box_keyword(keyword) || (mask && css_mask_box_valid(item))) {
+            if (++box_count > (clip_only ? 1 : 2)) return false;
             if (box_count == 1) parts->origin = item;
-            if (!text_clip) parts->clip = item;
-        } else if (keyword == CSS_VALUE_TEXT) {
-            if (text_clip || box_count > 1) return false;
-            text_clip = true;
+            if (!clip_only) parts->clip = item;
+        } else if ((!mask && keyword == CSS_VALUE_TEXT) || (mask && css_value_identifier_is(item, "no-clip"))) {
+            if (clip_only || box_count > 1) return false;
+            clip_only = true;
             parts->clip = item;
+        } else if (mask && css_mask_mode_valid(item)) {
+            if (mask->mode) return false;
+            mask->mode = item;
+        } else if (mask && css_mask_composite_valid(item)) {
+            if (mask->composite) return false;
+            mask->composite = item;
         } else {
             CssComputedColor color;
-            if (!final_layer || parts->color || !css_color_compute(item, &color)) return false;
+            if (mask || !final_layer || parts->color || !css_color_compute(item, &color)) return false;
             parts->color = item;
         }
     }
     return true;
+}
+
+bool css_background_layer_components(const CssValue* value, bool final_layer, CssBackgroundParts* parts) {
+    return css_image_layer_components(value, final_layer, parts, nullptr);
+}
+
+bool css_mask_layer_components(const CssValue* value, CssMaskLayerParts* parts) {
+    if (!parts) return false;
+    *parts = {};
+    return css_image_layer_components(value, false, &parts->geometry, parts);
 }
 
 uint8_t css_intrinsic_size_axes(CssPropertyCode property, bool vertical) {
@@ -3268,7 +3314,8 @@ const CssValue* css_container_shorthand_longhand(const CssValue* value,
 enum CssBackgroundValueKind {
     CSS_BACKGROUND_LAYER, CSS_BACKGROUND_IMAGE, CSS_BACKGROUND_POSITION,
     CSS_BACKGROUND_SIZE, CSS_BACKGROUND_REPEAT, CSS_BACKGROUND_ATTACHMENT,
-    CSS_BACKGROUND_ORIGIN, CSS_BACKGROUND_CLIP, CSS_BACKGROUND_BLEND
+    CSS_BACKGROUND_ORIGIN, CSS_BACKGROUND_CLIP, CSS_BACKGROUND_BLEND,
+    CSS_MASK_LAYER, CSS_MASK_ORIGIN, CSS_MASK_CLIP, CSS_MASK_MODE, CSS_MASK_COMPOSITE
 };
 
 struct CssBackgroundValueSpec {
@@ -3289,7 +3336,16 @@ static const CssBackgroundValueSpec* css_background_value_spec(CssPropertyCode p
         {CSS_PROPERTY_BACKGROUND_ATTACHMENT, CSS_BACKGROUND_ATTACHMENT, -1},
         {CSS_PROPERTY_BACKGROUND_ORIGIN, CSS_BACKGROUND_ORIGIN, -1},
         {CSS_PROPERTY_BACKGROUND_CLIP, CSS_BACKGROUND_CLIP, -1},
-        {CSS_PROPERTY_BACKGROUND_BLEND_MODE, CSS_BACKGROUND_BLEND, -1}
+        {CSS_PROPERTY_BACKGROUND_BLEND_MODE, CSS_BACKGROUND_BLEND, -1},
+        {CSS_PROPERTY_MASK, CSS_MASK_LAYER, -1},
+        {CSS_PROPERTY_MASK_IMAGE, CSS_BACKGROUND_IMAGE, -1},
+        {CSS_PROPERTY_MASK_POSITION, CSS_BACKGROUND_POSITION, -1},
+        {CSS_PROPERTY_MASK_SIZE, CSS_BACKGROUND_SIZE, -1},
+        {CSS_PROPERTY_MASK_REPEAT, CSS_BACKGROUND_REPEAT, -1},
+        {CSS_PROPERTY_MASK_ORIGIN, CSS_MASK_ORIGIN, -1},
+        {CSS_PROPERTY_MASK_CLIP, CSS_MASK_CLIP, -1},
+        {CSS_PROPERTY_MASK_MODE, CSS_MASK_MODE, -1},
+        {CSS_PROPERTY_MASK_COMPOSITE, CSS_MASK_COMPOSITE, -1},
     };
     for (const CssBackgroundValueSpec& spec : specs) if (spec.property == property) return &spec;
     return nullptr;
@@ -3330,6 +3386,22 @@ static bool css_background_value_valid(const CssBackgroundValueSpec* spec,
                 if (!css_background_repeat_components(item, axes)) return false;
                 break;
             }
+            case CSS_MASK_LAYER: {
+                CssMaskLayerParts parts;
+                if (!css_mask_layer_components(item, &parts)) return false;
+                break;
+            }
+            case CSS_MASK_ORIGIN:
+            case CSS_MASK_CLIP:
+                if (!css_mask_box_valid(item) && !(spec->kind == CSS_MASK_CLIP && css_value_identifier_is(item, "no-clip")))
+                    return false;
+                break;
+            case CSS_MASK_MODE:
+                if (!css_mask_mode_valid(item)) return false;
+                break;
+            case CSS_MASK_COMPOSITE:
+                if (!css_mask_composite_valid(item)) return false;
+                break;
             default: {
                 if (item->type != CSS_VALUE_TYPE_KEYWORD) return false;
                 CssEnum keyword = item->data.keyword;
