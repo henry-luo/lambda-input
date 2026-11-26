@@ -70,7 +70,8 @@ static bool css_rollback_allows_candidate(const CssDeclaration* rollback,
     if (css_value_is_revert(rollback->value)) {
         return css_revert_can_use_origin(rollback, candidate);
     }
-    if (candidate->origin != rollback->origin) return true;
+    if (candidate->origin != rollback->origin ||
+        candidate->scope.shadow_host != rollback->scope.shadow_host) return true;
     // Inline declarations form their own unlayered cascade position.
     if (rollback->specificity.inline_style) {
         return !candidate->specificity.inline_style;
@@ -648,12 +649,16 @@ int css_declaration_cascade_compare(const CssDeclaration* a, const CssDeclaratio
         return (level_a < level_b) ? -1 : 1;
     }
 
+    bool important = a->important || a->specificity.important;
+    // Outer normal rules and inner important rules win before layer or specificity.
+    if (a->scope.shadow_host != b->scope.shadow_host)
+        return a->scope.shadow_host == important ? 1 : -1;
+
     if (a->specificity.inline_style != b->specificity.inline_style) {
         return a->specificity.inline_style ? 1 : -1;
     }
 
     // Layers outrank specificity; important declarations reverse layer order.
-    bool important = a->important || a->specificity.important;
     if (a->layer_order != b->layer_order) {
         if (a->layer_order == 0) return important ? -1 : 1;
         if (b->layer_order == 0) return important ? 1 : -1;
@@ -667,10 +672,10 @@ int css_declaration_cascade_compare(const CssDeclaration* a, const CssDeclaratio
     }
 
     // scope proximity follows specificity and precedes source order.
-    if (a->scope_proximity != b->scope_proximity) {
-        if (!a->scope_proximity) return -1;
-        if (!b->scope_proximity) return 1;
-        return a->scope_proximity < b->scope_proximity ? 1 : -1;
+    if (a->scope.proximity != b->scope.proximity) {
+        if (!a->scope.proximity) return -1;
+        if (!b->scope.proximity) return 1;
+        return a->scope.proximity < b->scope.proximity ? 1 : -1;
     }
 
     // Finally, source order comparison (later wins)

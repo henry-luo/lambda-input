@@ -2492,13 +2492,36 @@ extern "C" DomElement* dom_document_fragment_create(DomDocument* doc) {
     return DomElement::create(doc, "#document-fragment", nullptr);
 }
 
+static DomElement* dom_create_backed_fragment(DomDocument* doc) {
+    MarkBuilder builder(doc->input);
+    Element* backing = builder.element("#document-fragment").final().element;
+    return backing ? dom_element_create(doc, "#document-fragment", backing) : nullptr;
+}
+
+DomElement* dom_attach_template_contents(DomElement* host) {
+    if (!dom_element_is_html_tag(host, MARKUP_NAME_TEMPLATE) || !host->doc ||
+            !host->doc->input || host->template_contents()) return nullptr;
+    DomStyleRareExt* host_state = host->ensure_rare_ext();
+    if (!host_state) return nullptr;
+    DomElement* fragment = dom_create_backed_fragment(host->doc);
+    if (!fragment) return nullptr;
+    DomStyleRareExt* fragment_state = fragment->ensure_rare_ext();
+    if (!fragment_state) {
+        dom_node_schedule_detached(host->doc, fragment);
+        return nullptr;
+    }
+    // The native template owns its inert fragment across wrapper collection.
+    fragment_state->template_content_host = lam::up(host);
+    host_state->template_contents = lam::own(fragment);
+    dom_node_cancel_detached(host->doc, fragment);
+    return fragment;
+}
+
 DomElement* dom_attach_shadow_root(DomElement* host, DomShadowInit options) {
     if (!host || !host->doc || !host->doc->input || host->shadow_root_element()) return nullptr;
     ShadowStyle* host_state = host->ensure_shadow_style();
     if (!host_state) return nullptr;
-    MarkBuilder builder(host->doc->input);
-    Element* backing = builder.element("#document-fragment").final().element;
-    DomElement* root = backing ? dom_element_create(host->doc, "#document-fragment", backing) : nullptr;
+    DomElement* root = dom_create_backed_fragment(host->doc);
     if (!root) return nullptr;
     ShadowStyle* state = root->ensure_shadow_style();
     if (!state) {
@@ -4438,12 +4461,12 @@ bool dom_element_apply_declaration(DomElement* element, CssDeclaration* declarat
 }
 
 int dom_element_apply_rule(DomElement* element, CssRule* rule, CssSpecificity specificity,
-                            uint32_t scope_proximity) {
+                            CssCascadeScope scope) {
     if (!element || !rule) {
         return 0;
     }
 
-    if (style_epoch_record_rule(element, rule, specificity, scope_proximity)) {
+    if (style_epoch_record_rule(element, rule, specificity, scope)) {
         return (int)rule->data.style_rule.declaration_count;
     }
 
@@ -4458,7 +4481,7 @@ int dom_element_apply_rule(DomElement* element, CssRule* rule, CssSpecificity sp
             if (decl) {
                 CssDeclaration* element_decl = css_declaration_clone_for_cascade(
                     decl, specificity, rule->origin, element->storage_pool());
-                if (element_decl) element_decl->scope_proximity = scope_proximity;
+                if (element_decl) element_decl->scope = scope;
                 if (element_decl && dom_element_apply_declaration(element, element_decl)) {
                     applied_count++;
                 } else if (element_decl) {
@@ -4532,7 +4555,7 @@ bool dom_element_clear_pseudo_styles(DomElement* element) {
 // ============================================================================
 
 static int dom_element_apply_selection_rule(DomElement* element, CssRule* rule,
-                                            CssSpecificity specificity, uint32_t scope_proximity) {
+                                            CssSpecificity specificity, CssCascadeScope scope) {
     if (!element || !rule || rule->type != CSS_RULE_STYLE) return 0;
     int applied_count = 0;
     for (size_t i = 0; i < rule->data.style_rule.declaration_count; i++) {
@@ -4557,20 +4580,20 @@ static int dom_element_apply_selection_rule(DomElement* element, CssRule* rule,
         candidate.specificity = specificity;
         candidate.specificity.important = declaration->important;
         candidate.origin = rule->origin;
-        candidate.scope_proximity = scope_proximity;
+        candidate.scope = scope;
         CssDeclaration previous = {};
         if (target->source) {
             previous = *target->source;
             previous.specificity = target->specificity;
             previous.origin = target->origin;
-            previous.scope_proximity = target->scope_proximity;
+            previous.scope = target->scope;
         }
         if (!target->source ||
             css_declaration_cascade_compare(&candidate, &previous) >= 0) {
             target->source = lam::up(declaration);
             target->specificity = candidate.specificity;
             target->origin = candidate.origin;
-            target->scope_proximity = scope_proximity;
+            target->scope = scope;
             applied_count++;
         }
     }
@@ -4677,7 +4700,7 @@ static unsigned find_shared_pseudo_reset(DomDocument* owner, const CssDeclaratio
 }
 
 static bool share_pseudo_reset(DomElement* element, CssRule* rule, CssSpecificity specificity,
-                               PseudoStyleKind kind, uint32_t proximity, const CssSelector* selector) {
+                               PseudoStyleKind kind, CssCascadeScope scope, const CssSelector* selector) {
     if (!is_universal_pseudo_reset(selector, kind)) return false;
     PseudoStyle* group = element->pseudo_style_group();
     StyleTree* local = group ? group->styles[kind].get() : nullptr;
@@ -4688,7 +4711,7 @@ static bool share_pseudo_reset(DomElement* element, CssRule* rule, CssSpecificit
     reset.specificity = specificity;
     reset.specificity.important = declaration->important;
     reset.origin = rule->origin;
-    reset.scope_proximity = proximity;
+    reset.scope = scope;
     reset.source_order = 1; // compare the rank of a standalone declaration in the shared tree.
     unsigned previous = element->shared_pseudo_reset_slot(kind);
     if (previous) {
@@ -4714,7 +4737,7 @@ static bool share_pseudo_reset(DomElement* element, CssRule* rule, CssSpecificit
 
 int dom_element_apply_pseudo_element_rule(DomElement* element, CssRule* rule,
                                           CssSpecificity specificity, int pseudo_element,
-                                          uint32_t scope_proximity, const CssSelector* selector) {
+                                          CssCascadeScope scope, const CssSelector* selector) {
     log_debug("[CSS-PSEUDO] Applying pseudo-element rule to <%s>, pseudo_type=%d",
               element ? element->tag_name() : "NULL", pseudo_element);
 
@@ -4723,7 +4746,7 @@ int dom_element_apply_pseudo_element_rule(DomElement* element, CssRule* rule,
         return 0;
     }
     if (pseudo_element == PSEUDO_ELEMENT_SELECTION) {
-        return dom_element_apply_selection_rule(element, rule, specificity, scope_proximity);
+        return dom_element_apply_selection_rule(element, rule, specificity, scope);
     }
 
     // Get the appropriate style tree for the pseudo-element
@@ -4733,7 +4756,7 @@ int dom_element_apply_pseudo_element_rule(DomElement* element, CssRule* rule,
         log_debug("[CSS] Unknown pseudo-element type: %d", pseudo_element);
         return 0;
     }
-    if (share_pseudo_reset(element, rule, specificity, kind, scope_proximity, selector)) {
+    if (share_pseudo_reset(element, rule, specificity, kind, scope, selector)) {
         element->advance_style_version();
         element->set_needs_style_recompute(true);
         return (int)rule->data.style_rule.declaration_count;
@@ -4760,7 +4783,7 @@ int dom_element_apply_pseudo_element_rule(DomElement* element, CssRule* rule,
                 CssDeclaration* element_decl = css_declaration_clone_for_cascade(
                     decl, specificity, rule->origin, element->storage_pool());
                 if (!element_decl) continue;
-                element_decl->scope_proximity = scope_proximity;
+                element_decl->scope = scope;
 
                 // Apply to pseudo-element style tree
                 if (style_tree_apply_declaration(*target_style, element_decl)) {

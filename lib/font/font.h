@@ -507,6 +507,11 @@ const FontFaceDesc* font_face_find(FontContext* ctx, const FontStyleDesc* style)
 int font_face_list(FontContext* ctx, const char* family,
                    const FontFaceDesc** out, int max_out);
 
+int font_face_slant_distance(FontSlant candidate, FontSlant requested);
+// Decode one specific source without family or system fallback.
+FontHandle* font_face_load_source(FontContext* ctx, const FontFaceSource* source,
+                                  const FontStyleDesc* style);
+
 // load a font from a registered descriptor (tries sources in order,
 // handles all formats: TTF/OTF/TTC/WOFF/WOFF2/data URI).
 // returns a cached FontHandle if already loaded.

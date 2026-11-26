@@ -295,8 +295,7 @@ static CssSelectorType css_functional_pseudo_type(const char* func_name) {
     if (strcmp(func_name, "has") == 0)               return CSS_SELECTOR_PSEUDO_HAS;
     if (strcmp(func_name, "lang") == 0)              return CSS_SELECTOR_PSEUDO_LANG;
     if (strcmp(func_name, "dir") == 0)               return CSS_SELECTOR_PSEUDO_DIR;
-    if (strcmp(func_name, "host") == 0 || strcmp(func_name, "host-context") == 0)
-        return CSS_SELECTOR_PSEUDO_IS;               // Shadow DOM — treat like :is()
+    if (str_icmp_cstr(func_name, "host") == 0)        return CSS_SELECTOR_PSEUDO_HOST;
     if (strcmp(func_name, "slotted") == 0)           return CSS_SELECTOR_PSEUDO_SLOTTED;
     return CSS_SELECTOR_PSEUDO_GENERIC;               // unknown to CSS selectors
 }
@@ -1868,6 +1867,7 @@ CssSelectorGroup* css_parse_selector_group_from_tokens(const CssToken* tokens, i
 }
 
 static bool css_selector_contains_generic_pseudo(const CssSelector* selector);
+static bool css_scope_selector_has_pseudo_element(const CssSelector* selector);
 
 // validate token boundaries before decoding; whitespace cannot join two identifiers.
 static bool css_parse_linguistic_arguments(CssSimpleSelector* selector,
@@ -1967,13 +1967,6 @@ static bool css_apply_functional_pseudo(CssSimpleSelector* selector,
         const CssSelectorFunction* function, const CssToken* tokens,
         int token_count, Pool* pool, bool after_colon) {
     selector->type = css_functional_pseudo_type(function->name);
-    if (selector->type == CSS_SELECTOR_PSEUDO_IS &&
-        (strcmp(function->name, "host") == 0 ||
-         strcmp(function->name, "host-context") == 0)) {
-        log_debug(after_colon ? " Shadow DOM pseudo-class: ':%s()'"
-                              : " Shadow DOM function: '%s()'",
-            function->name);
-    }
     selector->value = function->name;
     selector->argument = function->argument;
 
@@ -2024,6 +2017,7 @@ static bool css_apply_functional_pseudo(CssSimpleSelector* selector,
                selector->type == CSS_SELECTOR_PSEUDO_IS ||
                selector->type == CSS_SELECTOR_PSEUDO_WHERE ||
                selector->type == CSS_SELECTOR_PSEUDO_HAS ||
+               selector->type == CSS_SELECTOR_PSEUDO_HOST ||
                selector->type == CSS_SELECTOR_PSEUDO_SLOTTED) {
         int sub_pos = function->argument_start;
         bool forgiving = selector->type == CSS_SELECTOR_PSEUDO_IS ||
@@ -2040,6 +2034,9 @@ static bool css_apply_functional_pseudo(CssSimpleSelector* selector,
              (selector->type != CSS_SELECTOR_PSEUDO_HAS &&
               css_skip_whitespace_tokens(tokens, sub_pos,
                 function->argument_end) != function->argument_end)))) return false;
+        if (selector->type == CSS_SELECTOR_PSEUDO_HOST &&
+            (sub_group->selector_count != 1 || sub_group->selectors[0]->compound_selector_count != 1 ||
+             css_scope_selector_has_pseudo_element(sub_group->selectors[0]))) return false;
         if (sub_group->selector_count > 0) {
             selector->function_selectors = sub_group->selectors;
             selector->function_selector_count = sub_group->selector_count;
@@ -2330,6 +2327,8 @@ CssSimpleSelector* css_parse_simple_selector_from_tokens(const CssToken* tokens,
                     selector->type = CSS_SELECTOR_PSEUDO_TARGET;
                 } else if (strcmp(pseudo_name, "scope") == 0) {
                     selector->type = CSS_SELECTOR_PSEUDO_SCOPE;
+                } else if (str_icmp_cstr(pseudo_name, "host") == 0) {
+                    selector->type = CSS_SELECTOR_PSEUDO_HOST;
                 } else if (strcmp(pseudo_name, "fullscreen") == 0) {
                     selector->type = CSS_SELECTOR_PSEUDO_FULLSCREEN;
                 } else {
@@ -4568,7 +4567,7 @@ static bool css_selector_contains_generic_pseudo(const CssSelector* selector) {
 bool css_selector_generic_pseudo_is_known(const CssSimpleSelector* selector) {
     if (!selector || !selector->value) return false;
     if (selector->type == CSS_SELECTOR_PSEUDO_GENERIC) {
-        return strcmp(selector->value, "host") == 0;
+        return selector->argument && str_icmp_cstr(selector->value, "host-context") == 0;
     }
     if (selector->type != CSS_SELECTOR_PSEUDO_ELEMENT_GENERIC) return false;
     static const char* names[] = {
@@ -4787,7 +4786,7 @@ CssDeclaration* css_declaration_snapshot(const CssDeclaration* source, Pool* poo
     copy->important = source->important;
     copy->source_order = source->source_order;
     copy->layer_order = source->layer_order;
-    copy->scope_proximity = source->scope_proximity;
+    copy->scope = source->scope;
     copy->presentation_value = source->presentation_value;
     return copy;
 }

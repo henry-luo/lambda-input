@@ -644,5 +644,13 @@ const WellKnownNameRecord g_well_known_markup_names[] = {
     { { 0xE6681F12u, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000280u }, 11u, 0x05u, "::generated" },
     { { 0xBEDA0F34u, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000281u }, 8u, 0x05u, "::leader" },
     { { 0x9F88D18Bu, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000282u }, 8u, 0x05u, "::margin" },
+    { { 0xE7774569u, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000283u }, 4u, 0x05u, "mask" },
+    { { 0x9668DB4Fu, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000284u }, 13u, 0x05u, "mask-position" },
+    { { 0x837683A5u, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000285u }, 9u, 0x05u, "mask-size" },
+    { { 0x92A5F3A3u, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000286u }, 11u, 0x05u, "mask-repeat" },
+    { { 0xB35A9B16u, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000287u }, 11u, 0x05u, "mask-origin" },
+    { { 0x318CF8EAu, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000288u }, 9u, 0x05u, "mask-clip" },
+    { { 0xE9B6AEAFu, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x00000289u }, 9u, 0x05u, "mask-mode" },
+    { { 0xCEDA8B7Fu, UINT32_MAX, 0, NAME_KEY_STRING, 0, 0x0000028Au }, 14u, 0x05u, "mask-composite" },
 };
 const size_t g_well_known_markup_name_count = sizeof(g_well_known_markup_names) / sizeof(g_well_known_markup_names[0]);
