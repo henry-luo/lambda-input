@@ -9,6 +9,7 @@
 #include "resource_processor_hook.h"
 #include "cookie_jar.h"
 #include "../input/css/dom_element.hpp"
+#include "../input/css/dom_lifecycle.hpp"
 #include "lib/url.h"
 #include "lib/log.h"
 #include "lib/hashmap.h"
@@ -159,18 +160,20 @@ static void process_ready_resource_on_main(NetworkResourceManager* mgr, NetworkR
                 if (processor->process_css) processor->process_css(res, doc);
                 break;
             case RESOURCE_IMAGE:
-                if (res->owner_element) {
-                    if (processor->process_image) processor->process_image(res, res->owner_element);
+            case RESOURCE_SVG: {
+                auto deliver = res->type == RESOURCE_IMAGE ? processor->process_image : processor->process_svg;
+                DomElement* owner = deliver ? network_resource_owner(res, doc) : nullptr;
+                if (owner) {
+                    // Keep the validated borrow live only through the synchronous processor.
+                    dom_node_retain_live(owner);
+                    deliver(res, owner);
+                    dom_node_release_live(owner);
                 }
                 break;
+            }
             case RESOURCE_FONT:
                 if (doc->root) {
                     resource_manager_schedule_reflow(mgr, doc->root);
-                }
-                break;
-            case RESOURCE_SVG:
-                if (res->owner_element) {
-                    if (processor->process_svg) processor->process_svg(res, res->owner_element);
                 }
                 break;
             case RESOURCE_SCRIPT:
@@ -540,7 +543,7 @@ NetworkResource* resource_manager_load(NetworkResourceManager* mgr,
         // byte-only prefetches acquire element delivery when discovery finds their consumer.
         if (res->type == RESOURCE_PREFETCH && type != RESOURCE_PREFETCH && owner) {
             res->type = type;
-            res->owner_element = owner;
+            network_resource_set_owner(res, owner);
             if (res->processed) {
                 res->processed = false;
                 // optional failures are counted as settled, but the new consumer still receives error.
@@ -1056,7 +1059,8 @@ void resource_manager_cancel_for_element(NetworkResourceManager* mgr, struct Dom
     void* item;
     while (hashmap_iter((struct hashmap*)mgr->resources, &iter, &item)) {
         ResourceEntry* entry = (ResourceEntry*)item;
-        if (entry->res && entry->res->owner_element == elmt) {
+        if (entry->res && entry->res->owner_node.address == elmt &&
+                network_resource_owner(entry->res, mgr->document) == elmt) {
             if (entry->res->state == STATE_PENDING || entry->res->state == STATE_DOWNLOADING) {
                 cancel_resource_locked(mgr, entry->res, "Owner element removed", true);
                 arraylist_append(cancelled_resources, entry->res);

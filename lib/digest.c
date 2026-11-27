@@ -15,15 +15,21 @@ bool crypto_random_bytes(void* out, size_t len) {
 #ifdef LAMBDA_NO_AMBIENT_PROVIDERS
     return false;
 #else
-    // shared by UUIDs, broker sessions and exclusive staging names
+    // seed once, then respect the provider's limit on each generation call.
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context drbg;
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&drbg);
     static const unsigned char personal[] = "lambda secure random";
     bool ok = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
-        personal, sizeof(personal) - 1) == 0 &&
-        mbedtls_ctr_drbg_random(&drbg, out, len) == 0;
+        personal, sizeof(personal) - 1) == 0;
+    uint8_t* bytes = (uint8_t*)out;
+    while (ok && len) {
+        size_t count = len < MBEDTLS_CTR_DRBG_MAX_REQUEST ? len : MBEDTLS_CTR_DRBG_MAX_REQUEST;
+        ok = mbedtls_ctr_drbg_random(&drbg, bytes, count) == 0;
+        bytes += count;
+        len -= count;
+    }
     mbedtls_ctr_drbg_free(&drbg);
     mbedtls_entropy_free(&entropy);
     return ok;

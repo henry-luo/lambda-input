@@ -1,6 +1,8 @@
 #include "network_resource_manager.h"
 #include "font_resource_faces.h"
 #include "resource_processor_hook.h"
+#include "../input/css/dom_element.hpp"
+#include "../input/css/dom_lifecycle.hpp"
 #include "lib/mem.h"
 #include "lib/time_util.h"
 
@@ -16,7 +18,7 @@ NetworkResource* network_resource_create(const char* url,
     if (!res->url) { mem_free(res); return NULL; }
     res->type = type;
     res->priority = priority;
-    res->owner_element = owner;
+    network_resource_set_owner(res, owner);
     res->state = STATE_PENDING;
     res->dependents = NULL;  // could use arraylist here for dependencies
     res->start_time = time_now_seconds();
@@ -29,6 +31,17 @@ NetworkResource* network_resource_create(const char* url,
     res->max_retries = 3;
 
     return res;
+}
+
+void network_resource_set_owner(NetworkResource* res, DomElement* owner) {
+    res->owner_node = dom_node_ref(owner);
+}
+
+DomElement* network_resource_owner(const NetworkResource* res, DomDocument* doc) {
+    if (!res || !res->owner_node.address) return nullptr;
+    // A queued transfer can outlive its element or see the address reused.
+    DomNode* owner = dom_node_ref_validate(doc, res->owner_node);
+    return owner ? owner->as_element() : nullptr;
 }
 
 namespace {

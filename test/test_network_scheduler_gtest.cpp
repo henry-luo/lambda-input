@@ -10,6 +10,8 @@
 #include "lambda/network/network_scheduler.h"
 #include "lambda/network/resource_processor_hook.h"
 #include "lambda/input/css/dom_element.hpp"
+#include "lambda/input/css/dom_lifecycle.hpp"
+#include "lambda/input/input.hpp"
 #include "lib/file.h"
 #include "lib/mem.h"
 #include "lib/url.h"
@@ -229,25 +231,32 @@ TEST(NetworkResourceManager, ElementConsumerReceivesPrefetchCompletionOnce) {
     char* stored = enhanced_cache_store(cache, url, "body{}", 6, nullptr);
     ASSERT_NE(stored, nullptr);
     mem_free(stored);
+    Pool* pool = pool_create();
+    ASSERT_NE(pool, nullptr);
+    Input* input = Input::create(pool);
+    ASSERT_NE(input, nullptr);
+    DomDocument* document = dom_document_create(input);
+    ASSERT_NE(document, nullptr);
+    DomElement* link = dom_create_backed_element_identity(document, "link", nullptr, false);
+    ASSERT_NE(link, nullptr);
+    document->root = lam::up(link);
     const NetworkResourceProcessor* previous = network_resource_processor_get();
     NetworkResourceProcessor processor = {};
     processor.process_css = count_prefetched_element_delivery;
     network_resource_processor_register(&processor);
     for (int phase = 0; phase < 2; phase++) {
-        DomDocument document = {};
-        DomElement link = {};
-        NetworkResourceManager* manager = resource_manager_create(&document, nullptr, cache);
+        NetworkResourceManager* manager = resource_manager_create(document, nullptr, cache);
         NetworkResource* prefetched = resource_manager_prefetch(manager, url, PRIORITY_HIGH);
         EXPECT_NE(prefetched, nullptr);
         if (phase) resource_manager_flush_layout_updates(manager);
         prefetched_element_deliveries = 0;
-        NetworkResource* consumer = resource_manager_load(manager, url, RESOURCE_CSS, PRIORITY_NORMAL, &link);
+        NetworkResource* consumer = resource_manager_load(manager, url, RESOURCE_CSS, PRIORITY_NORMAL, link);
         EXPECT_EQ(consumer, prefetched);
-        EXPECT_EQ(consumer->owner_element, &link);
+        EXPECT_EQ(network_resource_owner(consumer, document), link);
         EXPECT_EQ(consumer->priority, PRIORITY_HIGH);
         resource_manager_flush_layout_updates(manager);
         EXPECT_EQ(prefetched_element_deliveries, 1);
-        resource_manager_load(manager, url, RESOURCE_CSS, PRIORITY_NORMAL, &link);
+        resource_manager_load(manager, url, RESOURCE_CSS, PRIORITY_NORMAL, link);
         resource_manager_prefetch(manager, url, PRIORITY_NORMAL);
         resource_manager_flush_layout_updates(manager);
         EXPECT_EQ(prefetched_element_deliveries, 1);
@@ -256,6 +265,78 @@ TEST(NetworkResourceManager, ElementConsumerReceivesPrefetchCompletionOnce) {
         resource_manager_destroy(manager);
     }
     network_resource_processor_register(previous);
+    dom_document_destroy(document);
+    pool_destroy(pool);
+    enhanced_cache_destroy(cache);
+}
+
+TEST(NetworkResourceManager, QueuedElementDeliveryChecksDomLifetime) {
+    const char* directory = "./temp/test_cache_element_delivery_lifetime";
+    const char* image_url = "https://example.test/retired-image.png";
+    const char* svg_url = "https://example.test/live-graphic.svg";
+    ASSERT_TRUE(create_dir(directory));
+    EnhancedFileCache* cache = enhanced_cache_create(directory, 1024 * 1024, 10);
+    ASSERT_NE(cache, nullptr);
+    const char* urls[] = {image_url, svg_url};
+    for (const char* url : urls) {
+        char* stored = enhanced_cache_store(cache, url, "image", 5, nullptr);
+        ASSERT_NE(stored, nullptr);
+        mem_free(stored);
+    }
+
+    Pool* pool = pool_create();
+    ASSERT_NE(pool, nullptr);
+    Input* input = Input::create(pool);
+    ASSERT_NE(input, nullptr);
+    DomDocument* document = dom_document_create(input);
+    ASSERT_NE(document, nullptr);
+    DomElement* root = dom_create_backed_element_identity(document, "div", nullptr, false);
+    DomElement* image = dom_create_backed_element_identity(document, "img", nullptr, false);
+    DomElement* graphic = dom_create_backed_element_identity(document, "svg", nullptr, false);
+    ASSERT_NE(root, nullptr);
+    ASSERT_NE(image, nullptr);
+    ASSERT_NE(graphic, nullptr);
+    document->root = lam::up(root);
+    ASSERT_TRUE(root->DomNode::append_child(image));
+    ASSERT_TRUE(root->DomNode::append_child(graphic));
+
+    NetworkResourceManager* manager = resource_manager_create(document, nullptr, cache);
+    ASSERT_NE(manager, nullptr);
+    NetworkResource* retired = resource_manager_prefetch(manager, image_url, PRIORITY_HIGH);
+    ASSERT_NE(retired, nullptr);
+    ASSERT_EQ(resource_manager_load(manager, image_url, RESOURCE_IMAGE, PRIORITY_NORMAL, image), retired);
+    NetworkResource* live = resource_manager_load(manager, svg_url, RESOURCE_SVG, PRIORITY_NORMAL, graphic);
+    ASSERT_NE(live, nullptr);
+    DomNodeRef identity = dom_node_ref(image);
+    ASSERT_TRUE(root->remove_child(image));
+    ASSERT_EQ(dom_retire_sweep(document), 1u);
+    ASSERT_EQ(dom_node_ref_validate(document, identity), nullptr);
+
+    struct Delivery { DomElement* expected; int calls; };
+    Delivery retired_delivery = {nullptr, 0};
+    Delivery live_delivery = {graphic, 0};
+    retired->user_data = &retired_delivery;
+    live->user_data = &live_delivery;
+    const NetworkResourceProcessor* previous = network_resource_processor_get();
+    NetworkResourceProcessor processor = {};
+    processor.process_svg = processor.process_image = [](NetworkResource* resource, DomElement* owner) {
+        Delivery* delivery = (Delivery*)resource->user_data;
+        EXPECT_EQ(owner, delivery->expected);
+        ++delivery->calls;
+    };
+    network_resource_processor_register(&processor);
+    resource_manager_flush_layout_updates(manager);
+    resource_manager_flush_layout_updates(manager);
+    network_resource_processor_register(previous);
+
+    EXPECT_EQ(retired_delivery.calls, 0);
+    EXPECT_EQ(live_delivery.calls, 1);
+    EXPECT_TRUE(retired->processed);
+    EXPECT_TRUE(live->processed);
+    EXPECT_EQ(manager->completed_resources, 2);
+    resource_manager_destroy(manager);
+    dom_document_destroy(document);
+    pool_destroy(pool);
     enhanced_cache_destroy(cache);
 }
 
