@@ -52,11 +52,17 @@ struct DomManagedBacking {
     Item* borrowed_items;
     bool borrows_data;
     bool borrows_items;
-    DomManagedBacking* next;
 };
 
+struct DomManagedBackingEntry {
+    DomNode* node;
+    DomManagedBacking* root;
+};
+using DomManagedBackingMap = TypedHashMap<DomManagedBackingEntry,
+    HashMapPointerMemberKeyOps<DomManagedBackingEntry, &DomManagedBackingEntry::node>>;
+
 typedef struct DomNodeRegistry {
-    DomManagedBacking* managed_roots;
+    HashMap* managed_roots;
     DomPinDiagnostic* pin_diagnostics;
     struct DomNodeRegistry* next_observed;
     DomNode** roots; // unpublished and detached ownership roots
@@ -356,37 +362,53 @@ bool dom_lifecycle_init(DomDocument* doc) {
     return true;
 }
 
-static DomManagedBacking** dom_managed_backing_slot(DomDocument* doc, DomNode* node) {
-    DomManagedBacking** slot = &dom_registry(doc)->managed_roots;
-    while (*slot && (*slot)->node != node) slot = &(*slot)->next;
-    return slot;
+// attribute reads need constant-time lookup, while the GC root's address must
+// stay stable across registry growth and adoption.
+static DomManagedBacking* dom_managed_backing_get(DomNodeRegistry* registry, DomNode* node) {
+    if (!(node->node_flags & DOM_NODE_FLAG_GC_BACKING)) return nullptr;
+    const auto* entry = DomManagedBackingMap::get(registry->managed_roots, {node, nullptr});
+    if (!entry) dom_lifecycle_fail("missing-precise-root", dom_node_ref(node), DOM_NODE_PIN_EXTERNAL);
+    return entry->root;
 }
 
-static void dom_managed_backing_release(DomManagedBacking** slot) {
-    DomManagedBacking* root = *slot;
-    *slot = root->next;
+static bool dom_managed_backing_add(DomNodeRegistry* registry, DomManagedBacking* root) {
+    if (!registry->managed_roots) registry->managed_roots = DomManagedBackingMap::create(0);
+    if (!registry->managed_roots) return false;
+    DomManagedBackingMap::set(registry->managed_roots, {root->node, root});
+    return !DomManagedBackingMap::oom(registry->managed_roots);
+}
+
+static void dom_managed_backing_release(DomManagedBacking* root) {
     dom_release_backing_root(root->heap, &root->value);
     root->node->node_flags &= ~DOM_NODE_FLAG_GC_BACKING;
     mem_free(root);
 }
 
+static void dom_managed_backing_remove(DomNodeRegistry* registry, DomManagedBacking* root) {
+    DomManagedBackingMap::erase(registry->managed_roots, {root->node, nullptr});
+    dom_managed_backing_release(root);
+}
+
 void dom_lifecycle_release_backing_roots(DomDocument* doc) {
     DomNodeRegistry* registry = dom_registry(doc);
-    if (registry) {
-        while (registry->managed_roots) dom_managed_backing_release(&registry->managed_roots);
-    }
+    if (!registry || !registry->managed_roots) return;
+    size_t cursor = 0;
+    DomManagedBackingEntry* entry;
+    while (DomManagedBackingMap::next(registry->managed_roots, &cursor, &entry))
+        dom_managed_backing_release(entry->root);
+    DomManagedBackingMap::destroy(registry->managed_roots);
+    registry->managed_roots = nullptr;
 }
 
 void dom_node_set_backing_value(DomDocument* doc, DomNode* node, Item value) {
     if (!node || node->doc != doc)
         dom_lifecycle_fail("set-backing-owner", dom_node_ref(node), DOM_NODE_PIN_EXTERNAL);
-    DomManagedBacking* root = nullptr;
-    void* previous_heap = nullptr;
-    if (node->node_flags & DOM_NODE_FLAG_GC_BACKING) {
-        DomManagedBacking** slot = dom_managed_backing_slot(doc, node);
-        previous_heap = (*slot)->heap;
-        if ((*slot)->value.item == value.item) root = *slot;
-        else dom_managed_backing_release(slot);
+    DomNodeRegistry* registry = dom_registry(doc);
+    DomManagedBacking* root = dom_managed_backing_get(registry, node);
+    void* previous_heap = root ? root->heap : nullptr;
+    if (root && root->value.item != value.item) {
+        dom_managed_backing_remove(registry, root);
+        root = nullptr;
     }
     Element* source = get_type_id(value) == LMD_TYPE_ELEMENT ? value.element : nullptr;
     if (DomElement* element = node->as_element()) {
@@ -420,10 +442,9 @@ void dom_node_set_backing_value(DomDocument* doc, DomNode* node, Item value) {
         root->heap = heap;
         root->node = node;
         root->value = value;
+        if (!dom_managed_backing_add(registry, root))
+            dom_lifecycle_fail("index-precise-root", dom_node_ref(node), DOM_NODE_PIN_EXTERNAL);
         dom_retain_backing_root(heap, &root->value);
-        DomNodeRegistry* registry = dom_registry(doc);
-        root->next = registry->managed_roots;
-        registry->managed_roots = root;
         node->node_flags |= DOM_NODE_FLAG_GC_BACKING;
     }
     if (source && node->is_element()) {
@@ -493,6 +514,12 @@ static bool dom_prepare_adoption_step(DomDocument* source, DomDocument* destinat
     if (node->is_element() && !node->as_element()->preserve_storage_owner()) return false;
     if (node->external_retain_count && !dom_wrapper_adopt_document(source, destination, node, false)) return false;
     if (!dom_slot_prepare_adoption(source, destination, node)) return false;
+    // stage the destination index before changing ownership, keeping the same GC root.
+    DomManagedBacking* root = dom_managed_backing_get(dom_registry(source), node);
+    if (root && !dom_managed_backing_add(dom_registry(destination), root)) {
+        dom_slot_finish_adoption(source, destination, node, false);
+        return false;
+    }
     node->preparing_adoption = true;
     *step = {node, id};
     return true;
@@ -502,12 +529,14 @@ static void dom_finish_adoption_step(DomDocument* source, DomDocument* destinati
         DomAdoptionStep step, bool commit) {
     DomNode* node = step.node;
     node->preparing_adoption = false;
+    auto* to = dom_registry(destination);
     if (!commit) {
+        if (node->node_flags & DOM_NODE_FLAG_GC_BACKING)
+            DomManagedBackingMap::erase(to->managed_roots, {node, nullptr});
         dom_slot_finish_adoption(source, destination, node, false);
         return;
     }
     auto* from = dom_registry(source);
-    auto* to = dom_registry(destination);
     dom_node_refresh_managed_backing(source, node);
     dom_forget_address(from, node);
     dom_end_candidacy(from, dom_find_candidate(from, node));
@@ -518,14 +547,8 @@ static void dom_finish_adoption_step(DomDocument* source, DomDocument* destinati
     }
     ++to->stats.registered_nodes;
 
-    if (node->node_flags & DOM_NODE_FLAG_GC_BACKING) {
-        // keep the slot address and the registering heap stable across adoption.
-        DomManagedBacking** slot = dom_managed_backing_slot(source, node);
-        DomManagedBacking* root = *slot;
-        *slot = root->next;
-        root->next = dom_registry(destination)->managed_roots;
-        dom_registry(destination)->managed_roots = root;
-    }
+    if (node->node_flags & DOM_NODE_FLAG_GC_BACKING)
+        DomManagedBackingMap::erase(from->managed_roots, {node, nullptr});
     node->id = step.id;
     node->doc = lam::up(destination);
     dom_cached_address(to, node) = node;
@@ -635,8 +658,9 @@ void dom_node_borrowed_source_storage(DomDocument* doc, DomNode* node,
 }
 
 void dom_node_refresh_managed_backing(DomDocument* doc, DomNode* node) {
-    if (!node || !(node->node_flags & DOM_NODE_FLAG_GC_BACKING) || !node->is_element() || !dom_registry(doc)) return;
-    DomManagedBacking* root = *dom_managed_backing_slot(doc, node);
+    DomNodeRegistry* registry = dom_registry(doc);
+    if (!registry || !node || !node->is_element() || node->doc != doc) return;
+    DomManagedBacking* root = dom_managed_backing_get(registry, node);
     if (!root) return;
     Element* source = root->value.element;
     Element* backing = &node->as_element()->elmt;
@@ -937,8 +961,8 @@ static size_t dom_retire_subtree(DomDocument* doc, DomNode* node) {
         dom_attribute_node_release_retired_storage(attribute);
     }
 
-    if (node->node_flags & DOM_NODE_FLAG_GC_BACKING)
-        dom_managed_backing_release(dom_managed_backing_slot(doc, node));
+    if (DomManagedBacking* root = dom_managed_backing_get(registry, node))
+        dom_managed_backing_remove(registry, root);
     dom_end_candidacy(registry, dom_find_candidate(registry, node));
     dom_forget_address(registry, node);
     dom_disown_root(registry, node);
