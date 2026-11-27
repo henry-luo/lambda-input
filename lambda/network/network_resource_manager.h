@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include "../input/css/dom_node_ref.h"
 #include "network_thread_pool.h"
 #include "enhanced_file_cache.h"
 
@@ -57,7 +58,7 @@ typedef struct NetworkResource {
     ResourcePriority priority;
     
     // Dependency tracking
-    struct DomElement* owner_element;  // Element that requested this
+    DomNodeRef owner_node;           // weak identity of the requesting element
     void* dependents;               // ArrayList of dependent resources
     
     // Timing & error info
@@ -224,6 +225,9 @@ void resource_manager_set_error_callback(NetworkResourceManager* mgr,
 // New resources own their URL and start with one reference.
 NetworkResource* network_resource_create(const char* url, ResourceType type,
                                          ResourcePriority priority, struct DomElement* owner);
+// Attach or resolve a requesting element on its document thread.
+void network_resource_set_owner(NetworkResource* res, struct DomElement* owner);
+struct DomElement* network_resource_owner(const NetworkResource* res, struct DomDocument* doc);
 
 // Resource reference counting
 void resource_retain(NetworkResource* res);

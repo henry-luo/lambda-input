@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "dom_node_ref.h"
 
 struct DomDocument;
 struct DomNode;
@@ -29,11 +30,6 @@ typedef enum DomNodePinReason : uint8_t {
     DOM_NODE_PIN_REASON_COUNT,
 } DomNodePinReason;
 
-typedef struct DomNodeRef {
-    DomNode* address;
-    uint32_t expected_id;
-    uint32_t lifetime_stamp; // zero for an address-only probe; minted references are copied intact
-} DomNodeRef;
 uint64_t dom_node_ref_identity_hash(DomNodeRef ref, uint64_t seed0, uint64_t seed1);
 int dom_node_ref_identity_compare(DomNodeRef left, DomNodeRef right);
 
