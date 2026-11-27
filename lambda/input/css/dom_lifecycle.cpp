@@ -590,6 +590,7 @@ bool dom_adopt_detached_subtree(DomDocument* source, DomDocument* destination, D
         if (prepared) member->view_state_ref = nullptr;
     }
     if (prepared) {
+        dom_document_preserve_embedded_storage(source);
         dom_registry(source)->lifetime_stamp = dom_next_lifetime_stamp();
         dom_own_root(dom_registry(destination), node);
         // owner callbacks can inspect other members; publish the complete closure first.

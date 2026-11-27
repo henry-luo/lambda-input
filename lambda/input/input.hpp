@@ -92,7 +92,8 @@ ShapeEntry* alloc_shape_entry_in(TypeAlloc alloc, String* key, TypeId type_id,
 
 // D3.4.3: detach a shared shape into its explicit mutation owner's pool.
 TypeMap* map_clone_typemap_for_mutation(Map* map, Pool* pool, bool force = false);
-TypeElmt* elmt_clone_type_for_mutation(Element* element, Pool* pool, bool force = false);
+TypeElmt* elmt_clone_type_for_mutation(Element* element, Pool* pool, bool force = false,
+                                       bool build_field_index = true);
 void elmt_put_ns(Element* element, String* key, Target* ns, Item value, Pool* pool);
 ShapeEntry* clone_shape_entries(TypeAlloc alloc, const TypeMap* source,
                                 ShapeEntry** out_last);
@@ -150,7 +151,8 @@ void skip_tab_pace(const char** text);
 Input* input_from_source(const char* source, Url* url, String* type, String* flavor);
 // parse captured NUL-terminated source into a caller-owned Input; no acquisition.
 bool input_parse_source_exact(const char* type, Input* input, const char* source, size_t length);
-// parse JSON/Mark values in an explicit invocation owner; no InputManager retention.
+// Parse value trees in an explicit invocation owner without retaining the Input.
+bool input_supports_scoped_value_parse(const char* type);
 bool input_parse_value_n(Input* input, const char* source, size_t length,
     const char* type, const InputParseOptions* options = NULL);
 Input* input_from_source_n(const char* source, size_t source_len, Url* url,

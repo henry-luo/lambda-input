@@ -1348,7 +1348,8 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
         // Get tag name via reader (returns const char*)
         const char* tag_name = reader.tagName();
         ElementBuilder elem_builder = element(tag_name);
-        elem_builder.namespace_tag(copy_name_namespace(pool_, name_pool_, reader.namespaceTarget()));
+        if (!copying_view_)
+            elem_builder.namespace_tag(copy_name_namespace(pool_, name_pool_, reader.namespaceTarget()));
 
         // Copy attributes using ElementReader
         // ElementReader.get_attr() handles proper Item reconstruction from stored data
@@ -1361,7 +1362,9 @@ Item MarkBuilder::deep_copy_typed(lam::ItemOf<Tag> typed) {
             if (!occurrence) return ItemNull;
             TypeElmt* allocated_type = (TypeElmt*)occurrence->type;
             occurrence->type = elem_type;
-            view_type = elmt_clone_type_for_mutation(occurrence, pool_, true);
+            // The destination names and contracts are copied before the sole
+            // field index is built. A preliminary index would be orphaned.
+            view_type = elmt_clone_type_for_mutation(occurrence, pool_, true, false);
             if (!view_type) return ItemNull;
             view_type->ns = copy_name_namespace(pool_, name_pool_, elem_type->ns);
             view_type->struct_name = elem_type->struct_name ? pool_strdup(pool_, elem_type->struct_name) : nullptr;

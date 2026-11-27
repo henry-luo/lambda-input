@@ -2103,6 +2103,33 @@ void dom_document_release_runtime_resources(DomDocument* document, Context* runt
     }
 }
 
+static DomDocument* dom_document_storage_parent(DomDocument* frame) {
+    return frame->embedding_document ? frame->embedding_document.get() : frame->retired_frame_owner.get();
+}
+
+static void dom_document_add_foreign_wrappers(DomDocument* frame, size_t count) {
+    for (; frame; frame = dom_document_storage_parent(frame)) {
+        frame->embedded_foreign_wrappers += count;
+    }
+}
+
+static void dom_document_subtract_foreign_wrappers(DomDocument* frame, size_t count) {
+    for (; frame; frame = dom_document_storage_parent(frame)) {
+        frame->embedded_foreign_wrappers -= count;
+        if (!frame->embedded_foreign_wrappers && frame->retired_frame_owner) {
+            frame->retired_frame_owner->retired_frame_cleanup_pending = true;
+        }
+    }
+}
+
+void dom_document_retain_foreign_wrapper(DomDocument* document) {
+    dom_document_add_foreign_wrappers(document, 1);
+}
+
+void dom_document_release_foreign_wrapper(DomDocument* document) {
+    dom_document_subtract_foreign_wrappers(document, 1);
+}
+
 bool dom_document_set_embedding(DomDocument* embedded, DomDocument* parent,
                                 DomElement* iframe) {
     if (!embedded || !parent || !iframe || iframe->doc != parent) return false;
@@ -2114,6 +2141,7 @@ bool dom_document_set_embedding(DomDocument* embedded, DomDocument* parent,
     dom_document_clear_embedding(embedded);
     embedded->embedding_document = lam::up(parent);
     embedded->embedding_element_ref = ref;
+    dom_document_add_foreign_wrappers(parent, embedded->embedded_foreign_wrappers);
     parent->embedded_evaluator_pending = true;
     return true;
 }
@@ -2126,8 +2154,27 @@ void dom_document_clear_embedding(DomDocument* embedded) {
                        embedded->embedding_element_ref,
                        DOM_NODE_PIN_EXTERNAL);
     }
+    if (embedded->embedded_foreign_wrappers) {
+        dom_document_subtract_foreign_wrappers(dom_document_storage_parent(embedded),
+            embedded->embedded_foreign_wrappers);
+    }
     embedded->embedding_document = nullptr;
     embedded->embedding_element_ref = {nullptr, 0};
+    embedded->retired_frame_owner = nullptr;
+}
+
+void dom_document_retire_embedding(DomDocument* embedded, DomDocument* owner) {
+    // The parent's resource keeps the ancestry alive after its iframe pin leaves.
+    dom_document_clear_embedding(embedded);
+    embedded->retired_frame_owner = lam::up(owner);
+    dom_document_add_foreign_wrappers(owner, embedded->embedded_foreign_wrappers);
+}
+
+void dom_document_preserve_embedded_storage(DomDocument* document) {
+    // An outer owner of a nested frame can also outlive its embedding ancestors.
+    for (auto* frame = document; frame; frame = dom_document_storage_parent(frame)) {
+        frame->embedded_storage_exposed = true;
+    }
 }
 
 DomElement* dom_document_embedding_element(DomDocument* embedded) {
@@ -6356,18 +6403,22 @@ static bool dom_build_declarative_shadow(DomElement* host, Element* marker,
 }
 
 static DomElement* build_dom_tree_with_parent(Element* elem, DomDocument* doc,
-                                               DomElement* parent, bool link_parent) {
+                                               DomElement* parent, bool link_parent,
+                                               bool retain_source = true) {
     if (!elem || !doc) return nullptr;
     Element* source = elem;
     bool copied_for_view = false;
-    if (doc->input &&
-            !(doc->page_kind == DOM_PAGE_KIND_HTML && dom_element_has_embedded_storage(doc, elem))) {
+    if (doc->input && (!retain_source ||
+            !(doc->page_kind == DOM_PAGE_KIND_HTML && dom_element_has_embedded_storage(doc, elem)))) {
         // copy each occurrence's content while retaining its source mapping (D5.5.2/D5.5.3).
         MarkBuilder builder(doc->input);
         Item copied = builder.deep_copy_for_dom({.element = elem}, doc);
         if (get_type_id(copied) != LMD_TYPE_ELEMENT) return nullptr;
         elem = copied.element;
         copied_for_view = true;
+        // Imperative parser fragments have no template identity. The copied
+        // occurrence alone survives the parser's scratch Input (D5.5.3).
+        if (!retain_source) source = elem;
     }
     return build_dom_tree_from_element_impl(elem, source, doc, parent, copied_for_view, link_parent);
 }
@@ -6377,8 +6428,8 @@ DomElement* build_dom_tree_from_element(Element* elem, DomDocument* doc, DomElem
 }
 
 DomElement* build_dom_tree_from_element_detached(Element* elem, DomDocument* doc,
-                                                 DomElement* namespace_parent) {
-    return build_dom_tree_with_parent(elem, doc, namespace_parent, false);
+                                                 DomElement* namespace_parent, bool retain_source) {
+    return build_dom_tree_with_parent(elem, doc, namespace_parent, false, retain_source);
 }
 
 static DomElement* build_dom_tree_from_element_impl(Element* elem, Element* source,

@@ -489,6 +489,13 @@ struct DomDocument : DomDocumentResourceData {
     // Set on the parent when a document is embedded; its next behavior-init
     // phase gives script-less children their package evaluator (S12.1.3).
     bool embedded_evaluator_pending;
+    // Adoption can move pool-backed nodes out of a frame. Weak wrapper holds
+    // last only until their evaluator releases the wrapper (D5.5.1).
+    bool embedded_storage_exposed = false;
+    bool retired_frame_cleanup_pending = false;
+    lam::Up<DomDocument> retired_frame_owner;
+    size_t embedded_foreign_wrappers = 0;
+    bool has_browsing_context = false;
 
     // Native extensions retain runtime-backed values through document resources.
     lam::Own<struct DomDocumentResource> resources;
@@ -710,7 +717,11 @@ extern "C" void dom_css_document_language_changed(void* document);
 bool dom_document_set_embedding(DomDocument* embedded, DomDocument* parent,
                                 DomElement* iframe);
 void dom_document_clear_embedding(DomDocument* embedded);
+void dom_document_retire_embedding(DomDocument* embedded, DomDocument* owner);
 DomElement* dom_document_embedding_element(DomDocument* embedded);
+void dom_document_preserve_embedded_storage(DomDocument* document);
+void dom_document_retain_foreign_wrapper(DomDocument* document);
+void dom_document_release_foreign_wrapper(DomDocument* document);
 
 class DisplayInner {
     static constexpr uint16_t list_item_bit = 1u << 15;

@@ -407,11 +407,11 @@ static StyleRecipeBuilder* style_builder_find(StyleEpochManager* manager,
     return nullptr;
 }
 
-static void style_builder_add(StyleEpochManager* manager,
-                              DomElement* element) {
+static size_t style_builder_add_subtree(StyleEpochManager* manager,
+                                        DomElement* element) {
     StyleRecipeBuilder* builder = (StyleRecipeBuilder*)pool_calloc(
         manager->doc->document_pool, sizeof(StyleRecipeBuilder));
-    if (!builder) return;
+    if (!builder) return 0;
     builder->element = element;
     // replacement applies to this subtree; unrelated highlight cascades stay live.
     if (manager->cascade_mode == STYLE_EPOCH_CASCADE_REPLACE)
@@ -431,15 +431,14 @@ static void style_builder_add(StyleEpochManager* manager,
     } else if (style_tree_has_local_declarations(element->specified_style)) {
         builder->eligible = false;
     }
-    size_t bucket = style_builder_bucket(manager, element);
-    builder->bucket_next = manager->builder_buckets[bucket];
-    manager->builder_buckets[bucket] = builder;
     builder->all_next = manager->builders;
     manager->builders = builder;
 
+    size_t count = 1;
     for (DomNode* child = element->first_child; child; child = child->next_sibling) {
-        if (child->is_element()) style_builder_add(manager, child->as_element());
+        if (child->is_element()) count += style_builder_add_subtree(manager, child->as_element());
     }
+    return count;
 }
 
 static bool style_builder_append(StyleEpochManager* manager,
@@ -1008,17 +1007,25 @@ static bool style_epoch_cascade_begin_mode(DomDocument* doc, DomElement* root,
     if (manager->pending_global_change &&
         !style_epoch_start_new(manager, mode_key)) return false;
 
+    manager->cascade_mode = mode;
+    // Size the scratch index to this cascade. The document's allocation
+    // counter includes every element previously replaced in the window.
+    size_t desired = style_builder_add_subtree(manager, root) * 2u;
     size_t bucket_count = 64;
-    size_t desired = doc->services.element_count > 0
-        ? (size_t)doc->services.element_count * 2u : 64u;
     while (bucket_count < desired) bucket_count *= 2u;
     manager->builder_buckets = (StyleRecipeBuilder**)pool_calloc(
         doc->document_pool, bucket_count * sizeof(StyleRecipeBuilder*));
-    if (!manager->builder_buckets) return false;
+    if (!manager->builder_buckets) {
+        style_builder_release_all(manager);
+        return false;
+    }
     manager->builder_bucket_count = bucket_count;
-    manager->cascade_mode = mode;
+    for (StyleRecipeBuilder* builder = manager->builders; builder; builder = builder->all_next) {
+        size_t bucket = style_builder_bucket(manager, builder->element);
+        builder->bucket_next = manager->builder_buckets[bucket];
+        manager->builder_buckets[bucket] = builder;
+    }
     manager->collecting = true;
-    style_builder_add(manager, root);
     return true;
 }
 
