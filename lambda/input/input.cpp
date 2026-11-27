@@ -816,8 +816,7 @@ static bool external_entries_match(const TypeMap* parent, const TypeMap* copy,
     int64_t count = 0;
     FOR_EACH_MAP_FIELD(parent, p) {
         const Type* expected = count == retyped ? retyped_to : p->type;
-        if (!c || !p->name || !c->name || c->name->length != p->name->length ||
-                memcmp(c->name->str, p->name->str, p->name->length) != 0 ||
+        if (!c || !p->name || !shape_field_name_equals(c, p->name->str, p->name->length) ||
                 c->name_id != p->name_id || c->key_kind != p->key_kind ||
                 c->type != expected || (same_offsets && c->byte_offset != p->byte_offset) ||
                 c->flags != (count == retyped && replacement_flags >= 0 ? replacement_flags : p->flags) || c->ns != p->ns ||
@@ -894,29 +893,32 @@ static uint64_t fingerprint_mix_ptr(uint64_t h, const void* ptr) {
     return hash_combine_u64(h, (uintptr_t)ptr);
 }
 
-// Hashes exactly what external_child_matches_parent compares.
+// Selects candidates for external_child_matches_parent's structural comparison.
 static uint64_t external_parent_fingerprint(const TypeMap* parent) {
     uint64_t h = 0xcbf29ce484222325ull;
-    uint8_t header[4] = {parent->type_id, (uint8_t)parent->is_nominal,
-        (uint8_t)parent->has_named_shape, (uint8_t)parent->has_spread};
-    h = fingerprint_mix(h, header, sizeof(header));
-    h = fingerprint_mix(h, &parent->length, sizeof(parent->length));
+    uint32_t header = parent->type_id | ((uint32_t)parent->is_nominal << 8) |
+        ((uint32_t)parent->has_named_shape << 9) | ((uint32_t)parent->has_spread << 10);
+    h = hash_combine_u64(h, header);
+    h = hash_combine_u64(h, parent->length);
     h = fingerprint_mix_ptr(h, parent->nominal);
     h = fingerprint_mix_ptr(h, parent->struct_name);
     h = fingerprint_mix_ptr(h, typemap_verified_contract(parent));
     if (parent->type_id == LMD_TYPE_ELEMENT) {
         const TypeElmt* element = (const TypeElmt*)parent;
         if (element->name.str) h = fingerprint_mix(h, element->name.str, element->name.length);
-        h = fingerprint_mix(h, &element->name_id, sizeof(element->name_id));
+        h = hash_combine_u64(h, element->name_id);
         h = fingerprint_mix_ptr(h, element->ns);
         h = fingerprint_mix_ptr(h, element->content_list);
     }
     FOR_EACH_MAP_FIELD(parent, field) {
-        if (field->name) h = fingerprint_mix(h, field->name->str, field->name->length);
-        uint8_t kinds[2] = {field->key_kind, field->flags};
-        h = fingerprint_mix(h, kinds, sizeof(kinds));
-        h = fingerprint_mix(h, &field->name_id, sizeof(field->name_id));
-        h = fingerprint_mix(h, &field->byte_offset, sizeof(field->byte_offset));
+        // A pooled ID selects the bucket. Edge admission still compares the
+        // name bytes, including across independently assigned name pools.
+        if (field->name_id == NAME_ID_NONE && field->name)
+            h = fingerprint_mix(h, field->name->str, field->name->length);
+        uint64_t identity = field->name_id | ((uint64_t)field->key_kind << 32) |
+            ((uint64_t)field->flags << 40);
+        h = hash_combine_u64(h, identity);
+        h = hash_combine_u64(h, field->byte_offset);
         h = fingerprint_mix_ptr(h, field->type);
         h = fingerprint_mix_ptr(h, field->ns);
         h = fingerprint_mix_ptr(h, field->default_value);
