@@ -15,3 +15,15 @@ struct RadiantCanvasStateSnapshot {
     float line_width, global_alpha;
     char font[RADIANT_CANVAS_FONT_TEXT_MAX];
 };
+
+struct RasterGradientStop {
+    float offset;
+    uint8_t r, g, b, a;
+};
+
+// Callers own the stops for the duration of the synchronous paint operation.
+struct RadiantCanvasRadialGradient {
+    double x0, y0, r0, x1, y1, r1;
+    const RasterGradientStop* stops;
+    int stop_count;
+};
