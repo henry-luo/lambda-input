@@ -1549,6 +1549,7 @@ typedef struct CssStylesheet {
     bool disabled;
     bool is_import_child;
     bool constructed;           // constructed sheets reject @import through CSSOM.
+    bool cssom_exposed;         // a script can retain this sheet after detachment.
     // Document sheets retain their owning <link> or <style> for source order.
     struct DomElement* owner_element;
     struct DomDocument* owner_document; // native lifetime remains known after rule detachment
