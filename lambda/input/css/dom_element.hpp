@@ -485,7 +485,7 @@ struct DomDocument : DomDocumentResourceData {
     // The focused browsing context below this document: its iframe element that
     // the last pointer press landed in (empty when the press was in this document
     // itself). Keys with no focused element follow this chain, as in browsers.
-    DomNodeRef active_frame_ref;
+    DomNodeRef active_frame_ref{};
     // Set on the parent when a document is embedded; its next behavior-init
     // phase gives script-less children their package evaluator (S12.1.3).
     bool embedded_evaluator_pending;
@@ -493,7 +493,7 @@ struct DomDocument : DomDocumentResourceData {
     // last only until their evaluator releases the wrapper (D5.5.1).
     bool embedded_storage_exposed = false;
     bool retired_frame_cleanup_pending = false;
-    lam::Up<DomDocument> retired_frame_owner;
+    lam::Up<DomDocument> retired_frame_owner = nullptr;
     size_t embedded_foreign_wrappers = 0;
     bool has_browsing_context = false;
 
