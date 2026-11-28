@@ -551,6 +551,8 @@ float               font_platform_get_pair_kerning(void* ct_font_ref,
 TextExtents         font_platform_measure_text(FontHandle* handle, void* ct_font_ref,
                                                 const char* text, int byte_len,
                                                 float fallback_height);
+bool                font_platform_measure_text_ink_height(FontHandle* handle, void* ct_font_ref,
+                        const char* text, int byte_len, FontTextInkHeight* ink);
 void*               font_platform_create_text_line(void* ct_font_ref,
                         const char* text, int byte_len);
 void                font_platform_clear_shaped_lines(FontHandle* handle);

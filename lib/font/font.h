@@ -352,6 +352,13 @@ typedef struct TextExtents {
 // measure a UTF-8 text string (applies kerning, handles multi-byte)
 TextExtents font_measure_text(FontHandle* handle, const char* text, int byte_len);
 
+// Vertical ink bounds in CSS pixels. Ascent is positive up and descent down
+// from the alphabetic baseline. Strings without ink have zero bounds.
+typedef struct FontTextInkHeight {
+    float ascent, descent;
+} FontTextInkHeight;
+FontTextInkHeight font_measure_text_ink_height(FontHandle* handle, const char* text, int byte_len);
+
 // measure source-owned glyph clusters without discarding neighboring shaping context.
 bool font_measure_text_range(FontHandle* handle, const char* text, int byte_len,
     int range_start, int range_length, TextExtents* extents);

@@ -1195,6 +1195,37 @@ TextExtents font_measure_text(FontHandle* handle, const char* text, int byte_len
     return extents;
 }
 
+FontTextInkHeight font_measure_text_ink_height(FontHandle* handle, const char* text, int byte_len) {
+    FontTextInkHeight ink = {0};
+    if (!handle || !text || byte_len <= 0) return ink;
+#ifdef __APPLE__
+    if (font_platform_measure_text_ink_height(handle, font_measurement_ct_font(handle),
+            text, byte_len, &ink)) return ink;
+#endif
+
+    FontStyleDesc style = {0};
+    if (!font_handle_get_style(handle, &style.family, &style.size_px, &style.weight, &style.slant))
+        return ink;
+    float density = handle->ctx ? handle->ctx->config.pixel_ratio : 1.0f;
+    if (!(density > 0.0f)) density = 1.0f;
+    bool has_ink = false;
+    for (size_t offset = 0, length = (size_t)byte_len; offset < length;) {
+        uint32_t cp = 0;
+        int bytes = str_utf8_decode(text + offset, length - offset, &cp);
+        offset += bytes > 0 ? (size_t)bytes : 1;
+        if (bytes <= 0) continue;
+        LoadedGlyph* glyph = font_load_glyph(handle, &style, cp, false);
+        if (!glyph || glyph->bitmap.width <= 0 || glyph->bitmap.height <= 0) continue;
+        // keep signed bounds when the outline lies entirely on one side of the baseline.
+        float ascent = (float)glyph->bitmap.bearing_y / density;
+        float descent = (float)(glyph->bitmap.height - glyph->bitmap.bearing_y) / density;
+        ink.ascent = has_ink ? fmaxf(ink.ascent, ascent) : ascent;
+        ink.descent = has_ink ? fmaxf(ink.descent, descent) : descent;
+        has_ink = true;
+    }
+    return ink;
+}
+
 float font_measure_char(FontHandle* handle, uint32_t codepoint) {
     if (!handle) return 0;
 

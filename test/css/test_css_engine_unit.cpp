@@ -46,6 +46,28 @@ TEST(CssContainerDependency, RecognizesOnlySizeFeatureQueries) {
     }
 }
 
+TEST(CssAttributeDependency, MatchesTheNameAndVisitsFallbacks) {
+    CSSAttrRef inner_ref = {};
+    inner_ref.name = "data-inner";
+    CssValue inner = {};
+    inner.type = CSS_VALUE_TYPE_ATTR;
+    inner.data.attr_ref = &inner_ref;
+
+    CSSAttrRef outer_ref = {};
+    outer_ref.name = "data-outer";
+    outer_ref.fallback = &inner;
+    outer_ref.has_fallback = true;
+    CssValue outer = {};
+    outer.type = CSS_VALUE_TYPE_ATTR;
+    outer.data.attr_ref = &outer_ref;
+
+    EXPECT_TRUE(css_value_may_reference_attribute(&outer, "data-outer"));
+    EXPECT_TRUE(css_value_may_reference_attribute(&outer, "DATA-INNER"));
+    EXPECT_FALSE(css_value_may_reference_attribute(&outer, "data-unrelated"));
+    inner_ref.name = nullptr;
+    EXPECT_TRUE(css_value_may_reference_attribute(&outer, "data-unresolved"));
+}
+
 // ============================================================================
 // Test Fixture
 // ============================================================================

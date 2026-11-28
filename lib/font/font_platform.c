@@ -1553,18 +1553,35 @@ static TextExtents font_platform_measure_line_range(CTLineRef line, CFRange rang
     return ext;
 }
 
+static CTLineRef font_platform_measurement_line(FontHandle* handle, void* ct_font_ref,
+        const char* text, int byte_len) {
+    if (!ct_font_ref || !text || byte_len <= 0) return NULL;
+    FontFaceTextRequest request = {.text = text, .byte_len = byte_len};
+    return font_platform_cached_line(handle, (CTFontRef)ct_font_ref, &request);
+}
+
 TextExtents font_platform_measure_text(FontHandle* handle, void* ct_font_ref, const char* text,
                                        int byte_len, float fallback_height) {
     TextExtents ext = {0};
-    if (!ct_font_ref || !text || byte_len <= 0) return ext;
-    FontFaceTextRequest request = {.text = text, .byte_len = byte_len};
-    CTLineRef line = font_platform_cached_line(handle, (CTFontRef)ct_font_ref, &request);
+    CTLineRef line = font_platform_measurement_line(handle, ct_font_ref, text, byte_len);
     if (!line) return ext;
-
     ext = font_platform_measure_line_range(line, CFRangeMake(kCFNotFound, 0), fallback_height);
-
     CFRelease(line);
     return ext;
+}
+
+bool font_platform_measure_text_ink_height(FontHandle* handle, void* ct_font_ref,
+        const char* text, int byte_len, FontTextInkHeight* ink) {
+    CTLineRef line = font_platform_measurement_line(handle, ct_font_ref, text, byte_len);
+    if (!line) return false;
+    // glyph outlines include shaping offsets and exclude line leading.
+    CGRect bounds = CTLineGetBoundsWithOptions(line, kCTLineBoundsUseGlyphPathBounds);
+    if (!CGRectIsEmpty(bounds)) {
+        ink->ascent = (float)CGRectGetMaxY(bounds);
+        ink->descent = (float)-CGRectGetMinY(bounds);
+    }
+    CFRelease(line);
+    return true;
 }
 
 bool font_platform_measure_text_range(FontHandle* handle, void* ct_font_ref, const char* text,
@@ -1576,8 +1593,7 @@ bool font_platform_measure_text_range(FontHandle* handle, void* ct_font_ref, con
     }
     CFRange range;
     if (!font_platform_text_byte_range(text, byte_len, range_start, range_start + range_length, &range)) return false;
-    FontFaceTextRequest request = {.text = text, .byte_len = byte_len};
-    CTLineRef line = font_platform_cached_line(handle, (CTFontRef)ct_font_ref, &request);
+    CTLineRef line = font_platform_measurement_line(handle, ct_font_ref, text, byte_len);
     if (!line) return false;
     *extents = font_platform_measure_line_range(line, range, fallback_height);
     CFRelease(line);

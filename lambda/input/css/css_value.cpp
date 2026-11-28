@@ -1501,11 +1501,17 @@ String* css_grid_serialize_placement(Pool* pool, const CssGridLineReference line
 enum CssValueSearch {CSS_SEARCH_VAR, CSS_SEARCH_PENDING, CSS_SEARCH_LENGTH_UNIT, CSS_SEARCH_DIMENSION, CSS_SEARCH_IMAGE_SET, CSS_SEARCH_PERCENTAGE, CSS_SEARCH_ATTR};
 
 static bool css_value_matches_search(const CssValue* value, CssValueSearch search,
-    CssUnit first, CssUnit second) {
+    CssUnit first, CssUnit second, const char* attribute) {
     if (!value) return false;
-    if (search == CSS_SEARCH_ATTR) return value->type == CSS_VALUE_TYPE_ATTR ||
-        (value->type == CSS_VALUE_TYPE_FUNCTION && value->data.function &&
-         value->data.function->name && strcmp(value->data.function->name, "attr") == 0);
+    if (search == CSS_SEARCH_ATTR) {
+        if (value->type != CSS_VALUE_TYPE_ATTR &&
+            !(value->type == CSS_VALUE_TYPE_FUNCTION && css_function_name_is(value->data.function, "attr")))
+            return false;
+        if (!attribute) return true;
+        const char* name = css_content_attribute_name(value);
+        // an unresolved name may come from substitution and still depends on the mutation.
+        return !name || str_icmp_cstr(name, attribute) == 0;
+    }
     if (search == CSS_SEARCH_IMAGE_SET) return css_value_is_image_set(value);
     if (search == CSS_SEARCH_DIMENSION)
         return value->type == CSS_VALUE_TYPE_LENGTH || value->type == CSS_VALUE_TYPE_PERCENTAGE ||
@@ -1529,9 +1535,9 @@ static const CssValue* css_value_dependency_fallback(const CssValue* value) {
 }
 
 static bool css_value_contains(CssValueSearch search, const CssValue* value,
-    CssUnit first = CSS_UNIT_PX, CssUnit second = CSS_UNIT_PX) {
+    CssUnit first = CSS_UNIT_PX, CssUnit second = CSS_UNIT_PX, const char* attribute = nullptr) {
     if (!value) return false;
-    if (css_value_matches_search(value, search, first, second)) return true;
+    if (css_value_matches_search(value, search, first, second, attribute)) return true;
     if (value->type != CSS_VALUE_TYPE_LIST && value->type != CSS_VALUE_TYPE_FUNCTION &&
         value->type != CSS_VALUE_TYPE_TOKEN_SEQUENCE && !css_value_dependency_fallback(value)) return false;
     ArrayList* pending = arraylist_new(8);
@@ -1539,7 +1545,7 @@ static bool css_value_contains(CssValueSearch search, const CssValue* value,
     bool found = !arraylist_append(pending, (void*)value);
     while (!found && pending->length > 0) {
         const CssValue* current = (const CssValue*)pending->data[--pending->length];
-        if (css_value_matches_search(current, search, first, second)) { found = true; break; }
+        if (css_value_matches_search(current, search, first, second, attribute)) { found = true; break; }
         const CssValue* const* children = nullptr;
         const CssValue* fallback = css_value_dependency_fallback(current);
         int count = 0;
@@ -1576,6 +1582,10 @@ bool css_value_contains_pending_substitution(const CssValue* value) {
 
 bool css_value_contains_attr_reference(const CssValue* value) {
     return css_value_contains(CSS_SEARCH_ATTR, value);
+}
+
+bool css_value_may_reference_attribute(const CssValue* value, const char* attribute) {
+    return css_value_contains(CSS_SEARCH_ATTR, value, CSS_UNIT_NONE, CSS_UNIT_NONE, attribute);
 }
 
 bool css_value_contains_percentage(const CssValue* value) {

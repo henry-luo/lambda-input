@@ -1137,6 +1137,7 @@ struct DomStyleRareExt {
     // parser provenance and the async IDL setter determine force-async.
     bool script_parser_inserted : 1;
     bool script_force_async_cleared : 1;
+    bool detached_template_owner : 1;  // detached subtree still belongs to inert template contents
     lam::Own<DomFragmentGeometry> fragment_geometry;
     lam::Own<DomAttributeCache> attributes;
     lam::ViewProp<MultiColumnProp, DomViewSlot::multicol> multicol;

@@ -136,6 +136,7 @@ bool css_value_contains_var_reference(const CssValue* value);
 bool css_value_contains_percentage(const CssValue* value);
 bool css_value_contains_pending_substitution(const CssValue* value);
 bool css_value_contains_attr_reference(const CssValue* value);
+bool css_value_may_reference_attribute(const CssValue* value, const char* attribute);
 bool css_value_contains_length_unit(const CssValue* value, CssUnit first, CssUnit second);
 bool css_value_contains_dimension(const CssValue* value);
 const char* css_value_identifier_name(const CssValue* value);
